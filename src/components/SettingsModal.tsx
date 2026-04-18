@@ -10,7 +10,10 @@ import {
 } from "../lib/storage";
 import { EDGE_VOICES, VOICEVOX_SPEAKERS } from "../lib/providers/tts";
 import { OPENAI_MODELS } from "../lib/providers/llm";
-import { CLOUDFLARE_MODELS } from "../lib/providers/image";
+import {
+  CLOUDFLARE_MODELS,
+  STYLE_PRESET_OPTIONS,
+} from "../lib/providers/image";
 import { isMacOS } from "../lib/platform";
 
 interface Props {
@@ -47,6 +50,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   cloudflareAccountId: "",
   cloudflareApiKey: "",
   cloudflareModel: "@cf/black-forest-labs/flux-1-schnell",
+  imageStylePreset: "",
 };
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
@@ -347,6 +351,12 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               >
                 <option value="flux">Flux（高品質・少し遅い）</option>
                 <option value="turbo">Turbo（高速・品質ふつう）</option>
+                <option value="flux-anime">
+                  Flux Anime（可愛いアニメ・イラスト）
+                </option>
+                <option value="flux-realism">
+                  Flux Realism（写真風リアル）
+                </option>
               </select>
             </>
           )}
@@ -403,6 +413,29 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               </select>
             </>
           )}
+
+          <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-800">
+            <label className="block text-sm">スタイルプリセット</label>
+            <select
+              value={s.imageStylePreset}
+              onChange={(e) =>
+                update(
+                  "imageStylePreset",
+                  e.target.value as AppSettings["imageStylePreset"],
+                )
+              }
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            >
+              {STYLE_PRESET_OPTIONS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              全プロバイダ共通。プロンプトの先頭に画風の指示が自動で付与されます。
+            </p>
+          </div>
         </section>
 
         <div className="flex gap-2">

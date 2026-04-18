@@ -3,6 +3,8 @@ import { getLlmProvider } from "../lib/providers/llm";
 import type { TopicSuggestion } from "../lib/providers/llm";
 import { loadSettings } from "../lib/storage";
 import type { Platform } from "../types";
+import { CATEGORY_OPTIONS } from "../lib/scriptOptions";
+import { GroupedSelect } from "./GroupedSelect";
 
 interface Props {
   open: boolean;
@@ -10,21 +12,6 @@ interface Props {
   onClose: () => void;
   onSelect: (topic: string) => void;
 }
-
-const CATEGORIES = [
-  { id: "", label: "おまかせ（全ジャンル）" },
-  { id: "life_hack", label: "ライフハック・時短" },
-  { id: "tech_gadget", label: "IT・ガジェット" },
-  { id: "business_career", label: "ビジネス・キャリア" },
-  { id: "money_saving", label: "お金・節約" },
-  { id: "health_fitness", label: "健康・ダイエット" },
-  { id: "food_recipe", label: "料理・レシピ" },
-  { id: "beauty", label: "美容・ファッション" },
-  { id: "study", label: "勉強・自己啓発" },
-  { id: "travel", label: "旅行・お出かけ" },
-  { id: "entertainment", label: "エンタメ・雑学" },
-  { id: "relationship", label: "恋愛・人間関係" },
-];
 
 export function TopicSuggestModal({
   open,
@@ -47,13 +34,7 @@ export function TopicSuggestModal({
     try {
       const settings = await loadSettings();
       const provider = getLlmProvider(settings.llmProvider);
-      const categoryLabel =
-        customCategory.trim() ||
-        CATEGORIES.find((c) => c.id === category)?.label.replace(
-          /（.+?）/,
-          "",
-        ) ||
-        "";
+      const categoryLabel = customCategory.trim() || category || "";
       const result = await provider.suggestTopics(
         {
           platform,
@@ -87,25 +68,17 @@ export function TopicSuggestModal({
         <h2 className="text-lg font-bold mb-4">💡 トピック提案</h2>
 
         <div className="space-y-3">
-          <div>
-            <label className="block text-sm font-medium mb-1">
-              ジャンル・方向性
-            </label>
-            <select
-              value={category}
-              onChange={(e) => {
-                setCategory(e.target.value);
-                setCustomCategory("");
-              }}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-            >
-              {CATEGORIES.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </div>
+          <GroupedSelect
+            label="ジャンル・方向性"
+            value={category}
+            onChange={(v) => {
+              setCategory(v);
+              setCustomCategory("");
+            }}
+            groups={CATEGORY_OPTIONS}
+            placeholderOption="おまかせ（全ジャンル）"
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+          />
 
           <div>
             <label className="block text-sm font-medium mb-1">

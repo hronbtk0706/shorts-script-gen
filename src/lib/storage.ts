@@ -17,11 +17,28 @@ const KEY_POLLINATIONS_MODEL = "pollinations_model";
 const KEY_CLOUDFLARE_ACCOUNT = "cloudflare_account_id";
 const KEY_CLOUDFLARE_API = "cloudflare_api_key";
 const KEY_CLOUDFLARE_MODEL = "cloudflare_model";
+const KEY_IMAGE_STYLE_PRESET = "image_style_preset";
 
 export type LlmProviderId = "gemini" | "groq" | "openai";
 export type TtsProviderId = "say" | "edge" | "voicevox";
 export type ImageProviderId = "pollinations" | "cloudflare";
-export type PollinationsModel = "flux" | "turbo";
+export type PollinationsModel =
+  | "flux"
+  | "turbo"
+  | "flux-anime"
+  | "flux-realism";
+export type ImageStylePreset =
+  | ""
+  | "kawaii"
+  | "anime"
+  | "chibi"
+  | "watercolor"
+  | "picture_book"
+  | "pastel"
+  | "ghibli"
+  | "toon"
+  | "pixelart"
+  | "realistic";
 
 export interface AppSettings {
   llmProvider: LlmProviderId;
@@ -38,12 +55,34 @@ export interface AppSettings {
   cloudflareAccountId: string;
   cloudflareApiKey: string;
   cloudflareModel: string;
+  imageStylePreset: ImageStylePreset;
 }
 
 async function get<T>(key: string, fallback: T): Promise<T> {
   const v = await store.get<T>(key);
   return v ?? fallback;
 }
+
+const VALID_POLLINATIONS_MODELS: PollinationsModel[] = [
+  "flux",
+  "turbo",
+  "flux-anime",
+  "flux-realism",
+];
+
+const VALID_STYLE_PRESETS: ImageStylePreset[] = [
+  "",
+  "kawaii",
+  "anime",
+  "chibi",
+  "watercolor",
+  "picture_book",
+  "pastel",
+  "ghibli",
+  "toon",
+  "pixelart",
+  "realistic",
+];
 
 export async function loadSettings(): Promise<AppSettings> {
   const rawTtsProvider = await get<string>(KEY_TTS_PROVIDER, "edge");
@@ -61,6 +100,18 @@ export async function loadSettings(): Promise<AppSettings> {
     rawLlm === "gemini" || rawLlm === "groq" || rawLlm === "openai"
       ? (rawLlm as LlmProviderId)
       : "groq";
+  const rawPollinations = await get<string>(KEY_POLLINATIONS_MODEL, "flux");
+  const pollinationsModel: PollinationsModel = VALID_POLLINATIONS_MODELS.includes(
+    rawPollinations as PollinationsModel,
+  )
+    ? (rawPollinations as PollinationsModel)
+    : "flux";
+  const rawPreset = await get<string>(KEY_IMAGE_STYLE_PRESET, "");
+  const imageStylePreset: ImageStylePreset = VALID_STYLE_PRESETS.includes(
+    rawPreset as ImageStylePreset,
+  )
+    ? (rawPreset as ImageStylePreset)
+    : "";
   return {
     llmProvider,
     geminiApiKey: await get(KEY_GEMINI_API, ""),
@@ -77,16 +128,14 @@ export async function loadSettings(): Promise<AppSettings> {
         ? (raw as ImageProviderId)
         : "pollinations";
     })(),
-    pollinationsModel: await get<PollinationsModel>(
-      KEY_POLLINATIONS_MODEL,
-      "flux",
-    ),
+    pollinationsModel,
     cloudflareAccountId: await get(KEY_CLOUDFLARE_ACCOUNT, ""),
     cloudflareApiKey: await get(KEY_CLOUDFLARE_API, ""),
     cloudflareModel: await get(
       KEY_CLOUDFLARE_MODEL,
       "@cf/black-forest-labs/flux-1-schnell",
     ),
+    imageStylePreset,
   };
 }
 
@@ -105,6 +154,7 @@ export async function saveSettings(s: AppSettings): Promise<void> {
   await store.set(KEY_CLOUDFLARE_ACCOUNT, s.cloudflareAccountId);
   await store.set(KEY_CLOUDFLARE_API, s.cloudflareApiKey);
   await store.set(KEY_CLOUDFLARE_MODEL, s.cloudflareModel);
+  await store.set(KEY_IMAGE_STYLE_PRESET, s.imageStylePreset);
   await store.save();
 }
 

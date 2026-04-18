@@ -74,14 +74,6 @@ const platformLabel = {
   shorts: "YouTube Shorts",
 } as const;
 
-const toneLabel = {
-  casual: "カジュアル・親しみやすい",
-  educational: "教育・解説系",
-  emotional: "感動・共感系",
-  viral: "バズ狙い・フック強め",
-  serious: "真面目・ビジネス",
-} as const;
-
 function buildPromptBody(input: ScriptInput): string {
   const lines = [
     `あなたはショート動画の構成作家 兼 モーショングラフィックデザイナーです。以下の条件で${platformLabel[input.platform]}向けの${input.duration}秒動画台本を日本語で作成し、各シーンに映えるテロップのデザインと演出も提案してください。`,
@@ -94,9 +86,9 @@ function buildPromptBody(input: ScriptInput): string {
     `- 尺: ${input.duration}秒`,
   ];
   if (input.audience) lines.push(`- ターゲット層: ${input.audience}`);
-  if (input.tone) lines.push(`- トーン: ${toneLabel[input.tone]}`);
+  if (input.tone) lines.push(`- トーン: ${input.tone}`);
   if (input.goal) lines.push(`- 目的: ${input.goal}`);
-  if (input.reference) lines.push(`- 参考: ${input.reference}`);
+  if (input.reference) lines.push(`- 参考・演出指示: ${input.reference}`);
 
   lines.push(
     "",
@@ -118,13 +110,16 @@ function buildPromptBody(input: ScriptInput): string {
     "- emoji はシーンの内容に合うもの1つ（驚き=⚡️, NG=⚠️, OK=✨, 本=📖, 時間=⏰, 重要=🔥 など）",
     "- emphasis_keyword は text_overlay 内の最も強調すべき短い部分（数字・キーワード）",
     "",
-    "# エフェクト指示",
-    "- motion: 静止画に動きを付ける。盛り上がり→zoom_in、落ち着き→ken_burns/static、広がり→pan系",
-    "- color: 過去→sepia、シリアス→bw、レトロ→vintage、ポップ→vivid、近未来→cool、温かみ→warm、ドラマチック→vignette、通常→none",
+    "# エフェクト指示（重要: 各シーンで必ず変化させる）",
+    "- **motion は必ずシーンごとに異なるものを選ぶ。同じmotionを2連続で使わない。最低4種類以上を動画全体で使い回す**",
+    "- motion: zoom_in(盛り上がり), zoom_out(引き), pan_left/right/up/down(広がり), ken_burns(落ち着き), push_in(じわじわ), zoom_punch(強調パンチ), shake(驚き/ショック), static(静的な強調)",
+    "- color は theme_vibe に合わせつつ、重要シーンで1〜2回アクセントを変える（同色でずっとは避ける）",
+    "- color: none(通常), sepia(過去/回想), bw(シリアス), vintage(レトロ), vivid(ポップ), cool(近未来/知的), warm(温かみ), vignette(ドラマチック), neon(サイバー/キラキラ), high_contrast(強調), soft_glow(夢/柔らかさ), film_grain(エモい/フィルム調)",
     "- audio_fade_in: 最初のシーン（hook）のみ true、それ以外は false",
     "- audio_fade_out: 最後のシーン（cta）のみ true、それ以外は false",
-    "- transition_to_next: テンポ速い→cut、滑らか→fade/dissolve、章切替→fadeblack、意外性→slide系/zoomin/circleopen。最後は必ず cut",
-    "- transition_duration: 0.3〜0.8秒、cutなら 0",
+    "- **transition_to_next も多様に**: テンポ速い→cut/flash, 滑らか→fade/dissolve, 章切替→fadeblack/fadegrays, 意外性→slide系/cover系/reveal系/zoomin/circleopen, 動きを強調→hblur/squeezev/squeezeh/diag系。最後のシーン(cta)は必ず cut",
+    "- transition_duration: 0.3〜0.8秒推奨。cutなら 0、flashは0.15で自動調整",
+    "- **flash** は強調したい瞬間の直前に効く。過剰に使わない（1動画で0〜2回）",
   );
   return lines.join("\n");
 }
@@ -175,6 +170,9 @@ const effectsSchema = {
         "pan_up",
         "pan_down",
         "ken_burns",
+        "push_in",
+        "zoom_punch",
+        "shake",
       ],
     },
     color: {
@@ -188,6 +186,10 @@ const effectsSchema = {
         "cool",
         "warm",
         "vignette",
+        "neon",
+        "high_contrast",
+        "soft_glow",
+        "film_grain",
       ],
     },
     audio_fade_in: { type: Type.BOOLEAN },
@@ -199,6 +201,8 @@ const effectsSchema = {
         "fade",
         "fadeblack",
         "fadewhite",
+        "fadegrays",
+        "flash",
         "slideleft",
         "slideright",
         "slideup",
@@ -209,9 +213,26 @@ const effectsSchema = {
         "circleclose",
         "wipeleft",
         "wiperight",
+        "wipeup",
+        "wipedown",
         "pixelize",
         "smoothleft",
         "radial",
+        "hblur",
+        "squeezev",
+        "squeezeh",
+        "coverleft",
+        "coverright",
+        "coverup",
+        "coverdown",
+        "revealleft",
+        "revealright",
+        "revealup",
+        "revealdown",
+        "diagtl",
+        "diagtr",
+        "diagbl",
+        "diagbr",
       ],
     },
     transition_duration: { type: Type.NUMBER },
@@ -438,11 +459,11 @@ const JSON_TEMPLATE = `{
       "emphasis_keyword": "string"
     },
     "effects": {
-      "motion": "static|zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down|ken_burns",
-      "color": "none|sepia|bw|vintage|vivid|cool|warm|vignette",
+      "motion": "static|zoom_in|zoom_out|pan_left|pan_right|pan_up|pan_down|ken_burns|push_in|zoom_punch|shake",
+      "color": "none|sepia|bw|vintage|vivid|cool|warm|vignette|neon|high_contrast|soft_glow|film_grain",
       "audio_fade_in": true,
       "audio_fade_out": false,
-      "transition_to_next": "cut|fade|fadeblack|fadewhite|slideleft|slideright|slideup|slidedown|dissolve|zoomin|circleopen|circleclose|wipeleft|wiperight|pixelize|smoothleft|radial",
+      "transition_to_next": "cut|fade|fadeblack|fadewhite|fadegrays|flash|slideleft|slideright|slideup|slidedown|dissolve|zoomin|circleopen|circleclose|wipeleft|wiperight|wipeup|wipedown|pixelize|smoothleft|radial|hblur|squeezev|squeezeh|coverleft|coverright|coverup|coverdown|revealleft|revealright|revealup|revealdown|diagtl|diagtr|diagbl|diagbr",
       "transition_duration": 0.5
     }
   },

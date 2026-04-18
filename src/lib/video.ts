@@ -24,6 +24,7 @@ export interface SceneAssets {
   duration: number;
   effects: SceneEffects;
   captions: CaptionAsset[];
+  audioLeadingPad: number;
 }
 
 export interface ProgressUpdate {
@@ -60,7 +61,10 @@ interface RustSceneInput {
   transition_to_next: string;
   transition_duration: number;
   captions: RustCaptionInput[];
+  audio_leading_pad: number;
 }
+
+const AUDIO_LEADING_PAD_SECONDS = 0.6;
 
 function fallbackImagePrompt(visual: string): string {
   return `${visual}, vibrant, cinematic, vertical 9:16, high detail`;
@@ -113,22 +117,45 @@ function countNonPunct(text: string): number {
   return text.replace(/[、。！？\s]/g, "").length;
 }
 
+const PAUSE_SECONDS_BY_PUNCT: Record<string, number> = {
+  "、": 0.15,
+  "。": 0.3,
+  "！": 0.3,
+  "？": 0.3,
+};
+
+function trailingPunctPause(text: string): number {
+  const last = text.trim().slice(-1);
+  return PAUSE_SECONDS_BY_PUNCT[last] ?? 0;
+}
+
 function allocateCaptionTimings(
   chunks: string[],
   totalDuration: number,
 ): Array<{ text: string; start: number; end: number }> {
   if (chunks.length === 0 || totalDuration <= 0) return [];
-  const totalChars = chunks.reduce((sum, c) => sum + countNonPunct(c), 0);
+  const info = chunks.map((c) => ({
+    text: c,
+    chars: countNonPunct(c),
+    pause: trailingPunctPause(c),
+  }));
+  const totalChars = info.reduce((sum, c) => sum + c.chars, 0);
+  const totalPause = info.reduce((sum, c) => sum + c.pause, 0);
   if (totalChars === 0) return [];
+  const speechDuration = Math.max(0.1, totalDuration - totalPause);
+  const tpc = speechDuration / totalChars;
+
   const result: Array<{ text: string; start: number; end: number }> = [];
   let cursor = 0;
-  for (let i = 0; i < chunks.length; i++) {
-    const chars = countNonPunct(chunks[i]);
-    const isLast = i === chunks.length - 1;
-    const dur = (chars / totalChars) * totalDuration;
+  for (let i = 0; i < info.length; i++) {
+    const { text, chars, pause } = info[i];
+    const isLast = i === info.length - 1;
+    const speechDur = chars * tpc;
     const start = cursor;
-    const end = isLast ? totalDuration : Math.min(cursor + dur, totalDuration);
-    result.push({ text: chunks[i], start, end });
+    const end = isLast
+      ? totalDuration
+      : Math.min(cursor + speechDur + pause, totalDuration);
+    result.push({ text, start, end });
     cursor = end;
   }
   return result;
@@ -225,14 +252,21 @@ export async function generateVideo(
       settings,
     );
 
-    const duration = await invoke<number>("get_audio_duration", {
+    const audioDuration = await invoke<number>("get_audio_duration", {
       audioPath,
     });
+
+    const leadingPad =
+      scene.index === 0 ? 0 : AUDIO_LEADING_PAD_SECONDS;
+    const sceneDuration = audioDuration + leadingPad;
 
     const captions: CaptionAsset[] = [];
     if (!scene.skipCaption) {
       const captionChunks = splitNarration(scene.narration);
-      const captionTimings = allocateCaptionTimings(captionChunks, duration);
+      const captionTimings = allocateCaptionTimings(
+        captionChunks,
+        audioDuration,
+      );
       for (let ci = 0; ci < captionTimings.length; ci++) {
         const c = captionTimings[ci];
         const displayText = c.text.replace(/、$/, "");
@@ -240,7 +274,11 @@ export async function generateVideo(
           displayText,
           `${sessionId}_caption_${scene.index}_${ci}`,
         );
-        captions.push({ pngPath, start: c.start, end: c.end });
+        captions.push({
+          pngPath,
+          start: c.start + leadingPad,
+          end: c.end + leadingPad,
+        });
       }
     }
 
@@ -249,9 +287,10 @@ export async function generateVideo(
       imagePath,
       audioPath,
       overlayPngPath,
-      duration,
+      duration: sceneDuration,
       effects: scene.effects,
       captions,
+      audioLeadingPad: leadingPad,
     });
   }
 
@@ -279,6 +318,7 @@ export async function generateVideo(
         start: c.start,
         end: c.end,
       })),
+      audio_leading_pad: a.audioLeadingPad,
     }));
 
   const outputPath = await invoke<string>("compose_video", {

@@ -1,6 +1,13 @@
 import { useState } from "react";
-import type { Duration, Platform, ScriptInput, Tone } from "../types";
+import type { Duration, Platform, ScriptInput } from "../types";
 import { TopicSuggestModal } from "./TopicSuggestModal";
+import {
+  AUDIENCE_OPTIONS,
+  GOAL_OPTIONS,
+  REFERENCE_OPTIONS,
+  TONE_OPTIONS,
+} from "../lib/scriptOptions";
+import { GroupedSelect } from "./GroupedSelect";
 
 interface Props {
   onSubmit: (input: ScriptInput) => void;
@@ -14,7 +21,7 @@ export function ScriptForm({ onSubmit, loading }: Props) {
   const [duration, setDuration] = useState<Duration>(30);
   const [showOptional, setShowOptional] = useState(false);
   const [audience, setAudience] = useState("");
-  const [tone, setTone] = useState<Tone | "">("");
+  const [tone, setTone] = useState("");
   const [goal, setGoal] = useState("");
   const [reference, setReference] = useState("");
 
@@ -25,10 +32,10 @@ export function ScriptForm({ onSubmit, loading }: Props) {
       topic: topic.trim(),
       platform,
       duration,
-      audience: audience.trim() || undefined,
+      audience: audience || undefined,
       tone: tone || undefined,
-      goal: goal.trim() || undefined,
-      reference: reference.trim() || undefined,
+      goal: goal || undefined,
+      reference: reference || undefined,
     });
   };
 
@@ -101,51 +108,30 @@ export function ScriptForm({ onSubmit, loading }: Props) {
 
       {showOptional && (
         <div className="space-y-3 p-4 rounded-lg bg-gray-50 dark:bg-gray-800/50">
-          <div>
-            <label className="block text-sm font-medium mb-1">ターゲット層</label>
-            <input
-              type="text"
-              value={audience}
-              onChange={(e) => setAudience(e.target.value)}
-              placeholder="例: 20代の社会人、ガジェット好き"
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">トーン</label>
-            <select
-              value={tone}
-              onChange={(e) => setTone(e.target.value as Tone | "")}
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">おまかせ</option>
-              <option value="casual">カジュアル</option>
-              <option value="educational">教育・解説</option>
-              <option value="emotional">感動・共感</option>
-              <option value="viral">バズ狙い</option>
-              <option value="serious">真面目・ビジネス</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">目的</label>
-            <input
-              type="text"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="例: フォロワー獲得、商品紹介、認知拡大"
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">参考・補足</label>
-            <input
-              type="text"
-              value={reference}
-              onChange={(e) => setReference(e.target.value)}
-              placeholder="例: 具体例を入れたい、自分の体験を語る"
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+          <GroupedSelect
+            label="ターゲット層"
+            value={audience}
+            onChange={setAudience}
+            groups={AUDIENCE_OPTIONS}
+          />
+          <GroupedSelect
+            label="トーン"
+            value={tone}
+            onChange={setTone}
+            groups={TONE_OPTIONS}
+          />
+          <GroupedSelect
+            label="目的"
+            value={goal}
+            onChange={setGoal}
+            groups={GOAL_OPTIONS}
+          />
+          <GroupedSelect
+            label="構成・演出"
+            value={reference}
+            onChange={setReference}
+            groups={REFERENCE_OPTIONS}
+          />
         </div>
       )}
 

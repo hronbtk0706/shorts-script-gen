@@ -63,6 +63,8 @@ pub struct SceneInput {
     pub transition_duration: f64,
     #[serde(default)]
     pub captions: Vec<CaptionInput>,
+    #[serde(default)]
+    pub audio_leading_pad: f64,
 }
 
 fn default_motion() -> String {
@@ -128,6 +130,24 @@ fn motion_and_base_filter(motion: &str, duration: f64) -> String {
             tf = tf,
             fps = FPS
         ),
+        "push_in" => format!(
+            "{base},zoompan=z='1.0+on/{tf}*0.10':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}",
+            base = base,
+            tf = tf,
+            fps = FPS
+        ),
+        "zoom_punch" => format!(
+            "{base},zoompan=z='1.0+min(on,9)/9*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}",
+            base = base,
+            tf = tf,
+            fps = FPS
+        ),
+        "shake" => format!(
+            "{base},zoompan=z='1.12':d={tf}:x='iw/2-iw/zoom/2+sin(on*0.9)*18':y='ih/2-ih/zoom/2+cos(on*1.1)*14':s=1080x1920:fps={fps}",
+            base = base,
+            tf = tf,
+            fps = FPS
+        ),
         _ => format!("{base},fps={fps}", base = base, fps = FPS),
     }
 }
@@ -143,6 +163,14 @@ fn color_filter(color: &str) -> Option<&'static str> {
         "cool" => Some("colorbalance=bs=0.3:bm=0.1"),
         "warm" => Some("colorbalance=rs=0.2:rm=0.1"),
         "vignette" => Some("vignette=angle=PI/5"),
+        "neon" => Some(
+            "eq=saturation=1.8:contrast=1.12,colorbalance=bs=0.2:gm=0.1:rs=-0.1",
+        ),
+        "high_contrast" => Some("eq=contrast=1.45:saturation=1.15:brightness=-0.02"),
+        "soft_glow" => Some("eq=brightness=0.06:gamma=0.95:saturation=0.92:contrast=0.98"),
+        "film_grain" => Some(
+            "eq=saturation=0.88:contrast=1.05,noise=alls=14:allf=t+u",
+        ),
         _ => None,
     }
 }
@@ -165,10 +193,14 @@ fn audio_fade_filter(scene: &SceneInput) -> Option<String> {
 
 fn normalize_transition(name: &str) -> &str {
     match name {
-        "cut" | "fade" | "fadeblack" | "fadewhite" | "slideleft" | "slideright"
-        | "slideup" | "slidedown" | "dissolve" | "zoomin" | "circleopen"
-        | "circleclose" | "wipeleft" | "wiperight" | "pixelize" | "smoothleft"
-        | "radial" => name,
+        "cut" | "fade" | "fadeblack" | "fadewhite" | "fadegrays" | "slideleft"
+        | "slideright" | "slideup" | "slidedown" | "dissolve" | "zoomin"
+        | "circleopen" | "circleclose" | "wipeleft" | "wiperight" | "wipeup"
+        | "wipedown" | "pixelize" | "smoothleft" | "radial" | "hblur"
+        | "squeezev" | "squeezeh" | "coverleft" | "coverright" | "coverup"
+        | "coverdown" | "revealleft" | "revealright" | "revealup"
+        | "revealdown" | "diagtl" | "diagtr" | "diagbl" | "diagbr" => name,
+        "flash" => "fadewhite",
         _ => "fade",
     }
 }
@@ -697,10 +729,21 @@ async fn compose_video(
             None => format!("[0:v]{}[bg]", motion),
         };
 
-        let audio_fade = audio_fade_filter(scene);
-        let (audio_chain, audio_map) = match &audio_fade {
-            Some(a) => (format!(";[1:a]{}[a]", a), "[a]"),
-            None => (String::new(), "1:a"),
+        let mut audio_filter_steps: Vec<String> = Vec::new();
+        if scene.audio_leading_pad > 0.0 {
+            let ms = (scene.audio_leading_pad * 1000.0).round() as i64;
+            audio_filter_steps.push(format!("adelay={}:all=1", ms));
+        }
+        if let Some(fade) = audio_fade_filter(scene) {
+            audio_filter_steps.push(fade);
+        }
+        let (audio_chain, audio_map): (String, &str) = if audio_filter_steps.is_empty() {
+            (String::new(), "1:a")
+        } else {
+            (
+                format!(";[1:a]{}[a]", audio_filter_steps.join(",")),
+                "[a]",
+            )
         };
 
         let n_captions = scene.captions.len();
@@ -790,15 +833,14 @@ async fn compose_video(
         for i in 0..scenes.len() - 1 {
             let cur = &scenes[i];
             let raw_dur = cur.transition_duration.max(0.0).min(1.5);
-            let trans_dur = if cur.transition_to_next == "cut" || raw_dur < 0.05 {
-                0.05
+            let (trans_dur, trans_name) = if cur.transition_to_next == "cut" {
+                (0.05, "fade")
+            } else if cur.transition_to_next == "flash" {
+                (0.15, "fadewhite")
+            } else if raw_dur < 0.05 {
+                (0.05, normalize_transition(&cur.transition_to_next))
             } else {
-                raw_dur
-            };
-            let trans_name = if cur.transition_to_next == "cut" {
-                "fade"
-            } else {
-                normalize_transition(&cur.transition_to_next)
+                (raw_dur, normalize_transition(&cur.transition_to_next))
             };
 
             cum_d += cur.duration;

@@ -1,5 +1,17 @@
 import { useState } from "react";
-import type { BodySegment, Script } from "../types";
+import type {
+  BodySegment,
+  ColorGrade,
+  Motion,
+  SceneEffects,
+  Script,
+  TransitionType,
+} from "../types";
+import {
+  COLOR_LABELS,
+  MOTION_LABELS,
+  TRANSITION_LABELS,
+} from "../lib/effects";
 
 interface Props {
   script: Script;
@@ -59,6 +71,105 @@ const fieldLabelClass =
 const inputClass =
   "w-full bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400";
 const textareaClass = `${inputClass} resize-y min-h-[48px]`;
+
+function EffectEditor({
+  effects,
+  onChange,
+  showTransition = true,
+}: {
+  effects: SceneEffects;
+  onChange: (e: SceneEffects) => void;
+  showTransition?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-t border-gray-200 dark:border-gray-700 pt-2 mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="text-xs text-purple-600 dark:text-purple-400 hover:underline"
+      >
+        {open ? "▼" : "▶"} エフェクト編集
+      </button>
+      {open && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+          <div>
+            <div className={fieldLabelClass}>動き（motion）</div>
+            <select
+              className={inputClass}
+              value={effects.motion}
+              onChange={(e) =>
+                onChange({ ...effects, motion: e.target.value as Motion })
+              }
+            >
+              {MOTION_LABELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div className={fieldLabelClass}>カラー（color）</div>
+            <select
+              className={inputClass}
+              value={effects.color}
+              onChange={(e) =>
+                onChange({ ...effects, color: e.target.value as ColorGrade })
+              }
+            >
+              {COLOR_LABELS.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {showTransition && (
+            <>
+              <div>
+                <div className={fieldLabelClass}>次シーンへのトランジション</div>
+                <select
+                  className={inputClass}
+                  value={effects.transition_to_next}
+                  onChange={(e) =>
+                    onChange({
+                      ...effects,
+                      transition_to_next: e.target.value as TransitionType,
+                    })
+                  }
+                >
+                  {TRANSITION_LABELS.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className={fieldLabelClass}>トランジション時間（秒）</div>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0"
+                  max="1.5"
+                  className={inputClass}
+                  value={effects.transition_duration}
+                  onChange={(e) =>
+                    onChange({
+                      ...effects,
+                      transition_duration: Number(e.target.value),
+                    })
+                  }
+                />
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function EditableField({
   label,
@@ -159,6 +270,10 @@ export function ScriptResult({ script, onChange }: Props) {
           rows={3}
           placeholder="空欄なら visual から自動生成"
         />
+        <EffectEditor
+          effects={script.hook.effects}
+          onChange={(effects) => updateHook({ effects })}
+        />
       </div>
 
       {/* 本編 */}
@@ -201,6 +316,10 @@ export function ScriptResult({ script, onChange }: Props) {
               rows={3}
               placeholder="空欄なら visual から自動生成"
             />
+            <EffectEditor
+              effects={seg.effects}
+              onChange={(effects) => updateBody(i, { effects })}
+            />
           </div>
         ))}
       </div>
@@ -226,6 +345,11 @@ export function ScriptResult({ script, onChange }: Props) {
           multiline
           rows={3}
           placeholder="空欄なら text から自動生成"
+        />
+        <EffectEditor
+          effects={script.cta.effects}
+          onChange={(effects) => updateCta({ effects })}
+          showTransition={false}
         />
       </div>
 

@@ -1,18 +1,12 @@
 export type Platform = "tiktok" | "reels" | "shorts";
 export type Duration = 15 | 30 | 60;
-export type Tone =
-  | "casual"
-  | "educational"
-  | "emotional"
-  | "viral"
-  | "serious";
 
 export interface ScriptInput {
   topic: string;
   platform: Platform;
   duration: Duration;
   audience?: string;
-  tone?: Tone;
+  tone?: string;
   goal?: string;
   reference?: string;
 }
@@ -34,7 +28,10 @@ export type Motion =
   | "pan_right"
   | "pan_up"
   | "pan_down"
-  | "ken_burns";
+  | "ken_burns"
+  | "push_in"
+  | "zoom_punch"
+  | "shake";
 
 export type ColorGrade =
   | "none"
@@ -44,13 +41,19 @@ export type ColorGrade =
   | "vivid"
   | "cool"
   | "warm"
-  | "vignette";
+  | "vignette"
+  | "neon"
+  | "high_contrast"
+  | "soft_glow"
+  | "film_grain";
 
 export type TransitionType =
   | "cut"
   | "fade"
   | "fadeblack"
   | "fadewhite"
+  | "fadegrays"
+  | "flash"
   | "slideleft"
   | "slideright"
   | "slideup"
@@ -61,9 +64,26 @@ export type TransitionType =
   | "circleclose"
   | "wipeleft"
   | "wiperight"
+  | "wipeup"
+  | "wipedown"
   | "pixelize"
   | "smoothleft"
-  | "radial";
+  | "radial"
+  | "hblur"
+  | "squeezev"
+  | "squeezeh"
+  | "coverleft"
+  | "coverright"
+  | "coverup"
+  | "coverdown"
+  | "revealleft"
+  | "revealright"
+  | "revealup"
+  | "revealdown"
+  | "diagtl"
+  | "diagtr"
+  | "diagbl"
+  | "diagbr";
 
 export interface SceneEffects {
   motion: Motion;
