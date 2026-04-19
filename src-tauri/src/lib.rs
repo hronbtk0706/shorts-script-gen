@@ -1,9 +1,15 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Duration;
+use base64::{engine::general_purpose, Engine as _};
+use futures_util::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use tauri::Manager;
 
-fn hidden_cmd(program: &str) -> Command {
-    let mut cmd = hidden_cmd(program);
+fn hidden_cmd<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    let mut cmd = Command::new(program);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -11,11 +17,27 @@ fn hidden_cmd(program: &str) -> Command {
     }
     cmd
 }
-use base64::{engine::general_purpose, Engine as _};
-use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use tauri::Manager;
+
+struct VoicevoxChild(Mutex<Option<std::process::Child>>);
+
+fn find_voicevox() -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let local = std::env::var("LOCALAPPDATA").ok()?;
+        let candidate = PathBuf::from(local).join("Programs").join("VOICEVOX").join("VOICEVOX.exe");
+        if candidate.exists() { return Some(candidate); }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let candidate = PathBuf::from("/Applications/VOICEVOX.app/Contents/MacOS/VOICEVOX");
+        if candidate.exists() { return Some(candidate); }
+    }
+    None
+}
+
+fn is_voicevox_running() -> bool {
+    std::net::TcpStream::connect("127.0.0.1:50021").is_ok()
+}
 use tokio::time::timeout;
 use tokio_tungstenite::{
     connect_async,
@@ -983,6 +1005,28 @@ async fn compose_video(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(VoicevoxChild(Mutex::new(None)))
+        .setup(|app| {
+            if !is_voicevox_running() {
+                if let Some(exe) = find_voicevox() {
+                    if let Ok(child) = hidden_cmd(&exe).spawn() {
+                        if let Ok(mut guard) = app.state::<VoicevoxChild>().0.lock() {
+                            *guard = Some(child);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Ok(mut guard) = window.app_handle().state::<VoicevoxChild>().0.lock() {
+                    if let Some(mut child) = guard.take() {
+                        let _ = child.kill();
+                    }
+                }
+            }
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
