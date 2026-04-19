@@ -1,6 +1,16 @@
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
+
+fn hidden_cmd(program: &str) -> Command {
+    let mut cmd = hidden_cmd(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
 use base64::{engine::general_purpose, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -274,7 +284,7 @@ async fn download_image(
     let dir = session_asset_dir(&app, &session_id)?;
     let img_path = dir.join(format!("{}.jpg", filename));
 
-    let status = Command::new("curl")
+    let status = hidden_cmd("curl")
         .args(["-L", "-f", "-s", "-o"])
         .arg(&img_path)
         .arg(&url)
@@ -307,7 +317,7 @@ async fn cloudflare_generate_image(
     );
     let auth_header = format!("Authorization: Bearer {}", api_key);
 
-    let output = Command::new("curl")
+    let output = hidden_cmd("curl")
         .args(["-s", "-S", "-L", "-X", "POST"])
         .args(["-H", &auth_header])
         .args(["-H", "Content-Type: application/json"])
@@ -410,7 +420,7 @@ fn urlencoding_encode(s: &str) -> String {
 
 async fn reqwest_post_empty(url: &str) -> Result<String, String> {
     use std::process::Stdio;
-    let child = Command::new("curl")
+    let child = hidden_cmd("curl")
         .args(["-s", "-f", "-X", "POST", "-H", "Content-Type: application/json"])
         .arg(url)
         .stdout(Stdio::piped())
@@ -427,7 +437,7 @@ async fn reqwest_post_empty(url: &str) -> Result<String, String> {
 async fn reqwest_post_json(url: &str, json_body: &str) -> Result<Vec<u8>, String> {
     use std::io::Write;
     use std::process::Stdio;
-    let mut child = Command::new("curl")
+    let mut child = hidden_cmd("curl")
         .args([
             "-s",
             "-X",
@@ -471,7 +481,7 @@ async fn edge_tts(
     std::fs::write(&mp3_path, &audio_bytes).map_err(|e| e.to_string())?;
 
     let wav_path = dir.join(format!("{}.wav", filename));
-    let output = Command::new("ffmpeg")
+    let output = hidden_cmd("ffmpeg")
         .args(["-y", "-i"])
         .arg(&mp3_path)
         .arg(&wav_path)
@@ -653,7 +663,7 @@ async fn generate_tts(
 
     let say_voice = if voice.is_empty() { "Kyoko".to_string() } else { voice };
 
-    let output = Command::new("say")
+    let output = hidden_cmd("say")
         .args(["-v", &say_voice, "-o"])
         .arg(&aiff_path)
         .arg(&text)
@@ -667,7 +677,7 @@ async fn generate_tts(
         ));
     }
 
-    let output = Command::new("ffmpeg")
+    let output = hidden_cmd("ffmpeg")
         .args(["-y", "-i"])
         .arg(&aiff_path)
         .arg(&wav_path)
@@ -687,7 +697,7 @@ async fn generate_tts(
 
 #[tauri::command]
 async fn get_audio_duration(audio_path: String) -> Result<f64, String> {
-    let output = Command::new("ffprobe")
+    let output = hidden_cmd("ffprobe")
         .args([
             "-v",
             "error",
@@ -787,7 +797,7 @@ async fn compose_video(
         let overlay_chain = overlay_parts.join(";");
         let filter = format!("{};{}{}", base_chain, overlay_chain, audio_chain);
 
-        let mut cmd = Command::new("ffmpeg");
+        let mut cmd = hidden_cmd("ffmpeg");
         cmd.args(["-y", "-loop", "1", "-i"])
             .arg(&scene.image_path)
             .args(["-i"])
@@ -913,7 +923,7 @@ async fn compose_video(
         args.push("yuv420p".to_string());
         args.push(combined.to_string_lossy().into_owned());
 
-        let output = Command::new("ffmpeg")
+        let output = hidden_cmd("ffmpeg")
             .args(&args)
             .output()
             .map_err(|e| format!("ffmpeg concat xfade: {}", e))?;
@@ -936,7 +946,7 @@ async fn compose_video(
     let output_path = base_dir.join(&output_filename);
 
     if let Some(bgm) = bgm_path.filter(|s| !s.is_empty()) {
-        let status = Command::new("ffmpeg")
+        let status = hidden_cmd("ffmpeg")
             .args(["-y", "-i"])
             .arg(&combined)
             .args(["-i"])
