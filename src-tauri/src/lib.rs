@@ -205,31 +205,36 @@ fn normalize_transition(name: &str) -> &str {
     }
 }
 
-fn output_base_dir() -> Result<PathBuf, String> {
-    let dir = PathBuf::from(r"C:\Users\Owner\Documents\生成動画");
+fn output_base_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .document_dir()
+        .map_err(|e| e.to_string())?
+        .join("生成動画");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 
-fn session_asset_dir(session_id: &str) -> Result<PathBuf, String> {
-    let dir = output_base_dir()?.join(session_id);
+fn session_asset_dir(app: &tauri::AppHandle, session_id: &str) -> Result<PathBuf, String> {
+    let dir = output_base_dir(app)?.join(session_id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 
 #[tauri::command]
-fn get_media_dir() -> Result<String, String> {
-    output_base_dir().map(|p| p.to_string_lossy().into_owned())
+fn get_media_dir(app: tauri::AppHandle) -> Result<String, String> {
+    output_base_dir(&app).map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
 async fn save_audio_base64(
+    app: tauri::AppHandle,
     session_id: String,
     base64_data: String,
     filename: String,
     extension: String,
 ) -> Result<String, String> {
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let ext = if extension.is_empty() {
         "mp3".to_string()
     } else {
@@ -245,11 +250,12 @@ async fn save_audio_base64(
 
 #[tauri::command]
 async fn save_overlay_png(
+    app: tauri::AppHandle,
     session_id: String,
     base64_data: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let png_path = dir.join(format!("{}.png", filename));
     let bytes = general_purpose::STANDARD
         .decode(base64_data.as_bytes())
@@ -260,11 +266,12 @@ async fn save_overlay_png(
 
 #[tauri::command]
 async fn download_image(
+    app: tauri::AppHandle,
     session_id: String,
     url: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let img_path = dir.join(format!("{}.jpg", filename));
 
     let status = Command::new("curl")
@@ -282,6 +289,7 @@ async fn download_image(
 
 #[tauri::command]
 async fn cloudflare_generate_image(
+    app: tauri::AppHandle,
     session_id: String,
     account_id: String,
     api_key: String,
@@ -289,7 +297,7 @@ async fn cloudflare_generate_image(
     body_json: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let tmp_path = dir.join(format!("{}_cf.bin", filename));
     let out_path = dir.join(format!("{}.png", filename));
 
@@ -360,6 +368,7 @@ async fn cloudflare_generate_image(
 
 #[tauri::command]
 async fn voicevox_tts(
+    app: tauri::AppHandle,
     session_id: String,
     text: String,
     speaker: i32,
@@ -380,7 +389,7 @@ async fn voicevox_tts(
     let wav_bytes = reqwest_post_json(&synth_url, &query_res).await
         .map_err(|e| format!("VOICEVOX synthesis 失敗: {}", e))?;
 
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let wav_path = dir.join(format!("{}.wav", filename));
     std::fs::write(&wav_path, wav_bytes).map_err(|e| e.to_string())?;
     Ok(wav_path.to_string_lossy().into_owned())
@@ -447,6 +456,7 @@ async fn reqwest_post_json(url: &str, json_body: &str) -> Result<Vec<u8>, String
 
 #[tauri::command]
 async fn edge_tts(
+    app: tauri::AppHandle,
     session_id: String,
     text: String,
     voice: String,
@@ -456,7 +466,7 @@ async fn edge_tts(
         .await
         .map_err(|e| format!("edge_tts: {}", e))?;
 
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let mp3_path = dir.join(format!("{}.mp3", filename));
     std::fs::write(&mp3_path, &audio_bytes).map_err(|e| e.to_string())?;
 
@@ -631,12 +641,13 @@ fn days_to_ymd(days: i64) -> (i64, i64, i64) {
 
 #[tauri::command]
 async fn generate_tts(
+    app: tauri::AppHandle,
     session_id: String,
     text: String,
     voice: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = session_asset_dir(&session_id)?;
+    let dir = session_asset_dir(&app, &session_id)?;
     let aiff_path = dir.join(format!("{}.aiff", filename));
     let wav_path = dir.join(format!("{}.wav", filename));
 
@@ -704,6 +715,7 @@ async fn get_audio_duration(audio_path: String) -> Result<f64, String> {
 
 #[tauri::command]
 async fn compose_video(
+    app: tauri::AppHandle,
     session_id: String,
     scenes: Vec<SceneInput>,
     bgm_path: Option<String>,
@@ -713,8 +725,8 @@ async fn compose_video(
         return Err("No scenes provided".into());
     }
 
-    let base_dir = output_base_dir()?;
-    let asset_dir = session_asset_dir(&session_id)?;
+    let base_dir = output_base_dir(&app)?;
+    let asset_dir = session_asset_dir(&app, &session_id)?;
     let scene_videos_dir = asset_dir.join("scenes");
     std::fs::create_dir_all(&scene_videos_dir).map_err(|e| e.to_string())?;
 
