@@ -1,11 +1,14 @@
 import { useState } from "react";
 import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { generateVideo, type ProgressUpdate } from "../lib/video";
-import type { Script } from "../types";
+import { saveRecord } from "../lib/analytics";
+import type { Script, ScriptInput } from "../types";
 
 interface Props {
   apiKey: string;
   script: Script;
+  scriptInput?: ScriptInput;
+  onVideoGenerated?: (sessionId: string, videoPath: string) => void;
 }
 
 function buildDescription(script: Script): string {
@@ -23,7 +26,7 @@ function buildTags(script: Script): string {
   return script.hashtags.map((h) => h.replace(/^#/, "")).join(", ");
 }
 
-export function VideoGenerator({ apiKey, script }: Props) {
+export function VideoGenerator({ apiKey, script, scriptInput, onVideoGenerated }: Props) {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const [videoPath, setVideoPath] = useState<string | null>(null);
@@ -43,11 +46,30 @@ export function VideoGenerator({ apiKey, script }: Props) {
     setVideoPath(null);
     setLog([]);
     try {
-      const path = await generateVideo(apiKey, script, (p) => {
+      const result = await generateVideo(apiKey, script, (p) => {
         setProgress(p);
         setLog((prev) => [...prev, p.message]);
       });
-      setVideoPath(path);
+      setVideoPath(result.outputPath);
+      if (scriptInput) {
+        await saveRecord({
+          id: result.sessionId,
+          createdAt: new Date().toISOString(),
+          topic: scriptInput.topic,
+          platform: scriptInput.platform,
+          duration: scriptInput.duration,
+          audience: scriptInput.audience,
+          tone: scriptInput.tone,
+          goal: scriptInput.goal,
+          videoPath: result.outputPath,
+          views: 0,
+          likes: 0,
+          comments: 0,
+          watchTimePercent: 0,
+          ctr: 0,
+        });
+      }
+      onVideoGenerated?.(result.sessionId, result.outputPath);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

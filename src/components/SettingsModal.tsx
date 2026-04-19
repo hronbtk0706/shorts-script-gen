@@ -54,6 +54,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   imageStylePreset: "",
   bgmFilePath: "",
   pixabayApiKey: "",
+  youtubeApiKey: "",
+  contentNiche: "",
 };
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
@@ -64,6 +66,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [showOpenAi, setShowOpenAi] = useState(false);
   const [showCf, setShowCf] = useState(false);
   const [showPixabay, setShowPixabay] = useState(false);
+  const [showYoutube, setShowYoutube] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -506,6 +509,52 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
           >
             → Pixabayでアカウント登録・APIキー取得（無料）
+          </button>
+        </section>
+
+        <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
+          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
+            トレンド取得 / 自動最適化
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            設定するとYouTubeの最新トレンドを参照して台本を自動改善します。
+          </p>
+
+          <label className="block text-sm">チャンネルのジャンル・キーワード</label>
+          <input
+            type="text"
+            value={s.contentNiche}
+            onChange={(e) => update("contentNiche", e.target.value)}
+            placeholder="例: AI活用, 節約術, 筋トレ, 料理レシピ"
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            「今日の動画を生成」ボタンでこのキーワードのトレンドを自動収集します。
+          </p>
+
+          <label className="block text-sm mt-3">YouTube Data API キー（任意）</label>
+          <div className="relative">
+            <input
+              type={showYoutube ? "text" : "password"}
+              value={s.youtubeApiKey}
+              onChange={(e) => update("youtubeApiKey", e.target.value)}
+              placeholder="AIza..."
+              className="w-full px-3 py-2 pr-20 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            />
+            <button
+              type="button"
+              onClick={() => setShowYoutube(!showYoutube)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-500"
+            >
+              {showYoutube ? "隠す" : "表示"}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => openUrl("https://console.cloud.google.com/apis/library/youtube.googleapis.com")}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            → Google Cloud でYouTube Data API v3を有効化（無料・10,000回/日）
           </button>
         </section>
 

@@ -9,6 +9,8 @@ export interface ScriptInput {
   tone?: string;
   goal?: string;
   reference?: string;
+  trendInsights?: string;
+  performanceInsights?: string;
 }
 
 export interface SubtitleStyle {

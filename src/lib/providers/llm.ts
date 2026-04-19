@@ -13,6 +13,8 @@ export interface TopicSuggestInput {
   platform: Platform;
   category?: string;
   count?: number;
+  trendInsights?: string;
+  performanceInsights?: string;
 }
 
 export interface LlmProvider {
@@ -44,6 +46,12 @@ function buildTopicPrompt(input: TopicSuggestInput): string {
     lines.push(`- カテゴリ・方向性: ${input.category}`);
   } else {
     lines.push("- カテゴリ: おまかせ（幅広く多様性のあるジャンルから）");
+  }
+  if (input.trendInsights) {
+    lines.push("", "# 今日のYouTubeトレンド（参考必須）", input.trendInsights);
+  }
+  if (input.performanceInsights) {
+    lines.push("", "# 過去の実績データ（このチャンネルの傾向）", input.performanceInsights);
   }
   lines.push(
     "",
@@ -89,6 +97,12 @@ function buildPromptBody(input: ScriptInput): string {
   if (input.tone) lines.push(`- トーン: ${input.tone}`);
   if (input.goal) lines.push(`- 目的: ${input.goal}`);
   if (input.reference) lines.push(`- 参考・演出指示: ${input.reference}`);
+  if (input.trendInsights) {
+    lines.push("", "# 今日のYouTubeトレンド（必ず参考にすること）", input.trendInsights);
+  }
+  if (input.performanceInsights) {
+    lines.push("", "# 過去の動画パフォーマンス分析（改善点を反映すること）", input.performanceInsights);
+  }
 
   lines.push(
     "",

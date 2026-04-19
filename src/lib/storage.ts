@@ -20,6 +20,8 @@ const KEY_CLOUDFLARE_MODEL = "cloudflare_model";
 const KEY_IMAGE_STYLE_PRESET = "image_style_preset";
 const KEY_BGM_FILE_PATH = "bgm_file_path";
 const KEY_PIXABAY_API_KEY = "pixabay_api_key";
+const KEY_YOUTUBE_API_KEY = "youtube_api_key";
+const KEY_CONTENT_NICHE = "content_niche";
 
 export type LlmProviderId = "gemini" | "groq" | "openai";
 export type TtsProviderId = "say" | "edge" | "voicevox";
@@ -60,6 +62,8 @@ export interface AppSettings {
   imageStylePreset: ImageStylePreset;
   bgmFilePath: string;
   pixabayApiKey: string;
+  youtubeApiKey: string;
+  contentNiche: string;
 }
 
 async function get<T>(key: string, fallback: T): Promise<T> {
@@ -142,6 +146,8 @@ export async function loadSettings(): Promise<AppSettings> {
     imageStylePreset,
     bgmFilePath: await get(KEY_BGM_FILE_PATH, ""),
     pixabayApiKey: await get(KEY_PIXABAY_API_KEY, ""),
+    youtubeApiKey: await get(KEY_YOUTUBE_API_KEY, ""),
+    contentNiche: await get(KEY_CONTENT_NICHE, ""),
   };
 }
 
@@ -163,6 +169,8 @@ export async function saveSettings(s: AppSettings): Promise<void> {
   await store.set(KEY_IMAGE_STYLE_PRESET, s.imageStylePreset);
   await store.set(KEY_BGM_FILE_PATH, s.bgmFilePath);
   await store.set(KEY_PIXABAY_API_KEY, s.pixabayApiKey);
+  await store.set(KEY_YOUTUBE_API_KEY, s.youtubeApiKey);
+  await store.set(KEY_CONTENT_NICHE, s.contentNiche);
   await store.save();
 }
 

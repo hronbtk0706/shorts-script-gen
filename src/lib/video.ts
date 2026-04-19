@@ -166,11 +166,16 @@ function allocateCaptionTimings(
   return result;
 }
 
+export interface VideoResult {
+  outputPath: string;
+  sessionId: string;
+}
+
 export async function generateVideo(
   _apiKey: string,
   script: Script,
   onProgress: ProgressCallback,
-): Promise<string> {
+): Promise<VideoResult> {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const sessionId = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -353,5 +358,5 @@ export async function generateVideo(
     message: `完成！ ${outputPath}`,
   });
 
-  return outputPath;
+  return { outputPath, sessionId };
 }
