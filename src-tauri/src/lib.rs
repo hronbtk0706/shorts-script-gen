@@ -205,29 +205,31 @@ fn normalize_transition(name: &str) -> &str {
     }
 }
 
-fn app_media_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("media");
+fn output_base_dir() -> Result<PathBuf, String> {
+    let dir = PathBuf::from(r"C:\Users\Owner\Documents\生成動画");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+fn session_asset_dir(session_id: &str) -> Result<PathBuf, String> {
+    let dir = output_base_dir()?.join(session_id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 
 #[tauri::command]
-fn get_media_dir(app: tauri::AppHandle) -> Result<String, String> {
-    app_media_dir(&app).map(|p| p.to_string_lossy().into_owned())
+fn get_media_dir() -> Result<String, String> {
+    output_base_dir().map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
 async fn save_audio_base64(
-    app: tauri::AppHandle,
+    session_id: String,
     base64_data: String,
     filename: String,
     extension: String,
 ) -> Result<String, String> {
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let ext = if extension.is_empty() {
         "mp3".to_string()
     } else {
@@ -243,11 +245,11 @@ async fn save_audio_base64(
 
 #[tauri::command]
 async fn save_overlay_png(
-    app: tauri::AppHandle,
+    session_id: String,
     base64_data: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let png_path = dir.join(format!("{}.png", filename));
     let bytes = general_purpose::STANDARD
         .decode(base64_data.as_bytes())
@@ -258,11 +260,11 @@ async fn save_overlay_png(
 
 #[tauri::command]
 async fn download_image(
-    app: tauri::AppHandle,
+    session_id: String,
     url: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let img_path = dir.join(format!("{}.jpg", filename));
 
     let status = Command::new("curl")
@@ -280,14 +282,14 @@ async fn download_image(
 
 #[tauri::command]
 async fn cloudflare_generate_image(
-    app: tauri::AppHandle,
+    session_id: String,
     account_id: String,
     api_key: String,
     model: String,
     body_json: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let tmp_path = dir.join(format!("{}_cf.bin", filename));
     let out_path = dir.join(format!("{}.png", filename));
 
@@ -358,14 +360,13 @@ async fn cloudflare_generate_image(
 
 #[tauri::command]
 async fn voicevox_tts(
-    app: tauri::AppHandle,
+    session_id: String,
     text: String,
     speaker: i32,
     filename: String,
 ) -> Result<String, String> {
     let base_url = "http://localhost:50021";
 
-    // 1) audio_query
     let query_url = format!(
         "{}/audio_query?text={}&speaker={}",
         base_url,
@@ -375,12 +376,11 @@ async fn voicevox_tts(
     let query_res = reqwest_post_empty(&query_url).await
         .map_err(|e| format!("VOICEVOX audio_query 失敗（起動中？）: {}", e))?;
 
-    // 2) synthesis
     let synth_url = format!("{}/synthesis?speaker={}", base_url, speaker);
     let wav_bytes = reqwest_post_json(&synth_url, &query_res).await
         .map_err(|e| format!("VOICEVOX synthesis 失敗: {}", e))?;
 
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let wav_path = dir.join(format!("{}.wav", filename));
     std::fs::write(&wav_path, wav_bytes).map_err(|e| e.to_string())?;
     Ok(wav_path.to_string_lossy().into_owned())
@@ -447,7 +447,7 @@ async fn reqwest_post_json(url: &str, json_body: &str) -> Result<Vec<u8>, String
 
 #[tauri::command]
 async fn edge_tts(
-    app: tauri::AppHandle,
+    session_id: String,
     text: String,
     voice: String,
     filename: String,
@@ -456,7 +456,7 @@ async fn edge_tts(
         .await
         .map_err(|e| format!("edge_tts: {}", e))?;
 
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let mp3_path = dir.join(format!("{}.mp3", filename));
     std::fs::write(&mp3_path, &audio_bytes).map_err(|e| e.to_string())?;
 
@@ -631,12 +631,12 @@ fn days_to_ymd(days: i64) -> (i64, i64, i64) {
 
 #[tauri::command]
 async fn generate_tts(
-    app: tauri::AppHandle,
+    session_id: String,
     text: String,
     voice: String,
     filename: String,
 ) -> Result<String, String> {
-    let dir = app_media_dir(&app)?;
+    let dir = session_asset_dir(&session_id)?;
     let aiff_path = dir.join(format!("{}.aiff", filename));
     let wav_path = dir.join(format!("{}.wav", filename));
 
@@ -704,7 +704,7 @@ async fn get_audio_duration(audio_path: String) -> Result<f64, String> {
 
 #[tauri::command]
 async fn compose_video(
-    app: tauri::AppHandle,
+    session_id: String,
     scenes: Vec<SceneInput>,
     bgm_path: Option<String>,
     output_filename: String,
@@ -713,8 +713,9 @@ async fn compose_video(
         return Err("No scenes provided".into());
     }
 
-    let dir = app_media_dir(&app)?;
-    let scene_videos_dir = dir.join("scenes");
+    let base_dir = output_base_dir()?;
+    let asset_dir = session_asset_dir(&session_id)?;
+    let scene_videos_dir = asset_dir.join("scenes");
     std::fs::create_dir_all(&scene_videos_dir).map_err(|e| e.to_string())?;
 
     let mut scene_video_paths: Vec<PathBuf> = Vec::new();
@@ -813,7 +814,7 @@ async fn compose_video(
         scene_video_paths.push(scene_mp4);
     }
 
-    let combined = dir.join("combined.mp4");
+    let combined = asset_dir.join("combined.mp4");
 
     if scenes.len() == 1 {
         std::fs::copy(&scene_video_paths[0], &combined).map_err(|e| e.to_string())?;
@@ -920,7 +921,7 @@ async fn compose_video(
         }
     }
 
-    let output_path = dir.join(&output_filename);
+    let output_path = base_dir.join(&output_filename);
 
     if let Some(bgm) = bgm_path.filter(|s| !s.is_empty()) {
         let status = Command::new("ffmpeg")

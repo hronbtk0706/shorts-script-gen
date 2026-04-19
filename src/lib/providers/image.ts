@@ -9,6 +9,7 @@ export interface ImageInput {
   prompt: string;
   seed: number;
   filename: string;
+  sessionId: string;
 }
 
 export interface ImageProvider {
@@ -74,10 +75,10 @@ function pollinationsUrl(
 const pollinationsProvider: ImageProvider = {
   id: "pollinations",
   label: "Pollinations.ai（無料・無制限）",
-  async generate({ prompt, seed, filename }, settings) {
+  async generate({ prompt, seed, filename, sessionId }, settings) {
     const finalPrompt = applyStylePreset(prompt, settings.imageStylePreset);
     const url = pollinationsUrl(finalPrompt, seed, settings.pollinationsModel);
-    return invoke<string>("download_image", { url, filename });
+    return invoke<string>("download_image", { sessionId, url, filename });
   },
 };
 
@@ -121,6 +122,7 @@ function isCloudflareNsfwError(err: unknown): boolean {
 }
 
 async function callCloudflare(
+  sessionId: string,
   accountId: string,
   apiKey: string,
   model: string,
@@ -140,6 +142,7 @@ async function callCloudflare(
   }
 
   return invoke<string>("cloudflare_generate_image", {
+    sessionId,
     accountId,
     apiKey,
     model,
@@ -151,7 +154,7 @@ async function callCloudflare(
 const cloudflareProvider: ImageProvider = {
   id: "cloudflare",
   label: "Cloudflare Workers AI（10,000/日・無料）",
-  async generate({ prompt, seed, filename }, settings) {
+  async generate({ prompt, seed, filename, sessionId }, settings) {
     if (!settings.cloudflareAccountId || !settings.cloudflareApiKey) {
       throw new Error(
         "Cloudflare のアカウントID と API キーを設定してください",
@@ -163,6 +166,7 @@ const cloudflareProvider: ImageProvider = {
 
     try {
       return await callCloudflare(
+        sessionId,
         settings.cloudflareAccountId,
         settings.cloudflareApiKey,
         model,
@@ -172,10 +176,10 @@ const cloudflareProvider: ImageProvider = {
       );
     } catch (e) {
       if (!isCloudflareNsfwError(e)) throw e;
-      // NSFW filter tripped — sanitize prompt and retry once
       const sanitized = sanitizeForCloudflare(finalPrompt);
       try {
         return await callCloudflare(
+          sessionId,
           settings.cloudflareAccountId,
           settings.cloudflareApiKey,
           model,

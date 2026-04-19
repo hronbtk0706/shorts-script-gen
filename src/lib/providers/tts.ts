@@ -4,6 +4,7 @@ import type { AppSettings } from "../storage";
 export interface TtsInput {
   text: string;
   filename: string;
+  sessionId: string;
 }
 
 export interface TtsProvider {
@@ -15,8 +16,9 @@ export interface TtsProvider {
 const sayProvider: TtsProvider = {
   id: "say",
   label: "macOS say（無料・無制限）",
-  async synthesize({ text, filename }, settings) {
+  async synthesize({ text, filename, sessionId }, settings) {
     return invoke<string>("generate_tts", {
+      sessionId,
       text,
       voice: settings.sayVoice || "Kyoko",
       filename,
@@ -27,18 +29,18 @@ const sayProvider: TtsProvider = {
 const edgeProvider: TtsProvider = {
   id: "edge",
   label: "Edge TTS（無料・無制限・高品質）",
-  async synthesize({ text, filename }, settings) {
+  async synthesize({ text, filename, sessionId }, settings) {
     const voice = settings.edgeVoice || "ja-JP-NanamiNeural";
-    return invoke<string>("edge_tts", { text, voice, filename });
+    return invoke<string>("edge_tts", { sessionId, text, voice, filename });
   },
 };
 
 const voicevoxProvider: TtsProvider = {
   id: "voicevox",
   label: "VOICEVOX（ローカル・キャラ声・要起動）",
-  async synthesize({ text, filename }, settings) {
+  async synthesize({ text, filename, sessionId }, settings) {
     const speaker = settings.voicevoxSpeaker ?? 3;
-    return invoke<string>("voicevox_tts", { text, speaker, filename });
+    return invoke<string>("voicevox_tts", { sessionId, text, speaker, filename });
   },
 };
 

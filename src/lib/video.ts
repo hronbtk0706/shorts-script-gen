@@ -74,10 +74,12 @@ async function renderAndSaveOverlay(
   text: string,
   style: SubtitleStyle,
   filename: string,
+  sessionId: string,
 ): Promise<string> {
   const canvas = renderSubtitleCanvas(text, style, "top");
   const base64 = canvasToBase64Png(canvas);
   return invoke<string>("save_overlay_png", {
+    sessionId,
     base64Data: base64,
     filename,
   });
@@ -86,10 +88,12 @@ async function renderAndSaveOverlay(
 async function renderAndSaveCaption(
   text: string,
   filename: string,
+  sessionId: string,
 ): Promise<string> {
   const canvas = renderCaptionCanvas(text);
   const base64 = canvasToBase64Png(canvas);
   return invoke<string>("save_overlay_png", {
+    sessionId,
     base64Data: base64,
     filename,
   });
@@ -166,7 +170,9 @@ export async function generateVideo(
   script: Script,
   onProgress: ProgressCallback,
 ): Promise<string> {
-  const sessionId = Date.now().toString();
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const sessionId = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   const assets: SceneAssets[] = [];
   const settings = await loadSettings();
   const ttsProvider = getTtsProvider(settings.ttsProvider);
@@ -218,8 +224,9 @@ export async function generateVideo(
     const imagePath = await imageProvider.generate(
       {
         prompt: scene.image_prompt,
-        seed: parseInt(sessionId.slice(-6)) + scene.index,
-        filename: `${sessionId}_scene_${scene.index}`,
+        seed: (now.getTime() + scene.index) % 1000000,
+        filename: `scene_${scene.index}`,
+        sessionId,
       },
       settings,
     );
@@ -234,7 +241,8 @@ export async function generateVideo(
     const overlayPngPath = await renderAndSaveOverlay(
       scene.text_overlay,
       scene.style,
-      `${sessionId}_overlay_${scene.index}`,
+      `overlay_${scene.index}`,
+      sessionId,
     );
 
     onProgress({
@@ -247,7 +255,8 @@ export async function generateVideo(
     const audioPath = await ttsProvider.synthesize(
       {
         text: scene.narration,
-        filename: `${sessionId}_scene_${scene.index}`,
+        filename: `scene_${scene.index}`,
+        sessionId,
       },
       settings,
     );
@@ -272,7 +281,8 @@ export async function generateVideo(
         const displayText = c.text.replace(/、$/, "");
         const pngPath = await renderAndSaveCaption(
           displayText,
-          `${sessionId}_caption_${scene.index}_${ci}`,
+          `caption_${scene.index}_${ci}`,
+          sessionId,
         );
         captions.push({
           pngPath,
@@ -322,6 +332,7 @@ export async function generateVideo(
     }));
 
   const outputPath = await invoke<string>("compose_video", {
+    sessionId,
     scenes: rustScenes,
     bgmPath: null,
     outputFilename: `video_${sessionId}.mp4`,
