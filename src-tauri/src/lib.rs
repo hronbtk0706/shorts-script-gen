@@ -24,8 +24,12 @@ fn find_voicevox() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         let local = std::env::var("LOCALAPPDATA").ok()?;
-        let candidate = PathBuf::from(local).join("Programs").join("VOICEVOX").join("VOICEVOX.exe");
-        if candidate.exists() { return Some(candidate); }
+        let base = PathBuf::from(local).join("Programs").join("VOICEVOX");
+        // エンジン単体（GUIなし）を優先
+        let engine = base.join("vv-engine").join("run.exe");
+        if engine.exists() { return Some(engine); }
+        let gui = base.join("VOICEVOX.exe");
+        if gui.exists() { return Some(gui); }
     }
     #[cfg(target_os = "macos")]
     {
