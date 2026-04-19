@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   loadSettings,
@@ -51,6 +52,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   cloudflareApiKey: "",
   cloudflareModel: "@cf/black-forest-labs/flux-1-schnell",
   imageStylePreset: "",
+  bgmFilePath: "",
+  pixabayApiKey: "",
 };
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
@@ -60,6 +63,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [showGroq, setShowGroq] = useState(false);
   const [showOpenAi, setShowOpenAi] = useState(false);
   const [showCf, setShowCf] = useState(false);
+  const [showPixabay, setShowPixabay] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -436,6 +440,73 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               全プロバイダ共通。プロンプトの先頭に画風の指示が自動で付与されます。
             </p>
           </div>
+        </section>
+
+        <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
+          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
+            BGM
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            ファイル指定が優先。未指定の場合はPixabay APIで台本のムードに合ったBGMを自動取得します。
+          </p>
+
+          <label className="block text-sm">BGMファイル（mp3 / wav）</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={s.bgmFilePath}
+              onChange={(e) => update("bgmFilePath", e.target.value)}
+              placeholder="ファイルパスを貼り付けるか右のボタンで選択"
+              className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs font-mono"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const result = await openFileDialog({
+                  multiple: false,
+                  filters: [{ name: "Audio", extensions: ["mp3", "wav", "m4a", "ogg"] }],
+                });
+                if (typeof result === "string") update("bgmFilePath", result);
+              }}
+              className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm whitespace-nowrap"
+            >
+              選択
+            </button>
+            {s.bgmFilePath && (
+              <button
+                type="button"
+                onClick={() => update("bgmFilePath", "")}
+                className="px-3 py-2 rounded-lg border border-red-300 text-red-600 text-sm"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <label className="block text-sm mt-3">Pixabay APIキー（自動BGM用・任意）</label>
+          <div className="relative">
+            <input
+              type={showPixabay ? "text" : "password"}
+              value={s.pixabayApiKey}
+              onChange={(e) => update("pixabayApiKey", e.target.value)}
+              placeholder="Pixabayで無料取得"
+              className="w-full px-3 py-2 pr-20 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPixabay(!showPixabay)}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-500"
+            >
+              {showPixabay ? "隠す" : "表示"}
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => openUrl("https://pixabay.com/api/docs/")}
+            className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            → Pixabayでアカウント登録・APIキー取得（無料）
+          </button>
         </section>
 
         <div className="flex gap-2">

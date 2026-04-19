@@ -722,6 +722,26 @@ async fn generate_tts(
 }
 
 #[tauri::command]
+async fn download_bgm(
+    app: tauri::AppHandle,
+    session_id: String,
+    url: String,
+) -> Result<String, String> {
+    let dir = session_asset_dir(&app, &session_id)?;
+    let path = dir.join("bgm.mp3");
+    let status = hidden_cmd("curl")
+        .args(["-L", "-f", "-s", "-o"])
+        .arg(&path)
+        .arg(&url)
+        .status()
+        .map_err(|e| format!("curl failed: {}", e))?;
+    if !status.success() {
+        return Err(format!("BGMダウンロード失敗: {}", url));
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 async fn get_audio_duration(audio_path: String) -> Result<f64, String> {
     let output = hidden_cmd("ffprobe")
         .args([
@@ -1035,9 +1055,11 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_media_dir,
             download_image,
+            download_bgm,
             cloudflare_generate_image,
             save_overlay_png,
             save_audio_base64,

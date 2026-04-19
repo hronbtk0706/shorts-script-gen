@@ -8,6 +8,7 @@ import {
 } from "./subtitleRender";
 import { getTtsProvider } from "./providers/tts";
 import { getImageProvider } from "./providers/image";
+import { fetchPixabayBgm } from "./providers/bgm";
 import { resolveEffects } from "./effects";
 
 export interface CaptionAsset {
@@ -310,6 +311,14 @@ export async function generateVideo(
     message: "動画を合成中（ffmpeg）...",
   });
 
+  // BGM選択: 設定ファイル優先 → Pixabay自動取得
+  let bgmPath: string | null = null;
+  if (settings.bgmFilePath) {
+    bgmPath = settings.bgmFilePath;
+  } else if (settings.pixabayApiKey && script.bgm_mood) {
+    bgmPath = await fetchPixabayBgm(settings.pixabayApiKey, script.bgm_mood, sessionId);
+  }
+
   const rustScenes: RustSceneInput[] = assets
     .sort((a, b) => a.index - b.index)
     .map((a) => ({
@@ -334,7 +343,7 @@ export async function generateVideo(
   const outputPath = await invoke<string>("compose_video", {
     sessionId,
     scenes: rustScenes,
-    bgmPath: null,
+    bgmPath,
     outputFilename: `video_${sessionId}.mp4`,
   });
 
