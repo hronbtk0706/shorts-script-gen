@@ -56,6 +56,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   pixabayApiKey: "",
   youtubeApiKey: "",
   contentNiche: "",
+  multiCandidateEnabled: true,
+  multiCandidateCount: 3,
+  referenceVideoCount: 5,
+  defaultTemplateId: "",
 };
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
@@ -225,6 +229,56 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               </button>
             </>
           )}
+        </section>
+
+        <section className="space-y-3 py-5 border-b border-gray-200 dark:border-gray-800">
+          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
+            生成モード
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            多候補生成（切り口ブレスト → 複数案 → 自動選抜）が常に有効です。
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                候補数（2〜5）
+              </label>
+              <input
+                type="number"
+                min={2}
+                max={5}
+                value={s.multiCandidateCount}
+                onChange={(e) =>
+                  update(
+                    "multiCandidateCount",
+                    Math.max(2, Math.min(5, Number(e.target.value) || 3)),
+                  )
+                }
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">
+                参考動画数（3〜10）
+              </label>
+              <input
+                type="number"
+                min={3}
+                max={10}
+                value={s.referenceVideoCount}
+                onChange={(e) =>
+                  update(
+                    "referenceVideoCount",
+                    Math.max(3, Math.min(10, Number(e.target.value) || 5)),
+                  )
+                }
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+            ⚠ 参考動画取得は個人の学習・創作参考目的で利用してください
+          </p>
         </section>
 
         <section className="space-y-3 py-5 border-b border-gray-200 dark:border-gray-800">
@@ -525,14 +579,16 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             type="text"
             value={s.contentNiche}
             onChange={(e) => update("contentNiche", e.target.value)}
-            placeholder="例: AI活用, 節約術, 筋トレ, 料理レシピ"
+            placeholder="例: ワンピース 名シーン, AI活用, 筋トレ"
             className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
           />
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            「今日の動画を生成」ボタンでこのキーワードのトレンドを自動収集します。
+            参考動画検索のフォールバック用キーワード（トピックが空の時に使用）。
           </p>
 
-          <label className="block text-sm mt-3">YouTube Data API キー（任意）</label>
+          <label className="block text-sm mt-3">
+            YouTube Data API キー <span className="text-red-500">*</span>
+          </label>
           <div className="relative">
             <input
               type={showYoutube ? "text" : "password"}
@@ -549,12 +605,19 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               {showYoutube ? "隠す" : "表示"}
             </button>
           </div>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            コメント取得に使用（YouTube 公式 API、無料 10,000 ユニット/日）。
+          </p>
           <button
             type="button"
-            onClick={() => openUrl("https://console.cloud.google.com/apis/library/youtube.googleapis.com")}
+            onClick={() =>
+              openUrl(
+                "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
+              )
+            }
             className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
           >
-            → Google Cloud でYouTube Data API v3を有効化（無料・10,000回/日）
+            → Google Cloud で YouTube Data API v3 を有効化（無料・クレカ不要）
           </button>
         </section>
 

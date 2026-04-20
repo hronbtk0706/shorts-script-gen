@@ -18,6 +18,93 @@ fn hidden_cmd<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
     cmd
 }
 
+fn templates_dir() -> PathBuf {
+    // CARGO_MANIFEST_DIR = shorts-script-gen/src-tauri/
+    let cargo_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // project root = shorts-script-gen/
+    cargo_dir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("templates")
+}
+
+#[tauri::command]
+async fn generate_silent_wav(
+    app: tauri::AppHandle,
+    session_id: String,
+    duration: f64,
+) -> Result<String, String> {
+    let asset_dir = session_asset_dir(&app, &session_id)?;
+    let out_path = asset_dir.join("silent.wav");
+    let d = duration.max(0.5);
+    let output = hidden_cmd("ffmpeg")
+        .args([
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            &format!("anullsrc=r=44100:cl=stereo:d={:.3}", d),
+            "-c:a",
+            "pcm_s16le",
+        ])
+        .arg(&out_path)
+        .output()
+        .map_err(|e| format!("ffmpeg silent: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "silent wav failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn list_templates() -> Result<Vec<String>, String> {
+    let dir = templates_dir();
+    if !dir.exists() {
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+        return Ok(vec![]);
+    }
+    let entries = std::fs::read_dir(&dir).map_err(|e| format!("read_dir: {e}"))?;
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        out.push(content);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn save_template(id: String, json: String) -> Result<(), String> {
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err("invalid template id".into());
+    }
+    let dir = templates_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+    let path = dir.join(format!("{id}.json"));
+    std::fs::write(&path, json).map_err(|e| format!("write: {e}"))?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_template(id: String) -> Result<(), String> {
+    if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+        return Err("invalid template id".into());
+    }
+    let path = templates_dir().join(format!("{id}.json"));
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("remove: {e}"))?;
+    }
+    Ok(())
+}
+
 struct VoicevoxChild(Mutex<Option<std::process::Child>>);
 
 fn find_voicevox() -> Option<PathBuf> {
@@ -101,6 +188,45 @@ pub struct SceneInput {
     pub captions: Vec<CaptionInput>,
     #[serde(default)]
     pub audio_leading_pad: f64,
+    #[serde(default)]
+    pub video_layers: Vec<VideoLayerInput>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct VideoLayerInput {
+    pub path: String,
+    /// % of 1080 (0-100)
+    pub x_pct: f64,
+    /// % of 1920 (0-100)
+    pub y_pct: f64,
+    pub width_pct: f64,
+    pub height_pct: f64,
+    #[serde(default)]
+    pub z_index: i32,
+    #[serde(default = "default_layer_shape")]
+    pub shape: String,
+    /// % of smaller dim; used when shape == "rounded"
+    #[serde(default)]
+    pub border_radius_pct: f64,
+    #[serde(default = "default_opacity")]
+    pub opacity: f64,
+    #[serde(default)]
+    pub rotation: f64,
+    #[serde(default)]
+    pub border_width_pct: f64,
+    #[serde(default = "default_border_color")]
+    pub border_color: String,
+}
+
+fn default_layer_shape() -> String {
+    "rect".to_string()
+}
+fn default_opacity() -> f64 {
+    1.0
+}
+fn default_border_color() -> String {
+    "white".to_string()
 }
 
 fn default_motion() -> String {
@@ -793,9 +919,15 @@ async fn compose_video(
 
         let motion = motion_and_base_filter(&scene.motion, scene.duration);
         let color = color_filter(&scene.color);
+        // 基底（動画化した image に motion + color）
+        let base_label = if scene.video_layers.is_empty() {
+            "[bg]".to_string()
+        } else {
+            "[bg0]".to_string()
+        };
         let base_chain = match color {
-            Some(c) => format!("[0:v]{},{}[bg]", motion, c),
-            None => format!("[0:v]{}[bg]", motion),
+            Some(c) => format!("[0:v]{},{}{}", motion, c, base_label),
+            None => format!("[0:v]{}{}", motion, base_label),
         };
 
         let mut audio_filter_steps: Vec<String> = Vec::new();
@@ -816,17 +948,70 @@ async fn compose_video(
         };
 
         let n_captions = scene.captions.len();
+
+        // 動画レイヤーを z_index 昇順で配置
+        let mut sorted_layers: Vec<&VideoLayerInput> = scene.video_layers.iter().collect();
+        sorted_layers.sort_by_key(|l| l.z_index);
+
+        // Input index: 0=image, 1=audio, 2=overlay, 3..3+caps=captions, 3+caps..=video layers
+        let caption_input_start = 3usize;
+        let video_layer_input_start = 3usize + n_captions;
+
+        let mut filter_parts: Vec<String> = Vec::new();
+        filter_parts.push(base_chain);
+
+        // 動画レイヤーを順次オーバーレイ
+        let mut current_bg = base_label.clone();
+        for (li, layer) in sorted_layers.iter().enumerate() {
+            let input_idx = video_layer_input_start + li;
+            let w_px = ((1080.0_f64) * layer.width_pct / 100.0).round().max(2.0) as i32;
+            let h_px = ((1920.0_f64) * layer.height_pct / 100.0).round().max(2.0) as i32;
+            let x_px = ((1080.0_f64) * layer.x_pct / 100.0).round() as i32;
+            let y_px = ((1920.0_f64) * layer.y_pct / 100.0).round() as i32;
+
+            let layer_label = format!("[vl{}]", li);
+            let mut chain = format!(
+                "[{}:v]scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},format=yuva420p",
+                input_idx, w_px, h_px, w_px, h_px
+            );
+
+            // 形状マスク
+            if layer.shape == "circle" {
+                let r = w_px.min(h_px) / 2;
+                chain.push_str(&format!(
+                    ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-{}/2,Y-{}/2),{}),255,0)'",
+                    w_px, h_px, r
+                ));
+            }
+
+            // 不透明度
+            if layer.opacity < 1.0 && layer.opacity >= 0.0 {
+                chain.push_str(&format!(",colorchannelmixer=aa={:.3}", layer.opacity));
+            }
+
+            chain.push_str(&layer_label);
+            filter_parts.push(chain);
+
+            let next_bg = format!("[bg{}]", li + 1);
+            filter_parts.push(format!(
+                "{}{}overlay={}:{}:format=auto{}",
+                current_bg, layer_label, x_px, y_px, next_bg
+            ));
+            current_bg = next_bg;
+        }
+
+        // テロップ (overlay_png) + キャプション
         let mut overlay_parts: Vec<String> = Vec::new();
         let top_out = if n_captions == 0 {
             "[v]".to_string()
         } else {
             "[vt]".to_string()
         };
-        overlay_parts.push(format!("[bg][2:v]overlay=0:0{}", top_out));
+        overlay_parts.push(format!("{}[2:v]overlay=0:0{}", current_bg, top_out));
 
         let mut current_label = top_out;
         for (ci, cap) in scene.captions.iter().enumerate() {
-            let input_idx = 3 + ci;
+            let input_idx = caption_input_start + ci;
             let is_last = ci + 1 == n_captions;
             let next_label = if is_last {
                 "[v]".to_string()
@@ -841,7 +1026,8 @@ async fn compose_video(
         }
 
         let overlay_chain = overlay_parts.join(";");
-        let filter = format!("{};{}{}", base_chain, overlay_chain, audio_chain);
+        filter_parts.push(overlay_chain);
+        let filter = filter_parts.join(";") + &audio_chain;
 
         let mut cmd = hidden_cmd("ffmpeg");
         cmd.args(["-y", "-loop", "1", "-i"])
@@ -853,10 +1039,18 @@ async fn compose_video(
         for cap in &scene.captions {
             cmd.args(["-i"]).arg(&cap.png_path);
         }
+        // 動画レイヤー（ループ再生、色空間まで保持するため他の入力は直後）
+        for layer in &sorted_layers {
+            cmd.args(["-stream_loop", "-1", "-i"]).arg(&layer.path);
+        }
         cmd.args(["-filter_complex", &filter])
             .args(["-map", "[v]", "-map", audio_map])
-            .args(["-c:v", "libx264", "-preset", "medium", "-tune", "stillimage"])
-            .args(["-c:a", "aac", "-b:a", "192k"])
+            .args(["-c:v", "libx264", "-preset", "medium"]);
+        if sorted_layers.is_empty() {
+            // 静止画ベースのみなら stillimage チューニング適用
+            cmd.args(["-tune", "stillimage"]);
+        }
+        cmd.args(["-c:a", "aac", "-b:a", "192k"])
             .args(["-pix_fmt", "yuv420p"])
             .args(["-r", &FPS.to_string()])
             .args(["-t", &format!("{:.3}", scene.duration)])
@@ -1056,6 +1250,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             get_media_dir,
             download_image,
@@ -1068,6 +1263,10 @@ pub fn run() {
             voicevox_tts,
             get_audio_duration,
             compose_video,
+            list_templates,
+            save_template,
+            delete_template,
+            generate_silent_wav,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

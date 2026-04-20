@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import { ScriptForm } from "./components/ScriptForm";
+import { ScriptForm, type ScriptFormSubmit } from "./components/ScriptForm";
 import { ScriptResult } from "./components/ScriptResult";
 import { SettingsModal } from "./components/SettingsModal";
 import { VideoGenerator } from "./components/VideoGenerator";
 import { AnalyticsPanel } from "./components/AnalyticsPanel";
-import { getLlmProvider } from "./lib/providers/llm";
+import { CandidatePicker } from "./components/CandidatePicker";
+import { TemplateManager } from "./components/TemplateManager";
+import type { SelectionResult } from "./lib/providers/llm";
+import { generateScriptWithPipeline } from "./lib/scriptGenerator";
 import { loadSettings, type AppSettings } from "./lib/storage";
 import { loadRecords, computeInsights } from "./lib/analytics";
-import { fetchYouTubeTrends } from "./lib/youtube";
+import { fetchReferenceVideos } from "./lib/youtube";
 import type { Script, ScriptInput } from "./types";
 
-type Tab = "generate" | "analytics";
+type Tab = "generate" | "templates" | "analytics";
 
 function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -20,6 +23,9 @@ function App() {
   const [loadingMsg, setLoadingMsg] = useState("生成中...");
   const [script, setScript] = useState<Script | null>(null);
   const [scriptInput, setScriptInput] = useState<ScriptInput | null>(null);
+  const [candidates, setCandidates] = useState<Script[] | null>(null);
+  const [selection, setSelection] = useState<SelectionResult | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const refreshSettings = async () => {
@@ -37,22 +43,52 @@ function App() {
     });
   }, []);
 
-  const buildInsights = async (s: AppSettings, topic?: string) => {
+  const buildInsights = async (
+    s: AppSettings,
+    topic: string | undefined,
+    skipAutoFetch: boolean,
+  ) => {
     const records = await loadRecords();
     const performanceInsights = computeInsights(records) || undefined;
 
     let trendInsights: string | undefined;
-    const searchKeyword = topic || s.contentNiche;
-    if (s.youtubeApiKey && searchKeyword) {
-      setLoadingMsg("YouTubeトレンドを取得中...");
-      const trend = await fetchYouTubeTrends(s.youtubeApiKey, searchKeyword);
-      trendInsights = trend?.summary;
+    let referenceBundle: import("./types").ReferenceBundle | undefined;
+    if (!skipAutoFetch) {
+      const searchKeyword = topic || s.contentNiche;
+      if (searchKeyword) {
+        setLoadingMsg("参考になるYouTubeショートを取得中...");
+        const bundle = await fetchReferenceVideos(
+          searchKeyword,
+          s.referenceVideoCount,
+        );
+        if (bundle) {
+          referenceBundle = bundle;
+          trendInsights = bundle.promptText;
+        }
+      }
     }
 
-    return { trendInsights, performanceInsights };
+    return { trendInsights, performanceInsights, referenceBundle };
   };
 
-  const handleGenerate = async (input: ScriptInput) => {
+  const runGeneration = async (input: ScriptInput, s: AppSettings) => {
+    const result = await generateScriptWithPipeline(input, s, {
+      candidateCount: s.multiCandidateCount,
+      onProgress: ({ stage, detail }) => {
+        if (stage === "brainstorm") setLoadingMsg(detail ?? "切り口ブレスト中...");
+        else if (stage === "generate") setLoadingMsg(detail ?? "候補を生成中...");
+        else if (stage === "select") setLoadingMsg(detail ?? "候補を審査中...");
+      },
+    });
+    setCandidates(result.candidates);
+    setSelection(result.selection);
+    setActiveIdx(result.selection.selected_index);
+    setScript(result.winner);
+  };
+
+  const handleGenerate = async (submission: ScriptFormSubmit) => {
+    const { input } = submission;
+
     const s = settings ?? (await refreshSettings());
     const keyMissing =
       (s.llmProvider === "gemini" && !s.geminiApiKey) ||
@@ -66,67 +102,22 @@ function App() {
     setError(null);
     setScript(null);
     setScriptInput(null);
+    setCandidates(null);
+    setSelection(null);
     try {
-      const { trendInsights, performanceInsights } = await buildInsights(s, input.topic);
-      const enriched: ScriptInput = { ...input, trendInsights, performanceInsights };
-      setLoadingMsg("台本を生成中...");
-      const provider = getLlmProvider(s.llmProvider);
-      const result = await provider.generateScript(enriched, s);
-      setScript(result);
-      setScriptInput(enriched);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "予期しないエラーが発生しました");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAutoGenerate = async () => {
-    const s = settings ?? (await refreshSettings());
-    const keyMissing =
-      (s.llmProvider === "gemini" && !s.geminiApiKey) ||
-      (s.llmProvider === "groq" && !s.groqApiKey);
-    if (keyMissing) {
-      setSettingsOpen(true);
-      return;
-    }
-    if (!s.contentNiche) {
-      setSettingsOpen(true);
-      setError("設定でジャンル・キーワードを登録してください");
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    setScript(null);
-    setScriptInput(null);
-    try {
-      const { trendInsights, performanceInsights } = await buildInsights(s);
-
-      setLoadingMsg("今日のトピックを選定中...");
-      const provider = getLlmProvider(s.llmProvider);
-      const suggestions = await provider.suggestTopics(
-        {
-          platform: "shorts",
-          category: s.contentNiche,
-          count: 1,
-          trendInsights,
-          performanceInsights,
-        },
-        s,
-      );
-      const topic = suggestions[0]?.topic ?? s.contentNiche;
-
-      setLoadingMsg("台本を生成中...");
-      const input: ScriptInput = {
-        topic,
-        platform: "shorts",
-        duration: 60,
+      const hasSelectedComments =
+        (input.selectedComments?.length ?? 0) > 0;
+      const { trendInsights, performanceInsights, referenceBundle } =
+        await buildInsights(s, input.topic, hasSelectedComments);
+      const enriched: ScriptInput = {
+        ...input,
         trendInsights,
         performanceInsights,
+        referenceBundle,
       };
-      const result = await provider.generateScript(input, s);
-      setScript(result);
-      setScriptInput(input);
+      setLoadingMsg("台本を生成中...");
+      await runGeneration(enriched, s);
+      setScriptInput(enriched);
     } catch (e) {
       setError(e instanceof Error ? e.message : "予期しないエラーが発生しました");
     } finally {
@@ -144,17 +135,9 @@ function App() {
             <div className="min-w-0">
               <h1 className="text-xl font-bold">ショート台本ジェネレーター</h1>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                AI がトレンドと実績から最適な動画を自動生成
+                参考動画のコメントから視聴者反応集ショートを生成
               </p>
             </div>
-
-            <button
-              onClick={handleAutoGenerate}
-              disabled={loading}
-              className="shrink-0 px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-400 text-white font-semibold text-sm shadow transition whitespace-nowrap"
-            >
-              {loading ? loadingMsg : "今日の動画を生成"}
-            </button>
           </div>
 
           <button
@@ -167,7 +150,7 @@ function App() {
         </div>
 
         <div className="max-w-5xl mx-auto px-6 flex gap-1 border-t border-gray-100 dark:border-gray-800">
-          {(["generate", "analytics"] as Tab[]).map((t) => (
+          {(["generate", "templates", "analytics"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -177,7 +160,11 @@ function App() {
                   : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
               }`}
             >
-              {t === "generate" ? "台本生成" : "実績管理"}
+              {t === "generate"
+                ? "台本生成"
+                : t === "templates"
+                  ? "テンプレート管理"
+                  : "実績管理"}
             </button>
           ))}
         </div>
@@ -205,11 +192,22 @@ function App() {
               )}
               {!loading && !script && !error && (
                 <div className="flex flex-col items-center justify-center py-20 text-gray-400 text-sm gap-3">
-                  <p>トピックを入力するか「今日の動画を生成」を押してください</p>
+                  <p>左のフォームにトピックを入力して生成してください</p>
                 </div>
               )}
               {script && (
                 <div className="space-y-6">
+                  {candidates && candidates.length > 1 && selection && (
+                    <CandidatePicker
+                      candidates={candidates}
+                      activeIndex={activeIdx}
+                      selection={selection}
+                      onSelect={(i) => {
+                        setActiveIdx(i);
+                        setScript(candidates[i]);
+                      }}
+                    />
+                  )}
                   <ScriptResult script={script} onChange={setScript} />
                   <VideoGenerator
                     apiKey={videoApiKey}
@@ -219,6 +217,13 @@ function App() {
                 </div>
               )}
             </section>
+          </div>
+        )}
+
+        {tab === "templates" && (
+          <div className="max-w-3xl">
+            <h2 className="text-lg font-semibold mb-4">テンプレート管理</h2>
+            <TemplateManager />
           </div>
         )}
 

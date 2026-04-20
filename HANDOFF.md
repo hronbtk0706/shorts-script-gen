@@ -1,176 +1,268 @@
 # 引き継ぎドキュメント — ショート動画台本ジェネレーター
 
-最終更新: 2026-04-19
+最終更新: 2026-04-20
 
 ## プロジェクト概要
 
-AIでショート動画（TikTok/Reels/Shorts）の台本を自動生成するデスクトップアプリ。
-既にMVPは完成。**次のゴール: 台本から動画まで自動生成する機能の追加（プランB: 画像+TTS+テロップ+BGM を ffmpeg 合成）**
+YouTube Shorts / TikTok / Reels の**反応集型ショート動画**を作るデスクトップアプリ。台本生成から動画合成まで一気通貫。
 
-## 現在の状態（MVP完成済み）
+テンプレート（カット構成＋レイヤー配置）を作って、トピックごとに台本とコメントを差し替えて量産する運用を想定。
 
-### スタック
+## スタック
+
 - **Tauri 2** + **React 19** + **TypeScript** + **Vite 7**
-- **Tailwind CSS v4**（@tailwindcss/vite）
-- **@google/genai** (v1.50.1) — Gemini SDK
-- **@tauri-apps/plugin-store** — APIキーのローカル永続化
-- **Rust 1.95** + **Cargo**
+- **Tailwind CSS v4**
+- **Rust 1.95**
+- LLM: OpenAI (GPT-5 系) / Groq (Llama 3.3 70B) / Gemini 2.5
+- TTS: Edge TTS / VOICEVOX / macOS say
+- 画像生成: Pollinations.ai / Cloudflare Workers AI
+- BGM: Pixabay
+- YouTube: **YouTube Data API v3**（コメント取得、公式・キー必須）+ youtubei.js（検索・情報取得、キー不要）
+- 動画編集: `react-moveable`（レイヤー操作）
+- 動画合成: FFmpeg 8.1（**外部インストール必須**）
 
-### 実装済み機能
-- [x] トピック入力フォーム（必須: トピック・プラットフォーム・尺 / 任意: ターゲット・トーン・目的・参考）
-- [x] Gemini API で構造化JSON出力（responseSchema 使用）
-- [x] 結果表示（フック/本編セグメント/CTA/ハッシュタグ/BGM）
-- [x] セクションごとの「コピー」ボタン
-- [x] APIキー設定モーダル（LazyStore に暗号化せず平文保存）
+## セットアップ（別 PC 引き継ぎ）
 
-### 動作確認済み
-Gemini 2.5 Flash で台本生成が正常動作することをユーザー環境で確認済み（2026-04-19）。
-
-## ファイル構成
+### 必須ソフト
 
 ```
-/Users/saismac03/Documents/project/shorts-script-gen/
-├── src/
-│   ├── App.tsx                     # メインレイアウト（状態管理）
-│   ├── main.tsx                    # エントリ（App.css をインポート）
-│   ├── App.css                     # @import "tailwindcss" のみ
-│   ├── types.ts                    # Script / ScriptInput 型
-│   ├── components/
-│   │   ├── ScriptForm.tsx          # 入力フォーム
-│   │   ├── ScriptResult.tsx        # 結果表示
-│   │   └── SettingsModal.tsx       # APIキー設定
-│   └── lib/
-│       ├── gemini.ts               # Gemini API ラッパー（モデル: gemini-2.5-flash）
-│       └── storage.ts              # APIキー永続化（@tauri-apps/plugin-store）
-├── src-tauri/
-│   ├── Cargo.toml                  # tauri-plugin-store 追加済み
-│   ├── src/lib.rs                  # プラグイン登録済み
-│   ├── capabilities/default.json   # store:default 権限付与済み
-│   └── tauri.conf.json
-├── vite.config.ts                  # Tailwind プラグイン追加済み
-├── package.json
-└── HANDOFF.md                      # このファイル
+1. Node.js 22+
+2. Rust 1.95+ (rustup)
+3. Microsoft Visual Studio 2022 + C++ ワークロード（Windows）
+4. FFmpeg 8.1+（winget install Gyan.FFmpeg）
+5. WebView2 Runtime（Windows 11 は標準同梱）
 ```
 
-## 重要な技術決定
-
-### 1. モデルは `gemini-2.5-flash` を使う
-- 当初 `gemini-2.0-flash` で実装したが、2026-04時点で **無料枠がlimit=0** になっており使えなかった
-- `gemini-2.5-flash` に変更して解決（[src/lib/gemini.ts](src/lib/gemini.ts) の `model` フィールド）
-- 切り替え候補: `gemini-2.5-flash-lite`（より軽量）、`gemini-flash-latest`（エイリアス）
-
-### 2. APIキーはGemini専用プロジェクトで発行
-- Workspace アカウント（`/u/1/`）で作ったプロジェクトは無料枠対象外だった
-- 個人Gmail（`/u/0/`）の `gen-lang-client-*` プロジェクトで発行したキーは無料枠（1日1,500リクエスト）が使える
-- ユーザーは `saisproduction03@gmail.com` の個人Gmailで発行済み
-
-### 3. 構造化出力は `responseSchema` で厳密に
-- [src/lib/gemini.ts](src/lib/gemini.ts) で `Type.OBJECT` を使って定義
-- `propertyOrdering` でフィールド順を固定（Geminiは順序に敏感）
-- 型は [src/types.ts](src/types.ts) に集約
-
-### 4. Tailwind v4 構成
-- `tailwind.config.js` 不要（v4 は @import のみで動く）
-- [src/App.css](src/App.css) の `@import "tailwindcss";` が全て
-- [vite.config.ts](vite.config.ts) で `tailwindcss()` プラグインを登録
-
-## 次のタスク: 動画生成機能（プランB）
-
-### 設計
-
-台本の各本編セグメント（body[]）から、以下を自動生成してffmpegで合成:
-
-1. **シーン画像（Imagen）**: セグメントごとに `visual` 欄から画像プロンプトを作成 → Imagen API（Gemini経由）で生成
-2. **ナレーション音声（TTS）**: `narration` を音声化
-   - 第1候補: **Gemini TTS**（`gemini-2.5-flash-preview-tts`）
-   - 代替: ブラウザの `SpeechSynthesis`（無料・即時・英語寄り）、または Cloud TTS
-3. **テロップ**: `text_overlay` を ffmpeg の `drawtext` で焼き込む（または ASS字幕）
-4. **BGM**: `bgm_mood` に合う曲をローカルフォルダから選ぶ（まずはユーザー提供）
-5. **合成**: 各シーンの 画像+音声+テロップ → concat → BGM合成 → 縦型 1080x1920 で出力
-
-### 実装プラン（推奨順序）
-
-#### Phase 1: 骨組み
-1. 新規タブ/画面「動画生成」を追加
-2. 既存の `Script` を受け取り、進捗表示（シーンごとのステータス）
-3. Rust 側で ffmpeg を呼ぶコマンドを追加（`#[tauri::command] async fn render_video`）
-4. ffmpeg のバイナリは Homebrew 依存 or sidecar 同梱するか決定 → **sidecar推奨**（ユーザーに入れさせない）
-
-#### Phase 2: 画像生成
-1. Gemini SDK で `imagen-3.0-generate-002` または `imagen-4.0-generate-001` を呼ぶ
-2. 画像は Tauri の `appLocalDataDir` に PNG 保存
-3. アスペクト比は 9:16（縦型ショート）
-
-#### Phase 3: 音声生成
-1. Gemini TTS で `narration` を WAV 生成
-2. 保存先は画像と同じディレクトリ
-3. セグメントごとの長さを計測（ffprobe）→ 画像表示尺を音声尺に合わせる
-
-#### Phase 4: ffmpeg 合成
-1. 各シーン: `ffmpeg -loop 1 -i scene.png -i voice.wav -vf "drawtext=text='...',scale=1080:1920" -shortest scene.mp4`
-2. concat: `ffmpeg -f concat -i list.txt -c copy combined.mp4`
-3. BGM: `ffmpeg -i combined.mp4 -i bgm.mp3 -filter_complex "[1:a]volume=0.15[bgm];[0:a][bgm]amix=inputs=2" output.mp4`
-
-#### Phase 5: UI 仕上げ
-1. シーンごとのプレビュー（画像+ナレーション試聴）
-2. シーン単位で再生成ボタン
-3. 最終動画のプレビュー → 保存先選択（ダイアログ経由）
-
-### コスト見積もり（無料枠前提）
-
-| 項目 | モデル | 無料枠 | 30秒動画のコスト |
-|---|---|---|---|
-| 台本生成 | gemini-2.5-flash | 十分 | ほぼ0 |
-| 画像生成 | imagen-3/4 | **有料のみ**（$0.03〜/枚） | 5シーン×$0.03 = $0.15 |
-| TTS | gemini-2.5-flash-preview-tts | 無料枠あり | 0〜微小 |
-
-**注意**: 画像生成は無料枠なし。代替として:
-- Stable Diffusion をローカル実行（Ollama/diffusers）
-- Pollinations.ai の無料API
-- ストック画像API（Unsplash/Pexels）+ 検索クエリを Gemini に生成させる
-
-→ ユーザーと相談して決定する必要あり（プランBの本質は「AI素材+自動編集」で、画像がローカルSDでも成立する）。
-
-## 環境情報
-
-- **プラットフォーム**: macOS (Darwin 25.2.0, aarch64)
-- **Rust**: 1.95.0（rustup経由でインストール済み）
-- **Node**: v25.6.0
-- **npm**: 11.8.0
-- **ffmpeg**: **未確認**（次セッションで `which ffmpeg` 必須。無ければ Homebrew or sidecar）
-
-## APIキーの場所（注意）
-
-- ユーザーのAPIキーは **アプリ側の LazyStore** に保存（`~/Library/Application Support/com.shorts-script-gen.app/settings.json` あたり）
-- **チャット・コード・Git に絶対に書かない**。過去に一度平文で貼られたキーがあるため、ユーザーに漏洩の注意を徹底済み
-- 次セッションで必要ならユーザーにアプリ内の⚙️設定から再入力してもらう
-
-## 起動コマンド
+### インストール手順
 
 ```bash
-cd /Users/saismac03/Documents/project/shorts-script-gen
-npm run tauri dev      # 開発起動
-npm run tauri build    # リリースビルド（.dmg が src-tauri/target/release/bundle/ に出る）
+git clone https://github.com/hronbtk0706/shorts-script-gen.git
+cd shorts-script-gen
+npm install
+# Rust 依存は初回 npm run tauri dev 時に自動ダウンロード
 ```
 
-初回のRustビルドは5〜10分。2回目以降は差分のみ。
+### 起動
 
-## 権限設定（済）
+```bash
+npm run tauri dev
+```
 
-`~/.claude/settings.json` に `permissions` セクションを追加済み。npm/cargo/tauri/git/ffmpeg などのコマンドと主要なファイル操作ツールが allow リストに入っているため、次セッションでは許可プロンプトがほぼ出ない想定。
+**初回は Rust 依存のコンパイルで 5〜10 分かかる。**
 
-## ユーザーの作業スタイルメモ
+### 必須 API キー（設定画面で登録）
 
-- 日本語で会話
-- 手短で具体的な説明を好む
-- 「はい」「Bで」のような短い返事で方針決定することが多い → 選択肢を明示的に提示すると進めやすい
-- APIキーのような機密情報をうっかりチャットに貼ることがある → 注意喚起を忘れない
-- 画面スクリーンショットを送って相談する傾向あり
+| 用途 | キー | 取得先 |
+|---|---|---|
+| 台本生成 | OpenAI / Gemini / Groq のどれか | 各プロバイダ |
+| コメント取得 | YouTube Data API v3 | https://console.cloud.google.com/apis/library/youtube.googleapis.com |
+| 画像生成 | Cloudflare Workers AI（任意） | https://dash.cloudflare.com |
+| BGM | Pixabay（任意） | https://pixabay.com/accounts/register |
 
-## 次セッション開始時にやること
+## 主要機能と進化の経緯
 
-1. **このファイルを読んで現状把握**
-2. `npm run tauri dev` が動くか確認（Rustビルドキャッシュ済みのはず）
-3. `which ffmpeg` で ffmpeg の有無チェック
-4. プランBの Phase 1 から着手するかユーザーに確認
-5. 画像生成を有料（Imagen）にするか無料代替（SD/Pollinations/ストック）にするか方針決定
+### 初期 MVP（台本生成のみ）
+Gemini で構造化 JSON 出力、React で結果表示、コピーボタンなど。
+
+### Phase A（YouTube 参考データ + 多候補生成）
+- youtubei.js 導入で YouTube 検索・字幕・コメント取得（API キー不要部分）
+- 多候補生成パイプライン: ブレスト → 3 候補並列生成 → AI 審査で最良選定
+- 設定で候補数・参考動画数を調整可能
+- OpenAI/Groq/Gemini プロバイダ切り替え
+
+### Phase B（反応集型への特化）
+- 旧「解説・考察型」プロンプトは完全削除
+- **反応集型**プロンプトのみ: body の各要素は「純粋なコメント引用箱」
+- AI の合いの手禁止、実コメントそのまま並べる形式
+- hook/cta だけ AI の地の文 OK
+
+### Phase C（コメント手動選択）
+- `CommentPicker` コンポーネント
+- 特定動画 URL から最大 200 件のコメント取得（YouTube Data API v3 経由）
+- 返信もインデント表示して選択可
+- 選んだコメントだけで LLM が body を構築
+
+### Phase D（テンプレート機能 v1: cuts ベース）**※廃止済み**
+- 動画の構成（hook/body/cta カット × N）を JSON で保存
+- Gemini 2.5 Vision で YouTube 動画から構造自動解析
+- カットごとのレイヤー管理（画像/動画/単色/テキスト/コメント枠）
+
+### Phase E（Canvas レイヤー編集 + FFmpeg 合成）
+- `react-moveable` でドラッグ/リサイズ/回転
+- マスク形状（長方形/角丸/円形）、枠線、不透明度、回転
+- スナップ（画面端・中央・他レイヤー）
+- Undo/Redo、グリッド表示
+- Canvas で非動画レイヤーを合成 → Rust に渡す
+- **動画レイヤーも FFmpeg で実際にループ再生**
+- プレビュー機能（静止画サムネ + 動画レンダリング）
+
+### Phase F（タイムライン型への全面再設計）**← 現在**
+- **cuts 概念を廃止**、全レイヤーを動画全体の global timeline に自由配置
+- 各レイヤーに `startSec` / `endSec` で独立した表示タイミング
+- 入退場アニメーション設定（fade / slide / zoom / pop）**※設定のみ、FFmpeg 側未実装**
+- セグメント（hook/body/cta）は台本マッピング用の構造マーカーとして残存
+- Playhead スライダーで任意時刻の可視状態プレビュー
+
+## データモデル（v2 Timeline）
+
+```ts
+interface VideoTemplate {
+  version: 2;
+  id, name, note?, sourceUrl?, sourceTitle?, sourceChannel?, createdAt;
+  totalDuration: number;
+  themeVibe?, overallPacing?, narrationStyle?;
+  layers: Layer[];           // global timeline にレイヤーを自由配置
+  segments: TemplateSegment[]; // 台本マッピング用（hook/body[i]/cta）
+}
+
+interface TemplateSegment {
+  id, type: "hook" | "body" | "cta", bodyIndex?,
+  startSec, endSec,
+  color?, transitionTo?, transitionDuration?
+}
+
+interface Layer {
+  id, type: "image" | "video" | "color" | "shape" | "text" | "comment",
+  x, y, width, height,       // % 座標
+  zIndex,
+  rotation?, opacity?,
+  shape?: "rect" | "rounded" | "circle", borderRadius?, border?,
+  source?: "auto" | "user" | string,  // path or 特殊値
+  fillColor?, text?, fontSize?, fontColor?,
+  motion?,
+  // v2 で追加
+  startSec, endSec,
+  entryAnimation?, entryDuration?,
+  exitAnimation?, exitDuration?
+}
+```
+
+v1 (`cuts` ベース) のテンプレは**マイグレーションなしで読み込み拒否**（既存サンプルも削除済み）。
+
+## 現在動作している機能（2026-04-20 時点）
+
+- [x] テンプレ管理（一覧 / 新規作成 / URL解析で作成 / 編集 / 削除 / 複製）
+- [x] タイムライン型テンプレエディタ（セグメント追加/時刻設定/レイヤー配置）
+- [x] Playhead スライダーで時刻スクラブ
+- [x] レイヤー操作: ドラッグ/リサイズ/回転/z順、マスク、枠線
+- [x] レイヤーに `startSec` / `endSec` 設定 → プレビューで可視性反映
+- [x] プレビュー（静止画サムネ / 動画レンダリング）
+- [x] 台本生成: ⚡自動 / 🎯コメント選択
+- [x] 多候補生成（切り口ブレスト → 3 候補 → AI 審査）
+- [x] コメント取得（YouTube Data API v3）
+- [x] 動画レイヤーの FFmpeg ループ合成
+- [x] 画像レイヤーのユーザーファイル指定
+
+## 未実装（TODO）
+
+### 優先度 高
+- **Phase 2（未着手）: 横タイムライン UI**
+  - 現状はセグメント一覧 + レイヤーの数値入力で時刻指定
+  - 理想: CapCut のようにレイヤーの帯をドラッグで時刻変更 + リサイズで長さ変更
+  - `TemplateTimeline.tsx` を新規作成予定
+- **Phase 6（未着手）: FFmpeg 側アニメーション対応**
+  - UI で `entryAnimation`/`exitAnimation` を設定できるが、動画生成時に反映されない
+  - Rust 側で fade / slide / zoom / pop を `enable` + `fade` filter などで実装する必要あり
+  - あわせて「セグメント途中で出現するレイヤー」の時刻管理も Rust 側で適切な `enable='between(t, ...)'` 追加が必要
+
+### 優先度 中
+- **マニュアル配置モード（削除済み）の復活検討**
+  - 旧 cuts ベースのマニュアルモードは削除した
+  - 新設するなら「セグメントごとに text を手入力」の簡易形
+  - ユーザーの最新コメントでは「必要か?」と質問中
+- **プレビューの精度向上**
+  - 現状: セグメント開始時刻のスナップショット
+  - 理想: セグメント内の時間遷移も動画として反映
+- **テンプレ用サンプル**（現状サンプルは削除済み・ゼロから作る必要）
+
+### 優先度 低
+- マイグレーション（v1→v2 の自動変換）
+- 動画レイヤーの回転対応（FFmpeg 側で未対応）
+- 動画レイヤーの角丸マスク（FFmpeg 側で rect/circle のみ）
+
+## ディレクトリ構成（抜粋）
+
+```
+shorts-script-gen/
+├─ src/
+│  ├─ types.ts                       型定義の要
+│  ├─ App.tsx                        ルーティング+ヘッダ
+│  ├─ components/
+│  │  ├─ ScriptForm.tsx              ← 台本生成フォーム
+│  │  ├─ ScriptResult.tsx            ← 台本表示
+│  │  ├─ CandidatePicker.tsx         多候補タブ切替
+│  │  ├─ CommentPicker.tsx           YouTube コメント選択 UI
+│  │  ├─ SettingsModal.tsx           API キー等の設定
+│  │  ├─ TemplateManager.tsx         テンプレ一覧 / トグル
+│  │  ├─ TemplateBuilder.tsx         テンプレ編集画面（Playhead + セグメント + レイヤー）
+│  │  ├─ TemplateCanvas.tsx          1080x1920 仮想キャンバス（react-moveable）
+│  │  ├─ LayerPanel.tsx              レイヤー追加/z順
+│  │  ├─ LayerPropertyPanel.tsx      レイヤープロパティ（位置/タイミング/アニメ）
+│  │  ├─ TemplatePreviewModal.tsx    プレビューモーダル
+│  │  ├─ VideoGenerator.tsx          動画生成実行
+│  │  └─ AnalyticsPanel.tsx          実績管理
+│  ├─ lib/
+│  │  ├─ providers/
+│  │  │  ├─ llm.ts                   Gemini/Groq/OpenAI + 多候補生成パイプライン
+│  │  │  ├─ tts.ts                   Edge/VOICEVOX/say 切替
+│  │  │  ├─ image.ts                 Pollinations/Cloudflare
+│  │  │  └─ bgm.ts                   Pixabay BGM
+│  │  ├─ scriptGenerator.ts          ブレスト→3候補→審査 オーケストレーション
+│  │  ├─ youtube.ts                  Data API v3 コメント + youtubei.js 検索
+│  │  ├─ templateStore.ts            templates/*.json の CRUD
+│  │  ├─ templateAnalyzer.ts         Gemini Vision で YouTube 動画解析
+│  │  ├─ layerUtils.ts               レイヤー操作ヘルパー
+│  │  ├─ layerComposer.ts            Canvas でレイヤー合成 → PNG
+│  │  ├─ templatePreviewRunner.ts    プレビュー動画生成
+│  │  ├─ video.ts                    動画生成オーケストレーション
+│  │  ├─ subtitleRender.ts           Canvas でテロップ/字幕描画
+│  │  ├─ storage.ts                  設定永続化 (LazyStore)
+│  │  ├─ analytics.ts                過去動画記録
+│  │  ├─ effects.ts                  motion/color/transition 定数
+│  │  └─ retry.ts                    API リトライ
+│  └─ types.ts
+├─ src-tauri/
+│  ├─ src/lib.rs                     Rust バックエンド（ffmpeg/TTS/画像 DL/テンプレ CRUD 等）
+│  ├─ Cargo.toml
+│  ├─ tauri.conf.json                assetProtocol 有効化済
+│  └─ capabilities/default.json      http/fs/opener/store/shell/dialog 許可
+├─ templates/                        ユーザー作成のテンプレ JSON 置き場（git 管理）
+├─ package.json
+└─ HANDOFF.md                        このファイル
+```
+
+## Rust コマンド一覧（invoke 先）
+
+| コマンド | 役割 |
+|---|---|
+| `list_templates` / `save_template` / `delete_template` | テンプレ CRUD（templates/ ディレクトリ） |
+| `download_image` / `cloudflare_generate_image` | 画像生成/DL |
+| `save_overlay_png` / `save_audio_base64` | Base64 → ファイル保存 |
+| `generate_tts` / `edge_tts` / `voicevox_tts` | TTS |
+| `get_audio_duration` | ffprobe で尺計測 |
+| `compose_video` | シーン合成 → 連結 → BGM ミックス |
+| `generate_silent_wav` | プレビュー用無音 WAV 生成 |
+| `download_bgm` | Pixabay BGM DL |
+
+## 続行手順（別 PC での作業開始時）
+
+1. リポジトリを clone
+2. `npm install`
+3. FFmpeg / Rust / VS Build Tools を未導入ならセットアップ
+4. `npm run tauri dev` で起動（初回は時間かかる）
+5. ⚙️ 設定 → 各 API キー登録
+6. テンプレ管理タブで既存テンプレを編集、or 新規作成
+7. 台本生成タブで動画作成
+
+## 直近の残課題（次セッションで着手）
+
+1. **Phase 2: 横タイムライン UI**（最優先）
+2. **Phase 6: FFmpeg アニメーション実装**
+3. マニュアル配置モードの新設計（要否検討）
+4. プレビュー精度向上
+
+## 参考情報
+
+- Rust 側の FFmpeg 呼び出しは `hidden_cmd("ffmpeg")`（PATH 依存）
+- `templates/` ディレクトリは git 管理対象、別 PC で clone すればテンプレも引き継げる
+- API キーはローカルの LazyStore（OS 依存パス）に**平文保存**されるため、git には含まれない

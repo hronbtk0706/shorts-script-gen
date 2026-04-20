@@ -46,10 +46,15 @@ export function VideoGenerator({ apiKey, script, scriptInput, onVideoGenerated }
     setVideoPath(null);
     setLog([]);
     try {
-      const result = await generateVideo(apiKey, script, (p) => {
-        setProgress(p);
-        setLog((prev) => [...prev, p.message]);
-      });
+      const result = await generateVideo(
+        apiKey,
+        script,
+        (p) => {
+          setProgress(p);
+          setLog((prev) => [...prev, p.message]);
+        },
+        scriptInput?.template,
+      );
       setVideoPath(result.outputPath);
       if (scriptInput) {
         await saveRecord({

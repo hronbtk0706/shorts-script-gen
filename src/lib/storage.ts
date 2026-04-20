@@ -22,6 +22,10 @@ const KEY_BGM_FILE_PATH = "bgm_file_path";
 const KEY_PIXABAY_API_KEY = "pixabay_api_key";
 const KEY_YOUTUBE_API_KEY = "youtube_api_key";
 const KEY_CONTENT_NICHE = "content_niche";
+const KEY_MULTI_CANDIDATE_ENABLED = "multi_candidate_enabled";
+const KEY_MULTI_CANDIDATE_COUNT = "multi_candidate_count";
+const KEY_REFERENCE_VIDEO_COUNT = "reference_video_count";
+const KEY_DEFAULT_TEMPLATE_ID = "default_template_id";
 
 export type LlmProviderId = "gemini" | "groq" | "openai";
 export type TtsProviderId = "say" | "edge" | "voicevox";
@@ -64,6 +68,10 @@ export interface AppSettings {
   pixabayApiKey: string;
   youtubeApiKey: string;
   contentNiche: string;
+  multiCandidateEnabled: boolean;
+  multiCandidateCount: number;
+  referenceVideoCount: number;
+  defaultTemplateId: string;
 }
 
 async function get<T>(key: string, fallback: T): Promise<T> {
@@ -148,6 +156,16 @@ export async function loadSettings(): Promise<AppSettings> {
     pixabayApiKey: await get(KEY_PIXABAY_API_KEY, ""),
     youtubeApiKey: await get(KEY_YOUTUBE_API_KEY, ""),
     contentNiche: await get(KEY_CONTENT_NICHE, ""),
+    multiCandidateEnabled: await get<boolean>(KEY_MULTI_CANDIDATE_ENABLED, true),
+    multiCandidateCount: Math.max(
+      2,
+      Math.min(5, await get<number>(KEY_MULTI_CANDIDATE_COUNT, 3)),
+    ),
+    referenceVideoCount: Math.max(
+      3,
+      Math.min(10, await get<number>(KEY_REFERENCE_VIDEO_COUNT, 5)),
+    ),
+    defaultTemplateId: await get(KEY_DEFAULT_TEMPLATE_ID, ""),
   };
 }
 
@@ -171,6 +189,15 @@ export async function saveSettings(s: AppSettings): Promise<void> {
   await store.set(KEY_PIXABAY_API_KEY, s.pixabayApiKey);
   await store.set(KEY_YOUTUBE_API_KEY, s.youtubeApiKey);
   await store.set(KEY_CONTENT_NICHE, s.contentNiche);
+  await store.set(KEY_MULTI_CANDIDATE_ENABLED, s.multiCandidateEnabled);
+  await store.set(KEY_MULTI_CANDIDATE_COUNT, s.multiCandidateCount);
+  await store.set(KEY_REFERENCE_VIDEO_COUNT, s.referenceVideoCount);
+  await store.set(KEY_DEFAULT_TEMPLATE_ID, s.defaultTemplateId);
+  await store.save();
+}
+
+export async function setDefaultTemplateId(id: string): Promise<void> {
+  await store.set(KEY_DEFAULT_TEMPLATE_ID, id);
   await store.save();
 }
 

@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Script, SubtitleStyle, SceneEffects } from "../types";
+import type {
+  Script,
+  SubtitleStyle,
+  SceneEffects,
+  VideoTemplate,
+  Layer,
+  TemplateSegment,
+} from "../types";
 import { loadSettings } from "./storage";
 import {
   canvasToBase64Png,
@@ -10,6 +17,7 @@ import { getTtsProvider } from "./providers/tts";
 import { getImageProvider } from "./providers/image";
 import { fetchPixabayBgm } from "./providers/bgm";
 import { resolveEffects } from "./effects";
+import { composeLayersToPng } from "./layerComposer";
 
 export interface CaptionAsset {
   pngPath: string;
@@ -26,6 +34,7 @@ export interface SceneAssets {
   effects: SceneEffects;
   captions: CaptionAsset[];
   audioLeadingPad: number;
+  videoLayers: RustVideoLayerInput[];
 }
 
 export interface ProgressUpdate {
@@ -50,6 +59,21 @@ interface RustCaptionInput {
   end: number;
 }
 
+interface RustVideoLayerInput {
+  path: string;
+  xPct: number;
+  yPct: number;
+  widthPct: number;
+  heightPct: number;
+  zIndex: number;
+  shape: string;
+  borderRadiusPct: number;
+  opacity: number;
+  rotation: number;
+  borderWidthPct: number;
+  borderColor: string;
+}
+
 interface RustSceneInput {
   image_path: string;
   audio_path: string;
@@ -63,6 +87,7 @@ interface RustSceneInput {
   transition_duration: number;
   captions: RustCaptionInput[];
   audio_leading_pad: number;
+  video_layers: RustVideoLayerInput[];
 }
 
 const AUDIO_LEADING_PAD_SECONDS = 0.6;
@@ -175,6 +200,7 @@ export async function generateVideo(
   _apiKey: string,
   script: Script,
   onProgress: ProgressCallback,
+  template?: VideoTemplate,
 ): Promise<VideoResult> {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -184,58 +210,152 @@ export async function generateVideo(
   const ttsProvider = getTtsProvider(settings.ttsProvider);
   const imageProvider = getImageProvider(settings.imageProvider);
 
+  // template のセグメントを type/index で引けるよう Map 化、可視レイヤーを抽出
+  const segmentByKey = new Map<string, TemplateSegment>();
+  if (template) {
+    const bodySegs = template.segments.filter((s) => s.type === "body");
+    const hookSeg = template.segments.find((s) => s.type === "hook");
+    const ctaSeg = template.segments.find((s) => s.type === "cta");
+    if (hookSeg) segmentByKey.set("hook_0", hookSeg);
+    bodySegs.forEach((s, i) => segmentByKey.set(`body_${i}`, s));
+    if (ctaSeg) segmentByKey.set("cta_0", ctaSeg);
+  }
+
+  /** セグメントと重なるレイヤーを抽出（セグメント内の相対時刻情報付き） */
+  const layersForSegment = (seg: TemplateSegment | null): Layer[] => {
+    if (!seg || !template) return [];
+    return template.layers.filter(
+      (l) => l.startSec < seg.endSec && l.endSec > seg.startSec,
+    );
+  };
+
   const allScenes = [
     {
       index: 0,
       narration: script.hook.text,
       visual: script.hook.visual,
       image_prompt: script.hook.image_prompt || fallbackImagePrompt(script.hook.visual),
+      image_path: script.hook.image_path,
       text_overlay: script.hook.text,
       style: script.hook.subtitle_style,
       effects: resolveEffects(script.hook.effects, { isFirst: true }),
       skipCaption: false,
+      templateSegment: segmentByKey.get("hook_0") ?? null,
+      templateLayers: layersForSegment(segmentByKey.get("hook_0") ?? null),
     },
     ...script.body.map((b, i) => ({
       index: i + 1,
       narration: b.narration,
       visual: b.visual,
       image_prompt: b.image_prompt || fallbackImagePrompt(b.visual),
+      image_path: b.image_path,
       text_overlay: b.text_overlay,
       style: b.subtitle_style,
       effects: resolveEffects(b.effects),
       skipCaption: false,
+      templateSegment: segmentByKey.get(`body_${i}`) ?? null,
+      templateLayers: layersForSegment(segmentByKey.get(`body_${i}`) ?? null),
     })),
     {
       index: script.body.length + 1,
       narration: script.cta.text,
       visual: script.cta.text,
       image_prompt: script.cta.image_prompt || fallbackImagePrompt(script.cta.text),
+      image_path: script.cta.image_path,
       text_overlay: script.cta.text,
       style: script.cta.subtitle_style,
       effects: resolveEffects(script.cta.effects, { isLast: true }),
       skipCaption: true,
+      templateSegment: segmentByKey.get("cta_0") ?? null,
+      templateLayers: layersForSegment(segmentByKey.get("cta_0") ?? null),
     },
   ];
 
   const totalCount = allScenes.length;
 
   for (const scene of allScenes) {
-    onProgress({
-      phase: "image",
-      sceneIndex: scene.index,
-      totalScenes: totalCount,
-      message: `シーン ${scene.index + 1}/${totalCount}: 画像生成中（${imageProvider.label}）...`,
-    });
+    let imagePath: string;
+    // レイヤー合成（テンプレのセグメントに対応するレイヤー群が複雑な場合）
+    const segLayers = scene.templateLayers;
+    const hasComplexLayers =
+      segLayers.length > 0 &&
+      // 単一の auto 画像フルスクリーンのみなら従来の AI 画像生成で済ませる
+      !(
+        segLayers.length === 1 &&
+        segLayers[0].type === "image" &&
+        segLayers[0].source === "auto" &&
+        segLayers[0].x === 0 &&
+        segLayers[0].y === 0 &&
+        segLayers[0].width === 100 &&
+        segLayers[0].height === 100
+      );
 
-    const imagePath = await imageProvider.generate(
-      {
-        prompt: scene.image_prompt,
-        seed: (now.getTime() + scene.index) % 1000000,
-        filename: `scene_${scene.index}`,
+    if (scene.image_path) {
+      onProgress({
+        phase: "image",
+        sceneIndex: scene.index,
+        totalScenes: totalCount,
+        message: `シーン ${scene.index + 1}/${totalCount}: ユーザー指定画像を使用`,
+      });
+      imagePath = scene.image_path;
+    } else if (hasComplexLayers) {
+      onProgress({
+        phase: "image",
+        sceneIndex: scene.index,
+        totalScenes: totalCount,
+        message: `シーン ${scene.index + 1}/${totalCount}: レイヤー合成中...`,
+      });
+      const resolvedSources = new Map<string, string>();
+      for (const layer of segLayers) {
+        if (
+          (layer.type === "image" || layer.type === "video") &&
+          layer.source === "auto"
+        ) {
+          const aiPath = await imageProvider.generate(
+            {
+              prompt: scene.image_prompt,
+              seed:
+                (now.getTime() + scene.index + Number(layer.id[0] ?? 0)) %
+                1000000,
+              filename: `scene_${scene.index}_layer_${layer.id}`,
+              sessionId,
+            },
+            settings,
+          );
+          resolvedSources.set(layer.id, aiPath);
+        }
+      }
+      imagePath = await composeLayersToPng(
+        segLayers,
+        async (layer: Layer) => {
+          if (layer.source === "auto") {
+            return resolvedSources.get(layer.id) ?? null;
+          }
+          if (layer.source && layer.source !== "user") {
+            return layer.source;
+          }
+          return null;
+        },
         sessionId,
-      },
-      settings,
-    );
+        `scene_${scene.index}_composed`,
+      );
+    } else {
+      onProgress({
+        phase: "image",
+        sceneIndex: scene.index,
+        totalScenes: totalCount,
+        message: `シーン ${scene.index + 1}/${totalCount}: 画像生成中（${imageProvider.label}）...`,
+      });
+      imagePath = await imageProvider.generate(
+        {
+          prompt: scene.image_prompt,
+          seed: (now.getTime() + scene.index) % 1000000,
+          filename: `scene_${scene.index}`,
+          sessionId,
+        },
+        settings,
+      );
+    }
 
     onProgress({
       phase: "overlay",
@@ -298,6 +418,34 @@ export async function generateVideo(
       }
     }
 
+    // 動画レイヤー（FFmpeg 側で動画として合成される）
+    const videoLayers: RustVideoLayerInput[] = [];
+    if (scene.templateLayers.length > 0) {
+      for (const l of scene.templateLayers) {
+        if (
+          l.type === "video" &&
+          l.source &&
+          l.source !== "auto" &&
+          l.source !== "user"
+        ) {
+          videoLayers.push({
+            path: l.source,
+            xPct: l.x,
+            yPct: l.y,
+            widthPct: l.width,
+            heightPct: l.height,
+            zIndex: l.zIndex,
+            shape: l.shape ?? "rect",
+            borderRadiusPct: l.borderRadius ?? 0,
+            opacity: l.opacity ?? 1,
+            rotation: l.rotation ?? 0,
+            borderWidthPct: l.border?.width ?? 0,
+            borderColor: l.border?.color ?? "white",
+          });
+        }
+      }
+    }
+
     assets.push({
       index: scene.index,
       imagePath,
@@ -307,6 +455,7 @@ export async function generateVideo(
       effects: scene.effects,
       captions,
       audioLeadingPad: leadingPad,
+      videoLayers,
     });
   }
 
@@ -343,6 +492,7 @@ export async function generateVideo(
         end: c.end,
       })),
       audio_leading_pad: a.audioLeadingPad,
+      video_layers: a.videoLayers,
     }));
 
   const outputPath = await invoke<string>("compose_video", {

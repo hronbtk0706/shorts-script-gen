@@ -1,4 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import type { Script, ScriptInput, Platform } from "../../types";
 import { withRetry } from "../retry";
 import type { AppSettings } from "../storage";
@@ -84,9 +85,13 @@ const platformLabel = {
 
 function buildPromptBody(input: ScriptInput): string {
   const lines = [
-    `あなたはショート動画の構成作家 兼 モーショングラフィックデザイナーです。以下の条件で${platformLabel[input.platform]}向けの${input.duration}秒動画台本を日本語で作成し、各シーンに映えるテロップのデザインと演出も提案してください。`,
+    `あなたはショート動画の構成作家です。「視聴者の反応・コメントを集めて見せる」タイプの${platformLabel[input.platform]}向け${input.duration}秒台本を日本語で作成してください。`,
     "",
-    "# トピック",
+    "# 重要：このタイプの本質",
+    "**「実在の視聴者コメント・反応を集めて並べる」フォーマット**です。",
+    "AI自身が解釈・考察を捏造するのではなく、**与えられた参考動画の実コメントを軸に組み立てる**ことが命です。",
+    "",
+    "# トピック（取り上げるシーン・出来事）",
     input.topic,
     "",
     "# 条件",
@@ -97,17 +102,142 @@ function buildPromptBody(input: ScriptInput): string {
   if (input.tone) lines.push(`- トーン: ${input.tone}`);
   if (input.goal) lines.push(`- 目的: ${input.goal}`);
   if (input.reference) lines.push(`- 参考・演出指示: ${input.reference}`);
-  if (input.trendInsights) {
-    lines.push("", "# 今日のYouTubeトレンド（必ず参考にすること）", input.trendInsights);
+  if (input.selectedComments && input.selectedComments.length > 0) {
+    lines.push(
+      "",
+      "# ユーザーが手動選択した実コメント【本編素材の最優先源・これだけを使う】",
+      "以下はユーザーが特定動画のコメント欄から厳選した反応です。",
+      "**body[] の各要素は、この中から1つずつ選んで配置してください**（過不足があれば多少調整）。",
+      "コメントに返信マーク `↪ 返信` があるものは、元スレッドへの返信であることを意識しつつ使ってよい。",
+      "",
+    );
+    input.selectedComments.forEach((c, i) => {
+      const marker = c.isReply ? "↪ 返信" : "コメント";
+      const author = c.author ? ` (@${c.author})` : "";
+      const likes = ` 👍${c.likeCount}`;
+      lines.push(`[${i + 1}] ${marker}${author}${likes}: ${c.text}`);
+    });
+    lines.push("");
+  } else if (input.trendInsights) {
+    lines.push(
+      "",
+      "# 参考動画情報・実在コメント【本編素材の最重要源】",
+      "↓ ここの【トップコメント】セクションが本編で使う「視聴者の反応」の実素材です。",
+      "↓ 各 body[i] のシーンで、ここに書かれた実コメントを引用・短縮して使ってください。",
+      "",
+      input.trendInsights,
+    );
   }
   if (input.performanceInsights) {
-    lines.push("", "# 過去の動画パフォーマンス分析（改善点を反映すること）", input.performanceInsights);
+    lines.push("", "# 過去の動画パフォーマンス分析", input.performanceInsights);
+  }
+
+  if (input.template) {
+    const t = input.template;
+    const bodySegments = t.segments.filter((s) => s.type === "body");
+    const hookSeg = t.segments.find((s) => s.type === "hook");
+    const ctaSeg = t.segments.find((s) => s.type === "cta");
+    lines.push(
+      "",
+      "# 使用テンプレート【重要：構成・尺はこれに従う】",
+      `- 名前: ${t.name}`,
+      `- 全体尺: ${t.totalDuration}秒（厳守）`,
+      `- body セグメント数: ${bodySegments.length}`,
+      t.themeVibe ? `- 雰囲気: ${t.themeVibe}` : "",
+      t.overallPacing ? `- ペース: ${t.overallPacing}` : "",
+      t.narrationStyle ? `- ナレーション口調: ${t.narrationStyle}` : "",
+      "",
+      "## セグメント指定",
+    );
+    if (hookSeg) {
+      lines.push(
+        `- hook: ${hookSeg.startSec}-${hookSeg.endSec}s (${(hookSeg.endSec - hookSeg.startSec).toFixed(1)}秒)`,
+      );
+    }
+    bodySegments.forEach((s, i) => {
+      lines.push(
+        `- body[${i}]: ${s.startSec}-${s.endSec}s (${(s.endSec - s.startSec).toFixed(1)}秒)`,
+      );
+    });
+    if (ctaSeg) {
+      lines.push(
+        `- cta: ${ctaSeg.startSec}-${ctaSeg.endSec}s (${(ctaSeg.endSec - ctaSeg.startSec).toFixed(1)}秒)`,
+      );
+    }
+    lines.push(
+      "",
+      "## テンプレ適用ルール",
+      `- body[] は **body セグメント数（${bodySegments.length}個）と同じ要素数**にする`,
+      "- 各 body[i] の seconds はテンプレの対応 body セグメントに一致",
+      "- hook/cta の seconds も対応するセグメントに一致",
+      "- ガイドラインとして柔軟に扱ってよいが、**セグメント数と全体尺は変えない**",
+    );
   }
 
   lines.push(
     "",
-    "# 指示",
-    "- 最初の3秒で視聴者を引き込むフックを作る",
+    "# フック制作指示（最初の3秒）",
+    "**反応集型のフックは「みんな同じこと思ってた感」「この反応リアル」を匂わせる**",
+    "",
+    "## 反応集型フックの良い型",
+    "- 「[シーン名]、視聴者の反応がリアルすぎた」",
+    "- 「『[コメントの一部引用、5〜10字]』このコメントが刺さりすぎる」",
+    "- 「[シーン名]を見た人、全員ここで止まった」",
+    "- 「コメント欄が[感情]で埋まったシーン」",
+    "",
+    "## NG ワード（フック共通）",
+    "- 「驚きの」「衝撃の」「必見」「ヤバい」「最強」「豆知識」",
+    "- 「10秒で」「3秒で」のような尺言及",
+    "- 「え、」「ねえ、」だけの間投詞スタート",
+    "",
+    "# 本編制作指示（反応集モード固有・最重要）",
+    "",
+    "## 構成原則【純粋コメント並列型】",
+    "- **body[] の各要素 = 実コメントを1つだけ提示する純粋な引用箱**",
+    "- AI による合いの手・感想・補足・解説は**一切入れない**",
+    "- 各 body のナレーションは「コメント本文そのもの」だけ。前置きも後置きも禁止",
+    "- text_overlay も narration とほぼ同じテキスト（TTS とテロップが一致）",
+    "- 過度に綺麗にまとめない。**本物のコメントの生っぽさ・口語の崩れを残す**ことが命",
+    "- 上記【参考動画情報】の【トップコメント】から実コメントを抽出して使う",
+    "",
+    "## コメントの扱い",
+    "- 完全コピーは避けるが、**原文の感情・言い回しは保つ**（細部を1〜3文字変える程度）",
+    "- 1コメントあたり 10〜30 字程度に短縮（テンポ重視）",
+    "- 鍵カッコ「」は付けても付けなくても可（自然なほうで）",
+    "- **コメントが取得できなかった場合**: 視聴者目線の短い感想風セリフを生成（解説・考察NG、口語の短文のみ）",
+    "",
+    "## 各 body[i] のテンプレ",
+    "narration: コメント本文そのもの。短く。AI の感想・補足は禁止",
+    "  ✅ OK: narration = 「俺もここで号泣した」",
+    "  ✅ OK: narration = 「『知ってる…』で全部持ってかれた」",
+    "  ❌ NG: narration = 「これ言ってる人多かった。『俺もここで号泣した』って。本当それ。」",
+    "  ❌ NG: narration = 「ファンが12年待った声『12年待ったわ』そのまま。」",
+    "text_overlay: narration と同じ or その核心を 15字以内に",
+    "  例: text_overlay = 「俺も号泣した」",
+    "",
+    "## hook / cta は AI の地の文 OK",
+    "- hook (最初の3秒): 「視聴者の反応リアルすぎた」など導入文 OK",
+    "- body[]: 純粋コメント並列のみ、AI の言葉禁止",
+    "- cta: 「あなたはどう思った？」など問いかけ OK",
+    "",
+    "## NG → OK 比較",
+    "- NG: 「視聴者は深い感動を覚えた」(抽象的・創作)",
+    "  OK: 「俺も号泣した」(コメント本文のみ)",
+    "- NG: 「『知ってる…』で全部持ってかれた、って人多かった」(余計な後置きあり)",
+    "  OK: 「『知ってる…』で全部持ってかれた」(純粋引用)",
+    "- NG: 「考察すると伏線が……」",
+    "  OK: 「『12年待ったわこの再会』長年のファンの本音」",
+    "",
+    "## 構成の流れ（30秒の例）",
+    "- hook (0-3s): フック",
+    "- body[0] (3-8s): シーン状況の最短説明（実コメントへの導入）",
+    "- body[1] (8-13s): 実コメント1引用＋共感",
+    "- body[2] (13-18s): 実コメント2引用＋共感",
+    "- body[3] (18-23s): 実コメント3引用＋共感",
+    "- body[4] (23-27s): まとめ的反応 or 鳥肌系コメント",
+    "- cta (27-30s): 「あなたはどう思った？」系",
+    "",
+    "# その他の指示",
     "- 秒数配分は合計が指定尺に収まるようにする",
     "- ナレーションは口語で、テロップは短く印象的に（20字以内）",
     "- ハッシュタグは5〜10個、日本語と英語を織り交ぜる",
@@ -115,25 +245,21 @@ function buildPromptBody(input: ScriptInput): string {
     "# 画像プロンプト指示",
     "- 各シーンの image_prompt は英語で1文。Pollinations/Flux で縦型動画用画像を生成する",
     "- 必須含有: 'vertical 9:16', 'vibrant', 'cinematic', 'high detail'",
-    "- 被写体は画面中央、背景は情景を描写",
+    "- 反応集なので、シーンの感情を象徴する1枚絵を選ぶ（人物のシルエット、表情、空気感など）",
     "",
     "# テロップ・デザイン指示",
     "- theme_vibe（全体の雰囲気）を最初に決めて、それに合うカラーパレットを選ぶ",
-    "- 各シーンの subtitle_style は theme_vibe と一貫性を保ちつつ、シーンの意味・感情に応じて変化させる",
-    "- primary_color は背景に対して高コントラストで目立つ色（例: ポップなら #FFE600 #FF3366 #00E1FF）",
-    "- emoji はシーンの内容に合うもの1つ（驚き=⚡️, NG=⚠️, OK=✨, 本=📖, 時間=⏰, 重要=🔥 など）",
-    "- emphasis_keyword は text_overlay 内の最も強調すべき短い部分（数字・キーワード）",
+    "- text_overlay にはコメント引用部分を表示。引用感を出すため『」』記号を入れてもよい",
+    "- primary_color は背景に対して高コントラストで目立つ色",
+    "- emoji は反応の感情に合うもの（号泣=😭, 鳥肌=⚡, 共感=💯, 切ない=💔, 笑い=😂 など）",
+    "- emphasis_keyword は引用コメントの最も刺さるワード",
     "",
-    "# エフェクト指示（重要: 各シーンで必ず変化させる）",
-    "- **motion は必ずシーンごとに異なるものを選ぶ。同じmotionを2連続で使わない。最低4種類以上を動画全体で使い回す**",
-    "- motion: zoom_in(盛り上がり), zoom_out(引き), pan_left/right/up/down(広がり), ken_burns(落ち着き), push_in(じわじわ), zoom_punch(強調パンチ), shake(驚き/ショック), static(静的な強調)",
-    "- color は theme_vibe に合わせつつ、重要シーンで1〜2回アクセントを変える（同色でずっとは避ける）",
-    "- color: none(通常), sepia(過去/回想), bw(シリアス), vintage(レトロ), vivid(ポップ), cool(近未来/知的), warm(温かみ), vignette(ドラマチック), neon(サイバー/キラキラ), high_contrast(強調), soft_glow(夢/柔らかさ), film_grain(エモい/フィルム調)",
-    "- audio_fade_in: 最初のシーン（hook）のみ true、それ以外は false",
-    "- audio_fade_out: 最後のシーン（cta）のみ true、それ以外は false",
-    "- **transition_to_next も多様に**: テンポ速い→cut/flash, 滑らか→fade/dissolve, 章切替→fadeblack/fadegrays, 意外性→slide系/cover系/reveal系/zoomin/circleopen, 動きを強調→hblur/squeezev/squeezeh/diag系。最後のシーン(cta)は必ず cut",
-    "- transition_duration: 0.3〜0.8秒推奨。cutなら 0、flashは0.15で自動調整",
-    "- **flash** は強調したい瞬間の直前に効く。過剰に使わない（1動画で0〜2回）",
+    "# エフェクト指示（共通）",
+    "- motion はシーンごとに変化させる。同じ motion を2連続で使わない",
+    "- color は theme_vibe に合わせ、感情の山で1〜2回アクセント",
+    "- audio_fade_in: hookのみ true、audio_fade_out: ctaのみ true",
+    "- transition_to_next: 反応の切替なので cut 多めだが、感情の変わり目で fade/dissolve も使う",
+    "- transition_duration: 0.3〜0.6秒（反応集はテンポ重視）",
   );
   return lines.join("\n");
 }
@@ -512,7 +638,7 @@ async function callGroq(
 ): Promise<string> {
   const res = await withRetry(
     () =>
-      fetch("https://api.groq.com/openai/v1/chat/completions", {
+      tauriFetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -602,7 +728,7 @@ async function callOpenAi(
 ): Promise<string> {
   const res = await withRetry(
     () =>
-      fetch("https://api.openai.com/v1/chat/completions", {
+      tauriFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -695,4 +821,209 @@ export const LLM_PROVIDERS: Record<string, LlmProvider> = {
 
 export function getLlmProvider(id: string): LlmProvider {
   return LLM_PROVIDERS[id] ?? geminiProvider;
+}
+
+// ─────────────────────────────────────────
+// Multi-candidate pipeline helpers
+// ─────────────────────────────────────────
+
+export interface ScriptAngle {
+  angle: string;
+  hook_feeling: string;
+  why_original: string;
+}
+
+export interface SelectionResult {
+  selected_index: number;
+  reason: string;
+  improvements: string[];
+}
+
+/** provider-agnostic JSON completion (uses the settings-picked provider & model). */
+async function completeJson<T>(
+  settings: AppSettings,
+  systemPrompt: string,
+  userPrompt: string,
+  label: string,
+  temperature = 0.9,
+): Promise<T> {
+  const providerId = settings.llmProvider;
+  let content = "";
+  if (providerId === "openai") {
+    if (!settings.openaiApiKey) throw new Error("OpenAI API キーが設定されていません");
+    const model = settings.openaiModel || "gpt-5-mini";
+    content = await callOpenAi(settings.openaiApiKey, model, systemPrompt, userPrompt, label);
+  } else if (providerId === "groq") {
+    if (!settings.groqApiKey) throw new Error("Groq API キーが設定されていません");
+    content = await callGroq(settings.groqApiKey, systemPrompt, userPrompt, label);
+  } else {
+    if (!settings.geminiApiKey) throw new Error("Gemini API キーが設定されていません");
+    const ai = new GoogleGenAI({ apiKey: settings.geminiApiKey });
+    const response = await withRetry(
+      () =>
+        ai.models.generateContent({
+          model: "gemini-2.5-flash-lite",
+          contents: `${systemPrompt}\n\n${userPrompt}`,
+          config: { responseMimeType: "application/json", temperature },
+        }),
+      { label },
+    );
+    content = response.text ?? "";
+  }
+  if (!content) throw new Error(`${label}: 空応答`);
+  try {
+    return JSON.parse(content) as T;
+  } catch (e) {
+    throw new Error(
+      `${label}: JSON パース失敗 ${e instanceof Error ? e.message : String(e)}\n\n${content.slice(0, 400)}`,
+    );
+  }
+}
+
+function buildAngleBrainstormPrompt(input: ScriptInput, count: number): string {
+  const lines = [
+    `あなたはショート動画の構成作家です。「視聴者の反応・コメントを並べる」フォーマットで作る台本のために、**どのコメントテーマ・反応軸を中心に据えるか**の切り口を${count}個出してください。`,
+    "",
+    "# トピック",
+    input.topic,
+    `# プラットフォーム: ${platformLabel[input.platform]}`,
+    `# 尺: ${input.duration}秒`,
+  ];
+  if (input.audience) lines.push(`# ターゲット層: ${input.audience}`);
+  if (input.tone) lines.push(`# トーン: ${input.tone}`);
+  if (input.trendInsights) {
+    lines.push(
+      "",
+      "# 参考動画情報・実コメント（コメントテーマを抽出する素材）",
+      input.trendInsights,
+    );
+  }
+  if (input.performanceInsights) {
+    lines.push("", "# 過去実績", input.performanceInsights);
+  }
+  lines.push(
+    "",
+    "# 指示",
+    "- 各「切り口」は **「どんな反応・コメントを軸にする台本にするか」** という視点で出す",
+    "- 例: 「号泣系コメント中心」「サボの『知ってる』への反応」「12年待ったファンの本音」「鳥肌コメント特集」「短いひとこと反応集」",
+    "- **使ってはいけない空虚な語**: 驚きの〜 / 衝撃の〜 / 必見 / 豆知識 / まさかの〜",
+    "- **秒数への言及禁止**: 「10秒で」「3秒で」は書かない",
+    "- 「3語解析」「5点」のような列挙型は**禁止**",
+    "- **AI 解釈・考察系の切り口は出さない**（反応集なので「視聴者の声をどう集めるか」に集中）",
+    "- hook_feeling は視聴者が最初の3秒で感じる具体的な感情（共感/号泣/鳥肌/ノスタルジー/笑い など）",
+    "",
+    "# NG → OK",
+    '- NG: 「サボの行動を考察する10ポイント」（解釈型）',
+    '  OK: 「サボの〝知ってる…〟への号泣コメント集」（反応型）',
+    '- NG: 「3つの伏線を解説」',
+    '  OK: 「12年待ったファンの本音コメント」',
+    "",
+    "# 出力形式（JSON）",
+    `{
+  "angles": [
+    {
+      "angle": "切り口のタイトル（20字以内）",
+      "hook_feeling": "視聴者が最初の3秒で感じる感情",
+      "why_original": "なぜ並の切り口と違うか（40字以内）"
+    }
+  ]
+}`,
+  );
+  return lines.join("\n");
+}
+
+export async function brainstormAngles(
+  input: ScriptInput,
+  settings: AppSettings,
+  count = 10,
+): Promise<ScriptAngle[]> {
+  const systemPrompt =
+    "純粋にJSONのみを返してください。JSONの前後にテキストや```を付けてはいけません。";
+  const userPrompt = buildAngleBrainstormPrompt(input, count);
+  const parsed = await completeJson<{ angles: ScriptAngle[] }>(
+    settings,
+    systemPrompt,
+    userPrompt,
+    "brainstormAngles",
+    1.0,
+  );
+  return parsed.angles ?? [];
+}
+
+function buildSelectionPrompt(
+  candidates: Script[],
+  input: ScriptInput,
+): string {
+  const lines = [
+    "あなたはショート動画のプロデューサーです。以下の台本候補の中から、最も視聴維持率・エンゲージメントが期待できる1本を選び、選定理由と改善ポイントを日本語で出してください。",
+    "",
+    "# 元のトピック",
+    input.topic,
+    `# プラットフォーム: ${platformLabel[input.platform]}`,
+    `# 尺: ${input.duration}秒`,
+    "",
+    "# 評価基準（優先順位順）",
+    "1. **フック（hook.text）の具体性と強さ【最重要】**",
+    "   - 固有名詞・具体的数字・断定が入っているか",
+    "   - 「驚きの〜」「衝撃の〜」「豆知識」など空虚な形容詞で中身を予告するだけのものは強く減点",
+    "   - 尺への言及（「10秒で」「3秒で」）を含むフックも減点",
+    "   - 中身を先に出し、続きを見たい具体的理由を作れているか",
+    "2. **本編（body）の具体性【同等に最重要】**",
+    "   - 各シーンに話数・セリフの引用・キャラ名＋具体動作・固有名詞のいずれかが入っているか",
+    "   - 「象徴」「モチーフ」「意味を持つ」「繋がる」だけで具体描写がないシーンは強く減点",
+    "   - 作中に存在しない造語・捏造用語が混じっていないか（混じっていれば最低評価）",
+    "   - 「伏線①②」のような連番だけで中身が無いものは強く減点",
+    "3. 構成の緊張と弛緩（盛り上がりの設計）",
+    "4. 共感・意外性・感情の揺さぶり（固有名詞や体験ベースの具体性）",
+    "5. 視聴後の余韻・シェアしたくなる度（CTA含む）",
+    "",
+    "# 候補",
+  ];
+  for (const [i, c] of candidates.entries()) {
+    lines.push(
+      `── 候補 ${i}（index=${i}） ──`,
+      `タイトル: ${c.title}`,
+      `テーマ雰囲気: ${c.theme_vibe}`,
+      `フック: ${c.hook.text}（${c.hook.seconds}）`,
+      `本編: ${c.body.map((b) => b.narration).join(" / ")}`,
+      `CTA: ${c.cta.text}`,
+      `ハッシュタグ: ${c.hashtags.join(" ")}`,
+      "",
+    );
+  }
+  lines.push(
+    "# 出力形式（JSON）",
+    `{
+  "selected_index": 0,
+  "reason": "なぜこれを選んだか（100字以内）",
+  "improvements": ["さらに良くするための短い提案1", "提案2"]
+}`,
+  );
+  return lines.join("\n");
+}
+
+export async function selectBestScript(
+  candidates: Script[],
+  input: ScriptInput,
+  settings: AppSettings,
+): Promise<SelectionResult> {
+  if (candidates.length === 0) throw new Error("候補が空です");
+  if (candidates.length === 1) {
+    return { selected_index: 0, reason: "候補1本のみ", improvements: [] };
+  }
+  const systemPrompt =
+    "純粋にJSONのみを返してください。JSONの前後にテキストや```を付けてはいけません。";
+  const userPrompt = buildSelectionPrompt(candidates, input);
+  const parsed = await completeJson<SelectionResult>(
+    settings,
+    systemPrompt,
+    userPrompt,
+    "selectBestScript",
+    0.4,
+  );
+  const idx = Math.max(
+    0,
+    Math.min(candidates.length - 1, parsed.selected_index ?? 0),
+  );
+  return { ...parsed, selected_index: idx };
 }
