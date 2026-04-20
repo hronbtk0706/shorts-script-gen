@@ -54,6 +54,7 @@ export function VideoGenerator({ apiKey, script, scriptInput, onVideoGenerated }
           setLog((prev) => [...prev, p.message]);
         },
         scriptInput?.template,
+        { manualMode: scriptInput?.manualMode === true },
       );
       setVideoPath(result.outputPath);
       if (scriptInput) {

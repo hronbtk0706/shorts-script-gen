@@ -33,7 +33,11 @@ export async function composeLayersToPng(
 export async function composeLayersToDataUrl(
   layers: Layer[],
   resolveSrc: LayerSourceResolver,
-  opts: { skipVideoLayers?: boolean; atTimeSec?: number } = {},
+  opts: {
+    skipVideoLayers?: boolean;
+    atTimeSec?: number;
+    transparent?: boolean;
+  } = {},
 ): Promise<string> {
   const canvas = document.createElement("canvas");
   canvas.width = FINAL_W;
@@ -41,8 +45,10 @@ export async function composeLayersToDataUrl(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context を取得できませんでした");
 
-  ctx.fillStyle = "#000";
-  ctx.fillRect(0, 0, FINAL_W, FINAL_H);
+  if (!opts.transparent) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, FINAL_W, FINAL_H);
+  }
 
   const t = opts.atTimeSec;
   for (const layer of sortedLayers(layers)) {
@@ -53,6 +59,25 @@ export async function composeLayersToDataUrl(
   }
 
   return canvas.toDataURL("image/png");
+}
+
+/** 単一レイヤーを透明背景の PNG として保存して絶対パスを返す（時間ゲート overlay 用） */
+export async function composeSingleLayerToTransparentPng(
+  layer: Layer,
+  resolveSrc: LayerSourceResolver,
+  sessionId: string,
+  filename: string,
+): Promise<string> {
+  const dataUrl = await composeLayersToDataUrl([layer], resolveSrc, {
+    skipVideoLayers: true,
+    transparent: true,
+  });
+  const base64 = dataUrl.split(",", 2)[1];
+  return invoke<string>("save_overlay_png", {
+    sessionId,
+    filename,
+    base64Data: base64,
+  });
 }
 
 async function drawLayer(
@@ -88,12 +113,17 @@ async function drawLayer(
         const src = await resolveSrc(layer);
         if (src) {
           const img = await loadImage(src);
-          ctx.drawImage(img, 0, 0, w, h);
-        } else {
-          // fallback: グレーで埋めて「未設定」表示
-          ctx.fillStyle = "#222";
-          ctx.fillRect(0, 0, w, h);
+          // cover フィット: 画像のアスペクト比を保ち、枠を完全に覆う最小倍率で描画（はみ出しはクリップ）
+          const imgW = img.width || (img as HTMLImageElement).naturalWidth || w;
+          const imgH = img.height || (img as HTMLImageElement).naturalHeight || h;
+          const scale = Math.max(w / imgW, h / imgH);
+          const drawW = imgW * scale;
+          const drawH = imgH * scale;
+          const dx = (w - drawW) / 2;
+          const dy = (h - drawH) / 2;
+          ctx.drawImage(img, dx, dy, drawW, drawH);
         }
+        // 未指定レイヤーは何も描画しない（透過）
         break;
       }
       case "color":
@@ -135,6 +165,11 @@ function applyShapeClip(
   } else if (layer.shape === "rounded") {
     const r = (layer.borderRadius ?? 12) * (FINAL_W / 360); // キャンバスプレビュー縮尺 → 実寸
     roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+    ctx.clip();
+  } else {
+    // "rect" or undefined: 矩形でクリップ（画像の cover フィットではみ出す分を切る）
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
     ctx.clip();
   }
 }

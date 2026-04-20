@@ -124,16 +124,16 @@ export function TemplateManager() {
   // ─── manual-builder モード: キャンバスエディタを全画面表示 ───
   if (mode === "manual-builder") {
     return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 text-xs">
           <button
             type="button"
             onClick={() => setMode("list")}
-            className="text-sm text-blue-600 hover:underline"
+            className="text-blue-600 hover:underline"
           >
             ← 一覧に戻る
           </button>
-          <span className="text-xs text-gray-500">
+          <span className="text-gray-500">
             {editingTemplate ? `編集中: ${editingTemplate.name}` : "新規テンプレ作成"}
           </span>
         </div>

@@ -4,18 +4,25 @@ import type {
   VideoTemplate,
   ExtractedComment,
   CommentBundle,
+  Script,
 } from "../types";
 import { AUDIENCE_OPTIONS, TONE_OPTIONS } from "../lib/scriptOptions";
 import { GroupedSelect } from "./GroupedSelect";
 import { CommentPicker } from "./CommentPicker";
+import { ManualLayerAssigner } from "./ManualLayerAssigner";
 import { listTemplates } from "../lib/templateStore";
 import { loadSettings, setDefaultTemplateId } from "../lib/storage";
+import {
+  applyManualAssignments,
+  buildManualScript,
+} from "../lib/manualScript";
 
-export type GenerationMode = "auto" | "manual-select";
+export type GenerationMode = "auto" | "manual";
 
 export interface ScriptFormSubmit {
   input: ScriptInput;
   mode: GenerationMode;
+  prebuiltScript?: Script;
 }
 
 interface Props {
@@ -35,6 +42,20 @@ export function ScriptForm({ onSubmit, loading }: Props) {
     [],
   );
   const [commentBundle, setCommentBundle] = useState<CommentBundle | null>(null);
+
+  // manual モード用の割り当て状態
+  const [manualCommentAssign, setManualCommentAssign] = useState<
+    Record<string, ExtractedComment | null>
+  >({});
+  const [manualSourceAssign, setManualSourceAssign] = useState<
+    Record<string, string>
+  >({});
+  const [manualTextAssign, setManualTextAssign] = useState<
+    Record<string, string>
+  >({});
+  const [manualGeometryAssign, setManualGeometryAssign] = useState<
+    Record<string, { x: number; y: number; width: number; height: number }>
+  >({});
 
   useEffect(() => {
     (async () => {
@@ -59,21 +80,42 @@ export function ScriptForm({ onSubmit, loading }: Props) {
     if (!selectedTemplate) return;
     if (mode === "auto" && !topic.trim()) return;
     await setDefaultTemplateId(templateId);
-    const derivedTopic =
-      mode === "auto"
-        ? topic.trim()
-        : commentBundle?.videoTitle?.trim() || topic.trim() || "動画反応集";
+
+    if (mode === "manual") {
+      // テンプレをクローンして手動割り当てを適用、AIをスキップして Script を直接組み立てる
+      const patchedTemplate = applyManualAssignments(
+        selectedTemplate,
+        manualCommentAssign,
+        manualSourceAssign,
+        manualTextAssign,
+        manualGeometryAssign,
+      );
+      const prebuilt = buildManualScript(patchedTemplate, commentBundle);
+      const input: ScriptInput = {
+        topic:
+          commentBundle?.videoTitle?.trim() ||
+          topic.trim() ||
+          "手動テンプレ動画",
+        platform: "shorts",
+        duration: Math.round(
+          patchedTemplate.totalDuration,
+        ) as ScriptInput["duration"],
+        audience: audience || undefined,
+        tone: tone || undefined,
+        template: patchedTemplate,
+        manualMode: true,
+      };
+      onSubmit({ input, mode, prebuiltScript: prebuilt });
+      return;
+    }
+
     const input: ScriptInput = {
-      topic: derivedTopic,
+      topic: topic.trim(),
       platform: "shorts",
       duration: Math.round(selectedTemplate.totalDuration) as ScriptInput["duration"],
       audience: audience || undefined,
       tone: tone || undefined,
       template: selectedTemplate,
-      selectedComments:
-        mode === "manual-select" && selectedComments.length > 0
-          ? selectedComments
-          : undefined,
     };
     onSubmit({ input, mode });
   };
@@ -99,16 +141,16 @@ export function ScriptForm({ onSubmit, loading }: Props) {
           </button>
           <button
             type="button"
-            onClick={() => setMode("manual-select")}
+            onClick={() => setMode("manual")}
             className={`px-3 py-2 rounded-lg border text-xs transition text-left ${
-              mode === "manual-select"
+              mode === "manual"
                 ? "bg-blue-50 dark:bg-blue-900/30 border-blue-500 ring-2 ring-blue-500/30"
                 : "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:border-blue-400"
             }`}
           >
-            <div className="font-semibold">🎯 コメント選択</div>
+            <div className="font-semibold">✏️ 手動</div>
             <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-              選んだコメントで AI 生成
+              AIなし・全手動割当
             </div>
           </button>
         </div>
@@ -161,7 +203,7 @@ export function ScriptForm({ onSubmit, loading }: Props) {
         </div>
       )}
 
-      {mode !== "auto" && commentBundle?.videoTitle && (
+      {mode === "manual" && commentBundle?.videoTitle && (
         <div className="p-2 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
           <div className="text-[11px] text-gray-500 dark:text-gray-400">
             📹 題材（URL の動画から自動取得）
@@ -175,15 +217,46 @@ export function ScriptForm({ onSubmit, loading }: Props) {
         </div>
       )}
 
-      {mode === "manual-select" && (
+      {mode === "manual" && (
         <div className="p-3 rounded-lg border border-purple-200 dark:border-purple-900/50 bg-purple-50/30 dark:bg-purple-900/10">
           <div className="text-xs font-semibold text-purple-800 dark:text-purple-300 mb-2">
-            🎯 コメント選択 — この動画のコメントから本編素材を選ぶ
+            ✏️ 手動 — 取得したコメントから候補を選び、各レイヤーに割り当てる
           </div>
           <CommentPicker
             selected={selectedComments}
             onSelectedChange={setSelectedComments}
             onBundleChange={setCommentBundle}
+          />
+        </div>
+      )}
+
+      {mode === "manual" && selectedTemplate && (
+        <div className="p-3 rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-900/10 space-y-3">
+          <ManualLayerAssigner
+            template={selectedTemplate}
+            availableComments={selectedComments}
+            commentAssignments={manualCommentAssign}
+            sourceAssignments={manualSourceAssign}
+            textAssignments={manualTextAssign}
+            geometryAssignments={manualGeometryAssign}
+            onCommentAssign={(id, c) =>
+              setManualCommentAssign((prev) => ({ ...prev, [id]: c }))
+            }
+            onSourceAssign={(id, src) =>
+              setManualSourceAssign((prev) => ({ ...prev, [id]: src }))
+            }
+            onTextAssign={(id, txt) =>
+              setManualTextAssign((prev) => ({ ...prev, [id]: txt }))
+            }
+            onGeometryAssign={(id, g) =>
+              setManualGeometryAssign((prev) => {
+                if (g === null) {
+                  const { [id]: _, ...rest } = prev;
+                  return rest;
+                }
+                return { ...prev, [id]: g };
+              })
+            }
           />
         </div>
       )}
@@ -218,18 +291,15 @@ export function ScriptForm({ onSubmit, loading }: Props) {
         disabled={
           loading ||
           !selectedTemplate ||
-          (mode === "auto" && !topic.trim()) ||
-          (mode === "manual-select" && selectedComments.length === 0)
+          (mode === "auto" && !topic.trim())
         }
         className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium transition"
       >
         {loading
           ? "生成中..."
-          : mode === "manual-select" && selectedComments.length === 0
-            ? "コメントを選択してください"
-            : mode !== "auto" && !commentBundle
-              ? "動画 URL を取得してください"
-              : "台本を生成"}
+          : mode === "manual"
+            ? "動画を組み立てる"
+            : "台本を生成"}
       </button>
     </form>
   );

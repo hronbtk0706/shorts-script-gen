@@ -175,6 +175,8 @@ export interface ScriptInput {
   referenceBundle?: ReferenceBundle;
   template?: VideoTemplate;
   selectedComments?: ExtractedComment[];
+  /** マニュアルモード（AI画像生成をスキップ、ユーザー指定レイヤーのみで合成） */
+  manualMode?: boolean;
 }
 
 export interface SubtitleStyle {

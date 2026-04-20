@@ -65,21 +65,27 @@ export function LayerPropertyPanel({ layer, onChange }: Props) {
     setter: (v: number) => void,
     step = 1,
     unit = "",
-  ) => (
-    <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-      <label className="text-gray-600 dark:text-gray-400">{label}</label>
-      <div className="flex items-center gap-1">
-        <input
-          type="number"
-          value={Number.isFinite(value) ? value : 0}
-          step={step}
-          onChange={(e) => setter(Number(e.target.value))}
-          className="flex-1 px-1 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-        />
-        {unit && <span className="text-gray-400">{unit}</span>}
+  ) => {
+    const precision = step < 1 ? 2 : 0;
+    const displayValue = Number.isFinite(value)
+      ? Number((value as number).toFixed(precision))
+      : 0;
+    return (
+      <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
+        <label className="text-gray-600 dark:text-gray-400">{label}</label>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={displayValue}
+            step={step}
+            onChange={(e) => setter(Number(e.target.value))}
+            className="flex-1 px-1 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+          />
+          {unit && <span className="text-gray-400">{unit}</span>}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-2 text-xs">

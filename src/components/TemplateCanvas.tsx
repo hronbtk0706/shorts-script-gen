@@ -36,9 +36,11 @@ interface Props {
   currentTimeSec?: number;
 }
 
-/** 9:16 仮想キャンバス。横 360px 固定（高さ 640px）をデフォルトとする */
-const CANVAS_W_PX = 360;
-const CANVAS_H_PX = 640;
+/** 9:16 仮想キャンバスの最大サイズ。親幅／ビューポート高さに応じて拡縮 */
+const CANVAS_MAX_W_PX = 720;
+const CANVAS_MIN_W_PX = 120;
+/** キャンバスが占有してよいビューポート高さの割合 */
+const CANVAS_HEIGHT_RATIO = 0.72;
 
 export function TemplateCanvas({
   layers,
@@ -49,15 +51,48 @@ export function TemplateCanvas({
   showGrid = false,
   currentTimeSec,
 }: Props) {
-  const filteredLayers =
-    currentTimeSec === undefined
-      ? layers
-      : layers.filter(
-          (l) => currentTimeSec >= l.startSec && currentTimeSec < l.endSec,
-        );
+  const isInTime = (l: Layer) =>
+    currentTimeSec === undefined ||
+    (currentTimeSec >= l.startSec && currentTimeSec < l.endSec);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement | null>(null);
   const [, forceRerender] = useState(0);
+  const initW = Math.round(Math.min(CANVAS_MAX_W_PX, 360));
+  const [canvasSize, setCanvasSize] = useState({
+    w: initW,
+    h: Math.round((initW * 16) / 9),
+  });
+
+  // 親幅 × ビューポート高さに合わせて 9:16 を維持してサイズ決定
+  useEffect(() => {
+    if (!wrapperRef.current) return;
+    const measure = () => {
+      if (!wrapperRef.current) return;
+      const availW = wrapperRef.current.clientWidth;
+      const availH = window.innerHeight * CANVAS_HEIGHT_RATIO;
+      // 幅・高さ両方の制約を満たす最大サイズ
+      const wByWidth = availW;
+      const wByHeight = (availH * 9) / 16;
+      const w = Math.max(
+        CANVAS_MIN_W_PX,
+        Math.min(CANVAS_MAX_W_PX, wByWidth, wByHeight),
+      );
+      const h = Math.round((w * 16) / 9);
+      setCanvasSize({ w: Math.round(w), h });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrapperRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, []);
+
+  const CANVAS_W_PX = canvasSize.w;
+  const CANVAS_H_PX = canvasSize.h;
 
   const selected = layers.find((l) => l.id === selectedLayerId) ?? null;
   // selected が変わったら Moveable を再計算させる
@@ -75,10 +110,11 @@ export function TemplateCanvas({
   };
 
   return (
+    <div ref={wrapperRef} className="w-full flex justify-center">
     <div
       ref={containerRef}
       onMouseDown={handleBackgroundClick}
-      className="relative overflow-hidden mx-auto shadow-lg"
+      className="relative overflow-hidden shadow-lg"
       style={{
         width: CANVAS_W_PX,
         height: CANVAS_H_PX,
@@ -98,11 +134,14 @@ export function TemplateCanvas({
           }}
         />
       )}
-      {sortedLayers(filteredLayers).map((layer) => (
+      {sortedLayers(layers).map((layer) => (
         <LayerView
           key={layer.id}
           layer={layer}
           isSelected={layer.id === selectedLayerId}
+          dimmed={!isInTime(layer)}
+          canvasWPx={CANVAS_W_PX}
+          canvasHPx={CANVAS_H_PX}
           onSelect={() => onLayerSelect(layer.id)}
           onRefReady={(el) => {
             if (layer.id === selectedLayerId) {
@@ -212,30 +251,39 @@ export function TemplateCanvas({
         />
       )}
     </div>
+    </div>
   );
+}
+
+interface LayerViewProps {
+  layer: Layer;
+  isSelected: boolean;
+  dimmed?: boolean;
+  canvasWPx: number;
+  canvasHPx: number;
+  onSelect: () => void;
+  onRefReady: (el: HTMLDivElement | null) => void;
 }
 
 function LayerView({
   layer,
   isSelected,
+  dimmed = false,
+  canvasWPx,
+  canvasHPx,
   onSelect,
   onRefReady,
-}: {
-  layer: Layer;
-  isSelected: boolean;
-  onSelect: () => void;
-  onRefReady: (el: HTMLDivElement | null) => void;
-}) {
+}: LayerViewProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isSelected) onRefReady(ref.current);
   }, [isSelected, onRefReady]);
 
-  const leftPx = (layer.x / 100) * CANVAS_W_PX;
-  const topPx = (layer.y / 100) * CANVAS_H_PX;
-  const widthPx = (layer.width / 100) * CANVAS_W_PX;
-  const heightPx = (layer.height / 100) * CANVAS_H_PX;
+  const leftPx = (layer.x / 100) * canvasWPx;
+  const topPx = (layer.y / 100) * canvasHPx;
+  const widthPx = (layer.width / 100) * canvasWPx;
+  const heightPx = (layer.height / 100) * canvasHPx;
 
   const shapeStyle: React.CSSProperties = {};
   if (layer.shape === "circle") {
@@ -246,8 +294,15 @@ function LayerView({
   if (layer.border) {
     shapeStyle.border = `${layer.border.width}px solid ${layer.border.color}`;
   }
-  if (layer.opacity !== undefined && layer.opacity !== 1) {
-    shapeStyle.opacity = layer.opacity;
+  const baseOpacity = layer.opacity ?? 1;
+  const effectiveOpacity = dimmed ? baseOpacity * 0.25 : baseOpacity;
+  if (effectiveOpacity !== 1) {
+    shapeStyle.opacity = effectiveOpacity;
+  }
+  // 時間外のレイヤーは点線枠で示す（境界がない場合に追加）
+  if (dimmed && !layer.border) {
+    shapeStyle.outline = "2px dashed rgba(255,255,255,0.35)";
+    shapeStyle.outlineOffset = "-2px";
   }
 
   const style: React.CSSProperties = {
@@ -260,6 +315,7 @@ function LayerView({
     cursor: "pointer",
     userSelect: "none",
     overflow: "hidden",
+    zIndex: layer.zIndex,
     ...shapeStyle,
   };
 

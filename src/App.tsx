@@ -6,6 +6,7 @@ import { VideoGenerator } from "./components/VideoGenerator";
 import { AnalyticsPanel } from "./components/AnalyticsPanel";
 import { CandidatePicker } from "./components/CandidatePicker";
 import { TemplateManager } from "./components/TemplateManager";
+import { ManualScriptSummary } from "./components/ManualScriptSummary";
 import type { SelectionResult } from "./lib/providers/llm";
 import { generateScriptWithPipeline } from "./lib/scriptGenerator";
 import { loadSettings, type AppSettings } from "./lib/storage";
@@ -27,6 +28,7 @@ function App() {
   const [selection, setSelection] = useState<SelectionResult | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [isManualMode, setIsManualMode] = useState(false);
 
   const refreshSettings = async () => {
     const s = await loadSettings();
@@ -87,7 +89,19 @@ function App() {
   };
 
   const handleGenerate = async (submission: ScriptFormSubmit) => {
-    const { input } = submission;
+    const { input, mode, prebuiltScript } = submission;
+
+    // 手動モード: AIをスキップして Script を直接セット
+    if (mode === "manual" && prebuiltScript) {
+      setError(null);
+      setCandidates(null);
+      setSelection(null);
+      setIsManualMode(true);
+      setScript(prebuiltScript);
+      setScriptInput(input);
+      return;
+    }
+    setIsManualMode(false);
 
     const s = settings ?? (await refreshSettings());
     const keyMissing =
@@ -130,16 +144,31 @@ function App() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-        <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center gap-4">
-          <div className="flex items-center gap-4 flex-1 min-w-0">
-            <div className="min-w-0">
-              <h1 className="text-xl font-bold">ショート台本ジェネレーター</h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                参考動画のコメントから視聴者反応集ショートを生成
-              </p>
-            </div>
+        <div className="px-4 flex items-center gap-2">
+          <div className="flex gap-1 shrink-0">
+            {(["generate", "templates", "analytics"] as Tab[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                  tab === t
+                    ? "border-blue-600 text-blue-600 dark:text-blue-400"
+                    : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                }`}
+              >
+                {t === "generate"
+                  ? "台本生成"
+                  : t === "templates"
+                    ? "テンプレート管理"
+                    : "実績管理"}
+              </button>
+            ))}
           </div>
-
+          {/* 子コンポーネント（TemplateBuilder 等）がここにポータルで描画 */}
+          <div
+            id="app-header-slot"
+            className="flex-1 flex justify-end items-center gap-2"
+          />
           <button
             onClick={() => setSettingsOpen(true)}
             className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 shrink-0"
@@ -148,29 +177,9 @@ function App() {
             ⚙️
           </button>
         </div>
-
-        <div className="max-w-5xl mx-auto px-6 flex gap-1 border-t border-gray-100 dark:border-gray-800">
-          {(["generate", "templates", "analytics"] as Tab[]).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                tab === t
-                  ? "border-blue-600 text-blue-600 dark:text-blue-400"
-                  : "border-transparent text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-              }`}
-            >
-              {t === "generate"
-                ? "台本生成"
-                : t === "templates"
-                  ? "テンプレート管理"
-                  : "実績管理"}
-            </button>
-          ))}
-        </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-6 py-8">
+      <main className="px-6 py-2">
         {tab === "generate" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <section>
@@ -208,7 +217,11 @@ function App() {
                       }}
                     />
                   )}
-                  <ScriptResult script={script} onChange={setScript} />
+                  {isManualMode && scriptInput ? (
+                    <ManualScriptSummary scriptInput={scriptInput} />
+                  ) : (
+                    <ScriptResult script={script} onChange={setScript} />
+                  )}
                   <VideoGenerator
                     apiKey={videoApiKey}
                     script={script}
@@ -221,8 +234,7 @@ function App() {
         )}
 
         {tab === "templates" && (
-          <div className="max-w-3xl">
-            <h2 className="text-lg font-semibold mb-4">テンプレート管理</h2>
+          <div className="w-full">
             <TemplateManager />
           </div>
         )}

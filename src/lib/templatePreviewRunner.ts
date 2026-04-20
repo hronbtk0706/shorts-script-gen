@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { VideoTemplate, Layer } from "../types";
-import { composeLayersToPng } from "./layerComposer";
+import {
+  composeLayersToPng,
+  composeSingleLayerToTransparentPng,
+} from "./layerComposer";
 
 interface RustVideoLayerInput {
   path: string;
@@ -15,6 +18,22 @@ interface RustVideoLayerInput {
   rotation: number;
   borderWidthPct: number;
   borderColor: string;
+  startSec: number;
+  endSec: number;
+  entryAnimation: string;
+  entryDuration: number;
+  exitAnimation: string;
+  exitDuration: number;
+}
+
+interface RustTimedOverlay {
+  pngPath: string;
+  start: number;
+  end: number;
+  entryAnimation: string;
+  entryDuration: number;
+  exitAnimation: string;
+  exitDuration: number;
 }
 
 interface RustSceneInput {
@@ -31,6 +50,7 @@ interface RustSceneInput {
   captions: never[];
   audio_leading_pad: number;
   video_layers: RustVideoLayerInput[];
+  timed_overlays: RustTimedOverlay[];
 }
 
 function makePlaceholderCanvas(label: string): HTMLCanvasElement {
@@ -90,8 +110,23 @@ export async function renderTemplatePreview(
   const pad = (n: number) => String(n).padStart(2, "0");
   const sessionId = `preview_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
+  // セグメント未定義のテンプレは、全尺を1つの body セグメントとして扱う
+  const effectiveSegments =
+    template.segments.length > 0
+      ? template.segments
+      : [
+          {
+            id: "auto_body",
+            type: "body" as const,
+            startSec: 0,
+            endSec: template.totalDuration,
+            transitionTo: "cut" as const,
+            transitionDuration: 0,
+          },
+        ];
+
   const maxDuration =
-    Math.max(...template.segments.map((s) => s.endSec - s.startSec), 1) + 1;
+    Math.max(...effectiveSegments.map((s) => s.endSec - s.startSec), 1) + 1;
 
   onProgress("無音音声を生成中...");
   const silentWav = await invoke<string>("generate_silent_wav", {
@@ -105,34 +140,88 @@ export async function renderTemplatePreview(
   const placeholderImage = canvasToDataUrl(makePlaceholderCanvas("AI画像"));
   const placeholderUser = canvasToDataUrl(makePlaceholderCanvas("画像未設定"));
 
+  const resolveSrc = async (layer: Layer): Promise<string | null> => {
+    if (layer.source === "auto") return placeholderImage;
+    if (layer.source === "user" || !layer.source) return placeholderUser;
+    if (layer.type === "video") return null;
+    return layer.source;
+  };
+
   const rustScenes: RustSceneInput[] = [];
-  for (let i = 0; i < template.segments.length; i++) {
-    const seg = template.segments[i];
+  for (let i = 0; i < effectiveSegments.length; i++) {
+    const seg = effectiveSegments[i];
+    const sceneDur = Math.max(0.001, seg.endSec - seg.startSec);
     onProgress(
-      `セグメント ${i + 1}/${template.segments.length} の合成画像を生成中...`,
+      `セグメント ${i + 1}/${effectiveSegments.length} の合成画像を生成中...`,
     );
 
-    // セグメント開始時刻で可視なレイヤーを抽出
-    const visibleAtStart = template.layers.filter(
-      (l) => l.startSec <= seg.startSec && l.endSec > seg.startSec,
+    // セグメントと重なるレイヤーを抽出
+    const overlapping = template.layers.filter(
+      (l) => l.startSec < seg.endSec && l.endSec > seg.startSec,
     );
 
+    // 常時表示 / 時間ゲート に分類
+    const epsilon = 0.02;
+    const alwaysVisible: Layer[] = [];
+    const timeGated: Layer[] = [];
+    for (const l of overlapping) {
+      if (l.type === "video") continue;
+      const coversStart = l.startSec <= seg.startSec + epsilon;
+      const coversEnd = l.endSec >= seg.endSec - epsilon;
+      if (coversStart && coversEnd) alwaysVisible.push(l);
+      else timeGated.push(l);
+    }
+
+    // zIndex 正しさのため: タイムゲートの最低 zIndex より高い常時表示レイヤーは
+    // 常時表示のままだと下に埋もれるので、時間ゲート側に昇格（セグメント全期間で表示）
+    if (timeGated.length > 0 && alwaysVisible.length > 0) {
+      const minTimedZ = Math.min(...timeGated.map((l) => l.zIndex));
+      const promote = alwaysVisible.filter((l) => l.zIndex > minTimedZ);
+      for (const l of promote) {
+        const idx = alwaysVisible.indexOf(l);
+        if (idx >= 0) alwaysVisible.splice(idx, 1);
+        timeGated.push({ ...l, startSec: seg.startSec, endSec: seg.endSec });
+      }
+    }
+    timeGated.sort((a, b) => a.zIndex - b.zIndex);
+
+    // ベース画像＝常時表示レイヤーのみを合成（時間指定なし）
     const basePngPath = await composeLayersToPng(
-      template.layers,
-      async (layer: Layer) => {
-        if (layer.source === "auto") return placeholderImage;
-        if (layer.source === "user" || !layer.source) return placeholderUser;
-        if (layer.type === "video") {
-          return null;
-        }
-        return layer.source;
-      },
+      alwaysVisible,
+      resolveSrc,
       sessionId,
       `scene_${i}_composed`,
-      seg.startSec,
     );
 
-    const videoLayers: RustVideoLayerInput[] = visibleAtStart
+    // 時間ゲート付きレイヤー → 個別の透明 PNG
+    const timedOverlays: RustTimedOverlay[] = [];
+    for (const l of timeGated) {
+      const relStart = Math.max(0, l.startSec - seg.startSec);
+      const relEnd = Math.min(sceneDur, l.endSec - seg.startSec);
+      if (relEnd - relStart < 0.05) continue;
+      try {
+        const pngPath = await composeSingleLayerToTransparentPng(
+          l,
+          resolveSrc,
+          sessionId,
+          `scene_${i}_timed_${l.id}`,
+        );
+        timedOverlays.push({
+          pngPath,
+          start: relStart,
+          end: relEnd,
+          entryAnimation: l.entryAnimation ?? "none",
+          entryDuration: l.entryDuration ?? 0.3,
+          exitAnimation: l.exitAnimation ?? "none",
+          exitDuration: l.exitDuration ?? 0.3,
+        });
+      } catch (e) {
+        console.error(`[preview] timed layer ${l.id} failed:`, e);
+      }
+    }
+
+    // 動画レイヤー（すべて時間ゲート付きで overlay）
+    const videoLayers: RustVideoLayerInput[] = overlapping
       .filter(
         (l) =>
           l.type === "video" &&
@@ -140,35 +229,46 @@ export async function renderTemplatePreview(
           l.source !== "auto" &&
           l.source !== "user",
       )
-      .map((l) => ({
-        path: l.source as string,
-        xPct: l.x,
-        yPct: l.y,
-        widthPct: l.width,
-        heightPct: l.height,
-        zIndex: l.zIndex,
-        shape: l.shape ?? "rect",
-        borderRadiusPct: l.borderRadius ?? 0,
-        opacity: l.opacity ?? 1,
-        rotation: l.rotation ?? 0,
-        borderWidthPct: l.border?.width ?? 0,
-        borderColor: l.border?.color ?? "white",
-      }));
+      .map((l) => {
+        const relStart = Math.max(0, l.startSec - seg.startSec);
+        const relEnd = Math.min(sceneDur, l.endSec - seg.startSec);
+        return {
+          path: l.source as string,
+          xPct: l.x,
+          yPct: l.y,
+          widthPct: l.width,
+          heightPct: l.height,
+          zIndex: l.zIndex,
+          shape: l.shape ?? "rect",
+          borderRadiusPct: l.borderRadius ?? 0,
+          opacity: l.opacity ?? 1,
+          rotation: l.rotation ?? 0,
+          borderWidthPct: l.border?.width ?? 0,
+          borderColor: l.border?.color ?? "white",
+          startSec: relStart,
+          endSec: relEnd,
+          entryAnimation: l.entryAnimation ?? "none",
+          entryDuration: l.entryDuration ?? 0.3,
+          exitAnimation: l.exitAnimation ?? "none",
+          exitDuration: l.exitDuration ?? 0.3,
+        };
+      });
 
     rustScenes.push({
       image_path: basePngPath,
       audio_path: silentWav,
       overlay_png_path: blankOverlay,
-      duration: seg.endSec - seg.startSec,
+      duration: sceneDur,
       motion: "static",
       color: seg.color ?? "none",
       audio_fade_in: i === 0,
-      audio_fade_out: i === template.segments.length - 1,
+      audio_fade_out: i === effectiveSegments.length - 1,
       transition_to_next: seg.transitionTo ?? "cut",
       transition_duration: seg.transitionDuration ?? 0,
       captions: [],
       audio_leading_pad: 0,
       video_layers: videoLayers,
+      timed_overlays: timedOverlays,
     });
   }
 

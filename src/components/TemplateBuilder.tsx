@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Layer, TemplateSegment, VideoTemplate } from "../types";
 import { TemplateCanvas } from "./TemplateCanvas";
+import { TemplateTimeline } from "./TemplateTimeline";
 import { LayerPanel } from "./LayerPanel";
 import { LayerPropertyPanel } from "./LayerPropertyPanel";
 import { TemplatePreviewModal } from "./TemplatePreviewModal";
@@ -35,7 +37,13 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    setHeaderSlot(document.getElementById("app-header-slot"));
+  }, []);
 
   useEffect(() => {
     if (skipHistoryRef.current) {
@@ -101,8 +109,12 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
     () => visibleLayersAt(template.layers, playheadSec),
     [template.layers, playheadSec],
   );
+  // 時間外でも選択・編集できるよう、全レイヤーから探す
   const selectedLayer =
-    visibleLayers.find((l) => l.id === selectedLayerId) ?? null;
+    template.layers.find((l) => l.id === selectedLayerId) ?? null;
+  const selectedLayerInTime = selectedLayer
+    ? visibleLayers.some((l) => l.id === selectedLayer.id)
+    : false;
 
   const updateLayer = (layerId: string, patch: Partial<Layer>) => {
     setTemplate((t) => ({
@@ -155,211 +167,163 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
   };
 
   const handleSave = async () => {
+    const name = template.name.trim();
+    if (!name) {
+      setSaveMsg({ type: "err", text: "テンプレ名を入力してください" });
+      return;
+    }
     setSaving(true);
+    setSaveMsg(null);
     try {
+      const withName: VideoTemplate = { ...template, name };
       const toSave: VideoTemplate = editing
-        ? template
-        : { ...template, id: makeTemplateId(template.name) };
+        ? withName
+        : { ...withName, id: makeTemplateId(name) };
       toSave.layers = toSave.layers.map((l) => ({
         ...l,
         id: l.id || genLayerId(),
       }));
       await saveTemplate(toSave);
-      onSaved();
+      setSaveMsg({ type: "ok", text: `保存しました: ${name}` });
+      setTimeout(() => {
+        onSaved();
+      }, 400);
+    } catch (e) {
+      console.error("[TemplateBuilder] save failed:", e);
+      setSaveMsg({
+        type: "err",
+        text: `保存失敗: ${e instanceof Error ? e.message : String(e)}`,
+      });
     } finally {
       setSaving(false);
     }
   };
 
-  const segmentTypeColor = (type: TemplateSegment["type"]) =>
-    type === "hook"
-      ? "bg-purple-400"
-      : type === "cta"
-        ? "bg-pink-400"
-        : "bg-blue-400";
+  // 画像2 = ヘッダーに portal で移動するツールバー（保存等）
+  const headerToolbar = (
+    <>
+      <input
+        type="text"
+        value={template.name}
+        placeholder="テンプレ名"
+        onChange={(e) =>
+          setTemplate((t) => ({ ...t, name: e.target.value }))
+        }
+        className="w-44 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+      />
+      <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+        尺
+        <input
+          type="number"
+          min={5}
+          max={300}
+          value={template.totalDuration}
+          onChange={(e) =>
+            setTemplate((t) => ({
+              ...t,
+              totalDuration: Number(e.target.value) || 30,
+            }))
+          }
+          className="w-14 px-1 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+        />
+        <span className="text-[10px]">秒</span>
+      </label>
+      <button
+        type="button"
+        onClick={() => {
+          setSelectedLayerId(null);
+          setPreviewOpen(true);
+        }}
+        className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+      >
+        🎬 プレビュー
+      </button>
+      {onCancel && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1 rounded border border-gray-300 dark:border-gray-600 text-xs"
+        >
+          キャンセル
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:bg-gray-400"
+      >
+        {saving ? "保存中..." : editing ? "上書き保存" : "テンプレ保存"}
+      </button>
+    </>
+  );
 
   return (
-    <div className="space-y-3">
-      {/* ヘッダ */}
-      <div className="rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3 space-y-2">
-        <div className="grid grid-cols-[1fr_100px] gap-2">
-          <div>
-            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-0.5">
-              テンプレ名 <span className="text-red-500">*</span>
+    <div className="space-y-1">
+      {headerSlot && createPortal(headerToolbar, headerSlot)}
+
+      {saveMsg && (
+        <div
+          className={`text-xs px-2 py-1 rounded ${
+            saveMsg.type === "ok"
+              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
+              : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300"
+          }`}
+        >
+          {saveMsg.text}
+        </div>
+      )}
+
+      {/* 3 カラム (固定幅 + 中央寄せ) */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "380px 200px 240px",
+          gap: "1rem",
+          alignItems: "start",
+          justifyContent: "center",
+          margin: "0 auto",
+        }}
+      >
+        {/* 左: キャンバス（＋画像1=undo/redo/grid/info の 2列コンパクト） */}
+        <div className="min-w-0 space-y-1">
+          <div
+            className="grid gap-x-2 gap-y-0.5 items-center text-[11px]"
+            style={{ gridTemplateColumns: "auto auto 1fr" }}
+          >
+            <button
+              type="button"
+              onClick={undo}
+              disabled={!canUndo}
+              className="px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-[11px] disabled:opacity-40"
+            >
+              ↶ 元に戻す
+            </button>
+            <button
+              type="button"
+              onClick={redo}
+              disabled={!canRedo}
+              className="px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-[11px] disabled:opacity-40"
+            >
+              やり直す ↷
+            </button>
+            <span className="text-gray-500">
+              {playheadSec.toFixed(1)}s / 表示中 {visibleLayers.length}/{template.layers.length}
+            </span>
+            <label className="flex items-center gap-1 cursor-pointer col-span-2">
+              <input
+                type="checkbox"
+                checked={showGrid}
+                onChange={(e) => setShowGrid(e.target.checked)}
+                className="h-3 w-3"
+              />
+              グリッド
             </label>
-            <input
-              type="text"
-              value={template.name}
-              onChange={(e) =>
-                setTemplate((t) => ({ ...t, name: e.target.value }))
-              }
-              className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-            />
-          </div>
-          <div>
-            <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-0.5">
-              尺 (秒)
-            </label>
-            <input
-              type="number"
-              min={5}
-              max={300}
-              value={template.totalDuration}
-              onChange={(e) =>
-                setTemplate((t) => ({
-                  ...t,
-                  totalDuration: Number(e.target.value) || 30,
-                }))
-              }
-              className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-            />
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-2">
-          <input
-            type="text"
-            placeholder="雰囲気"
-            value={template.themeVibe ?? ""}
-            onChange={(e) =>
-              setTemplate((t) => ({ ...t, themeVibe: e.target.value }))
-            }
-            className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-          />
-          <input
-            type="text"
-            placeholder="ペース"
-            value={template.overallPacing ?? ""}
-            onChange={(e) =>
-              setTemplate((t) => ({ ...t, overallPacing: e.target.value }))
-            }
-            className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-          />
-          <input
-            type="text"
-            placeholder="ナレーション口調"
-            value={template.narrationStyle ?? ""}
-            onChange={(e) =>
-              setTemplate((t) => ({ ...t, narrationStyle: e.target.value }))
-            }
-            className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-          />
-        </div>
-
-        {/* セグメントバー（background: 時間帯を色分け） */}
-        <div className="flex w-full h-4 bg-gray-200 dark:bg-gray-800 rounded overflow-hidden text-[9px]">
-          {template.segments.map((s) => {
-            const width =
-              ((s.endSec - s.startSec) / template.totalDuration) * 100;
-            return (
-              <div
-                key={s.id}
-                className={`${segmentTypeColor(s.type)} text-white text-center overflow-hidden whitespace-nowrap`}
-                style={{ width: `${width}%` }}
-                title={`${s.type}${s.bodyIndex !== undefined ? `[${s.bodyIndex}]` : ""} ${s.startSec}-${s.endSec}s`}
-              >
-                {s.type}
-                {s.bodyIndex !== undefined ? `#${s.bodyIndex}` : ""}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* プレイヘッド（現在時刻スクラブ） */}
-        <div className="flex items-center gap-2 text-xs">
-          <span>現在:</span>
-          <input
-            type="range"
-            min={0}
-            max={template.totalDuration}
-            step={0.1}
-            value={playheadSec}
-            onChange={(e) => setPlayheadSec(Number(e.target.value))}
-            className="flex-1"
-          />
-          <span className="w-12 text-right">{playheadSec.toFixed(1)}s</span>
-        </div>
-      </div>
-
-      {/* 3 カラム */}
-      <div className="grid grid-cols-[200px_1fr_260px] gap-3">
-        {/* 左: セグメント一覧 */}
-        <div className="space-y-1">
-          <div className="text-[11px] font-semibold text-gray-700 dark:text-gray-300">
-            セグメント ({template.segments.length})
-          </div>
-          <div className="grid grid-cols-3 gap-1">
-            <button
-              type="button"
-              onClick={() => addSegment("hook")}
-              className="text-[10px] py-1 rounded bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200"
-            >
-              +hook
-            </button>
-            <button
-              type="button"
-              onClick={() => addSegment("body")}
-              className="text-[10px] py-1 rounded bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200"
-            >
-              +body
-            </button>
-            <button
-              type="button"
-              onClick={() => addSegment("cta")}
-              className="text-[10px] py-1 rounded bg-pink-100 dark:bg-pink-900/30 hover:bg-pink-200"
-            >
-              +cta
-            </button>
-          </div>
-          <div className="max-h-[550px] overflow-y-auto space-y-1">
-            {template.segments.map((s) => (
-              <div
-                key={s.id}
-                className="p-1.5 rounded bg-gray-50 dark:bg-gray-800 text-[11px] space-y-1"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-medium">
-                    {s.type}
-                    {s.bodyIndex !== undefined ? `[${s.bodyIndex}]` : ""}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeSegment(s.id)}
-                    className="p-0.5 hover:bg-red-100 rounded text-red-600"
-                  >
-                    🗑
-                  </button>
-                </div>
-                <div className="flex items-center gap-1">
-                  <input
-                    type="number"
-                    step={0.1}
-                    value={s.startSec}
-                    onChange={(e) =>
-                      updateSegment(s.id, { startSec: Number(e.target.value) })
-                    }
-                    className="w-14 px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-                  />
-                  <span className="text-gray-400">〜</span>
-                  <input
-                    type="number"
-                    step={0.1}
-                    value={s.endSec}
-                    onChange={(e) =>
-                      updateSegment(s.id, { endSec: Number(e.target.value) })
-                    }
-                    className="w-14 px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 中央: キャンバス */}
-        <div className="space-y-2">
-          <div className="text-[11px] text-gray-500">
-            現在 {playheadSec.toFixed(1)}s で表示中のレイヤー:{" "}
-            {visibleLayers.length}
+            {selectedLayer && !selectedLayerInTime && (
+              <span className="px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px]">
+                ⚠ 選択は非表示
+              </span>
+            )}
           </div>
           <TemplateCanvas
             layers={template.layers}
@@ -371,8 +335,8 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
           />
         </div>
 
-        {/* 右: レイヤー操作 */}
-        <div className="space-y-3">
+        {/* 右1: レイヤー一覧 */}
+        <div className="min-w-0">
           <LayerPanel
             layers={template.layers}
             selectedLayerId={selectedLayerId}
@@ -383,71 +347,38 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
               endSec: Math.min(playheadSec + 3, template.totalDuration),
             }}
           />
-          <div className="border-t border-gray-200 dark:border-gray-700 pt-2">
-            <LayerPropertyPanel
-              layer={selectedLayer}
-              onChange={(patch) => {
-                if (selectedLayerId) updateLayer(selectedLayerId, patch);
-              }}
-            />
-          </div>
+        </div>
+
+        {/* 右2: プロパティパネル */}
+        <div className="min-w-0">
+          <LayerPropertyPanel
+            layer={selectedLayer}
+            onChange={(patch) => {
+              if (selectedLayerId) updateLayer(selectedLayerId, patch);
+            }}
+          />
         </div>
       </div>
 
-      {/* フッタ */}
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={undo}
-            disabled={!canUndo}
-            className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-xs disabled:opacity-40"
-          >
-            ↶ 元に戻す
-          </button>
-          <button
-            type="button"
-            onClick={redo}
-            disabled={!canRedo}
-            className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 text-xs disabled:opacity-40"
-          >
-            やり直す ↷
-          </button>
-          <label className="flex items-center gap-1 text-xs ml-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showGrid}
-              onChange={(e) => setShowGrid(e.target.checked)}
-              className="h-3 w-3"
-            />
-            グリッド
-          </label>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setPreviewOpen(true)}
-            className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-sm"
-          >
-            🎬 プレビュー
-          </button>
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="px-3 py-1.5 rounded border border-gray-300 dark:border-gray-600 text-sm"
-            >
-              キャンセル
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !template.name.trim()}
-            className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm disabled:bg-gray-400"
-          >
-            {saving ? "保存中..." : editing ? "上書き保存" : "テンプレ保存"}
-          </button>
+      {/* 下段: タイムライン（尺に比例。60秒=上段幅×1.2、それ以上は横スクロール） */}
+      <div className="w-full overflow-x-auto">
+        <div
+          style={{
+            // 上段幅 852px = 380+200+240 + 2*16gap、2割増を 60秒の幅とする
+            width: (120 + (template.totalDuration * (852 - 120)) / 60) * 1.2,
+            margin: "0 auto",
+          }}
+        >
+          <TemplateTimeline
+            layers={template.layers}
+            segments={template.segments}
+            totalDuration={template.totalDuration}
+            playheadSec={playheadSec}
+            selectedLayerId={selectedLayerId}
+            onLayerUpdate={updateLayer}
+            onLayerSelect={setSelectedLayerId}
+            onPlayheadChange={setPlayheadSec}
+          />
         </div>
       </div>
 

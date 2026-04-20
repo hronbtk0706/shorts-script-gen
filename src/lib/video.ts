@@ -17,12 +17,25 @@ import { getTtsProvider } from "./providers/tts";
 import { getImageProvider } from "./providers/image";
 import { fetchPixabayBgm } from "./providers/bgm";
 import { resolveEffects } from "./effects";
-import { composeLayersToPng } from "./layerComposer";
+import {
+  composeLayersToPng,
+  composeSingleLayerToTransparentPng,
+} from "./layerComposer";
 
 export interface CaptionAsset {
   pngPath: string;
   start: number;
   end: number;
+}
+
+export interface TimedOverlayAsset {
+  pngPath: string;
+  start: number;
+  end: number;
+  entryAnimation: string;
+  entryDuration: number;
+  exitAnimation: string;
+  exitDuration: number;
 }
 
 export interface SceneAssets {
@@ -35,6 +48,7 @@ export interface SceneAssets {
   captions: CaptionAsset[];
   audioLeadingPad: number;
   videoLayers: RustVideoLayerInput[];
+  timedOverlays: TimedOverlayAsset[];
 }
 
 export interface ProgressUpdate {
@@ -72,6 +86,22 @@ interface RustVideoLayerInput {
   rotation: number;
   borderWidthPct: number;
   borderColor: string;
+  startSec: number;
+  endSec: number;
+  entryAnimation: string;
+  entryDuration: number;
+  exitAnimation: string;
+  exitDuration: number;
+}
+
+interface RustTimedOverlayInput {
+  pngPath: string;
+  start: number;
+  end: number;
+  entryAnimation: string;
+  entryDuration: number;
+  exitAnimation: string;
+  exitDuration: number;
 }
 
 interface RustSceneInput {
@@ -88,6 +118,7 @@ interface RustSceneInput {
   captions: RustCaptionInput[];
   audio_leading_pad: number;
   video_layers: RustVideoLayerInput[];
+  timed_overlays: RustTimedOverlayInput[];
 }
 
 const AUDIO_LEADING_PAD_SECONDS = 0.6;
@@ -201,7 +232,9 @@ export async function generateVideo(
   script: Script,
   onProgress: ProgressCallback,
   template?: VideoTemplate,
+  options?: { manualMode?: boolean },
 ): Promise<VideoResult> {
+  const manualMode = options?.manualMode === true;
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const sessionId = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -236,10 +269,11 @@ export async function generateVideo(
       visual: script.hook.visual,
       image_prompt: script.hook.image_prompt || fallbackImagePrompt(script.hook.visual),
       image_path: script.hook.image_path,
-      text_overlay: script.hook.text,
+      // 手動モードではオーバーレイ/キャプションを出さない（レイヤーが描画済みなので）
+      text_overlay: manualMode ? "" : script.hook.text,
       style: script.hook.subtitle_style,
       effects: resolveEffects(script.hook.effects, { isFirst: true }),
-      skipCaption: false,
+      skipCaption: manualMode,
       templateSegment: segmentByKey.get("hook_0") ?? null,
       templateLayers: layersForSegment(segmentByKey.get("hook_0") ?? null),
     },
@@ -249,10 +283,10 @@ export async function generateVideo(
       visual: b.visual,
       image_prompt: b.image_prompt || fallbackImagePrompt(b.visual),
       image_path: b.image_path,
-      text_overlay: b.text_overlay,
+      text_overlay: manualMode ? "" : b.text_overlay,
       style: b.subtitle_style,
       effects: resolveEffects(b.effects),
-      skipCaption: false,
+      skipCaption: manualMode,
       templateSegment: segmentByKey.get(`body_${i}`) ?? null,
       templateLayers: layersForSegment(segmentByKey.get(`body_${i}`) ?? null),
     })),
@@ -262,7 +296,7 @@ export async function generateVideo(
       visual: script.cta.text,
       image_prompt: script.cta.image_prompt || fallbackImagePrompt(script.cta.text),
       image_path: script.cta.image_path,
-      text_overlay: script.cta.text,
+      text_overlay: manualMode ? "" : script.cta.text,
       style: script.cta.subtitle_style,
       effects: resolveEffects(script.cta.effects, { isLast: true }),
       skipCaption: true,
@@ -276,37 +310,76 @@ export async function generateVideo(
   for (const scene of allScenes) {
     let imagePath: string;
     // レイヤー合成（テンプレのセグメントに対応するレイヤー群が複雑な場合）
-    const segLayers = scene.templateLayers;
-    const hasComplexLayers =
-      segLayers.length > 0 &&
-      // 単一の auto 画像フルスクリーンのみなら従来の AI 画像生成で済ませる
+    const allSegLayers = scene.templateLayers;
+    const seg = scene.templateSegment;
+
+    // レイヤーを「常時表示」と「時間ゲート付き」に分割
+    //   常時表示 = セグメント開始〜終了までフルで見えるレイヤー（ベース画像に焼き込み）
+    //   時間ゲート付き = 一部時刻のみ表示（個別 PNG + enable filter）
+    const alwaysVisibleLayers: Layer[] = [];
+    const timeGatedLayers: Layer[] = [];
+    if (seg) {
+      const epsilon = 0.02;
+      for (const l of allSegLayers) {
+        if (l.type === "video") continue; // video は video_layers で別扱い
+        const coversStart = l.startSec <= seg.startSec + epsilon;
+        const coversEnd = l.endSec >= seg.endSec - epsilon;
+        if (coversStart && coversEnd) {
+          alwaysVisibleLayers.push(l);
+        } else {
+          timeGatedLayers.push(l);
+        }
+      }
+    } else {
+      // テンプレなし/セグメントなしなら全て常時表示扱い
+      for (const l of allSegLayers) {
+        if (l.type !== "video") alwaysVisibleLayers.push(l);
+      }
+    }
+
+    // zIndex 正しさのため: タイムゲート付きの最低 zIndex より高い zIndex を持つ
+    // 常時表示レイヤーは、常時表示のままだと下に埋もれてしまう（ベース焼き込み→後からoverlayで上書きされる）
+    // → 常時表示から外して時間ゲート側に移動し、セグメント全期間で表示する
+    if (timeGatedLayers.length > 0 && alwaysVisibleLayers.length > 0 && seg) {
+      const minTimedZ = Math.min(...timeGatedLayers.map((l) => l.zIndex));
+      const needsPromotion = alwaysVisibleLayers.filter((l) => l.zIndex > minTimedZ);
+      if (needsPromotion.length > 0) {
+        for (const l of needsPromotion) {
+          const idx = alwaysVisibleLayers.indexOf(l);
+          if (idx >= 0) alwaysVisibleLayers.splice(idx, 1);
+          // セグメント全期間で表示するタイムドオーバーレイに変換
+          timeGatedLayers.push({
+            ...l,
+            startSec: seg.startSec,
+            endSec: seg.endSec,
+          });
+        }
+      }
+    }
+
+    // タイムゲートレイヤーを zIndex ASC でソート（低い→高い順にオーバーレイ）
+    timeGatedLayers.sort((a, b) => a.zIndex - b.zIndex);
+
+    const segLayers = alwaysVisibleLayers;
+    // ベース画像を「常時表示レイヤーの合成」で作るか判断。
+    // 条件: 常時表示レイヤーがあり、かつ「auto 全画面1枚」だけではない場合
+    const hasComplexBase =
+      alwaysVisibleLayers.length > 0 &&
       !(
-        segLayers.length === 1 &&
-        segLayers[0].type === "image" &&
-        segLayers[0].source === "auto" &&
-        segLayers[0].x === 0 &&
-        segLayers[0].y === 0 &&
-        segLayers[0].width === 100 &&
-        segLayers[0].height === 100
+        alwaysVisibleLayers.length === 1 &&
+        alwaysVisibleLayers[0].type === "image" &&
+        alwaysVisibleLayers[0].source === "auto" &&
+        alwaysVisibleLayers[0].x === 0 &&
+        alwaysVisibleLayers[0].y === 0 &&
+        alwaysVisibleLayers[0].width === 100 &&
+        alwaysVisibleLayers[0].height === 100
       );
 
-    if (scene.image_path) {
-      onProgress({
-        phase: "image",
-        sceneIndex: scene.index,
-        totalScenes: totalCount,
-        message: `シーン ${scene.index + 1}/${totalCount}: ユーザー指定画像を使用`,
-      });
-      imagePath = scene.image_path;
-    } else if (hasComplexLayers) {
-      onProgress({
-        phase: "image",
-        sceneIndex: scene.index,
-        totalScenes: totalCount,
-        message: `シーン ${scene.index + 1}/${totalCount}: レイヤー合成中...`,
-      });
-      const resolvedSources = new Map<string, string>();
-      for (const layer of segLayers) {
+    // 時間ゲート付きレイヤー用も含めて auto 画像ソースを事前解決するため、全体で共有する
+    // 手動モードでは AI 画像生成をスキップ（未指定は空のまま）
+    const resolvedSources = new Map<string, string>();
+    if (!manualMode) {
+      for (const layer of allSegLayers) {
         if (
           (layer.type === "image" || layer.type === "video") &&
           layer.source === "auto"
@@ -325,17 +398,36 @@ export async function generateVideo(
           resolvedSources.set(layer.id, aiPath);
         }
       }
+    }
+    const resolveLayerSrc = async (layer: Layer): Promise<string | null> => {
+      if (layer.source === "auto") {
+        return resolvedSources.get(layer.id) ?? null;
+      }
+      if (layer.source && layer.source !== "user") {
+        return layer.source;
+      }
+      return null;
+    };
+
+    if (scene.image_path) {
+      onProgress({
+        phase: "image",
+        sceneIndex: scene.index,
+        totalScenes: totalCount,
+        message: `シーン ${scene.index + 1}/${totalCount}: ユーザー指定画像を使用`,
+      });
+      imagePath = scene.image_path;
+    } else if (hasComplexBase || manualMode) {
+      // 手動モードでは常にレイヤー合成のみ（ベース画像生成なし。未指定レイヤーは透過）
+      onProgress({
+        phase: "image",
+        sceneIndex: scene.index,
+        totalScenes: totalCount,
+        message: `シーン ${scene.index + 1}/${totalCount}: レイヤー合成中...`,
+      });
       imagePath = await composeLayersToPng(
         segLayers,
-        async (layer: Layer) => {
-          if (layer.source === "auto") {
-            return resolvedSources.get(layer.id) ?? null;
-          }
-          if (layer.source && layer.source !== "user") {
-            return layer.source;
-          }
-          return null;
-        },
+        resolveLayerSrc,
         sessionId,
         `scene_${scene.index}_composed`,
       );
@@ -378,22 +470,91 @@ export async function generateVideo(
       message: `シーン ${scene.index + 1}/${totalCount}: 音声合成中（${ttsProvider.label}）...`,
     });
 
-    const audioPath = await ttsProvider.synthesize(
-      {
-        text: scene.narration,
-        filename: `scene_${scene.index}`,
+    let audioPath: string;
+    let audioDuration: number;
+    let leadingPad: number;
+    let sceneDuration: number;
+
+    if (manualMode) {
+      // レイヤーごとにTTSを生成し、layer.startSec にオフセットして1本にミックス
+      const seg = scene.templateSegment;
+      const segStart = seg?.startSec ?? 0;
+      const segEnd = seg?.endSec ?? segStart;
+      const origSegDur = Math.max(0.001, segEnd - segStart);
+
+      const narrationLayers = allSegLayers.filter(
+        (l) =>
+          (l.type === "comment" || l.type === "text") &&
+          (l.text ?? "").trim().length > 0,
+      );
+
+      type Clip = { path: string; startSec: number };
+      const clips: Clip[] = [];
+      let maxLayerEndAbs = segEnd;
+
+      for (const layer of narrationLayers) {
+        const ttsPath = await ttsProvider.synthesize(
+          {
+            text: (layer.text ?? "").trim(),
+            filename: `scene_${scene.index}_layer_${layer.id}`,
+            sessionId,
+          },
+          settings,
+        );
+        const ttsDur = await invoke<number>("get_audio_duration", {
+          audioPath: ttsPath,
+        });
+        const origDur = layer.endSec - layer.startSec;
+        const layerEndAbs =
+          ttsDur > origDur ? layer.startSec + ttsDur : layer.endSec;
+        if (ttsDur > origDur) {
+          // レイヤーの endSec を延長（描画・タイムドオーバーレイに反映）
+          const idx = allSegLayers.findIndex((x) => x.id === layer.id);
+          if (idx >= 0) allSegLayers[idx] = { ...layer, endSec: layerEndAbs };
+          const tgIdx = timeGatedLayers.findIndex((x) => x.id === layer.id);
+          if (tgIdx >= 0)
+            timeGatedLayers[tgIdx] = {
+              ...timeGatedLayers[tgIdx],
+              endSec: layerEndAbs,
+            };
+          const avIdx = alwaysVisibleLayers.findIndex((x) => x.id === layer.id);
+          if (avIdx >= 0)
+            alwaysVisibleLayers[avIdx] = {
+              ...alwaysVisibleLayers[avIdx],
+              endSec: layerEndAbs,
+            };
+        }
+        if (layerEndAbs > maxLayerEndAbs) maxLayerEndAbs = layerEndAbs;
+
+        clips.push({
+          path: ttsPath,
+          startSec: Math.max(0, layer.startSec - segStart),
+        });
+      }
+
+      const finalSceneDuration = Math.max(origSegDur, maxLayerEndAbs - segStart);
+      audioPath = await invoke<string>("mix_audio_clips", {
         sessionId,
-      },
-      settings,
-    );
-
-    const audioDuration = await invoke<number>("get_audio_duration", {
-      audioPath,
-    });
-
-    const leadingPad =
-      scene.index === 0 ? 0 : AUDIO_LEADING_PAD_SECONDS;
-    const sceneDuration = audioDuration + leadingPad;
+        filename: `scene_${scene.index}_mixed`,
+        clips,
+        totalDurationSec: finalSceneDuration,
+      });
+      audioDuration = finalSceneDuration;
+      leadingPad = 0;
+      sceneDuration = finalSceneDuration;
+    } else {
+      audioPath = await ttsProvider.synthesize(
+        {
+          text: scene.narration,
+          filename: `scene_${scene.index}`,
+          sessionId,
+        },
+        settings,
+      );
+      audioDuration = await invoke<number>("get_audio_duration", { audioPath });
+      leadingPad = scene.index === 0 ? 0 : AUDIO_LEADING_PAD_SECONDS;
+      sceneDuration = audioDuration + leadingPad;
+    }
 
     const captions: CaptionAsset[] = [];
     if (!scene.skipCaption) {
@@ -420,7 +581,9 @@ export async function generateVideo(
 
     // 動画レイヤー（FFmpeg 側で動画として合成される）
     const videoLayers: RustVideoLayerInput[] = [];
-    if (scene.templateLayers.length > 0) {
+    if (scene.templateLayers.length > 0 && scene.templateSegment) {
+      const seg = scene.templateSegment;
+      const segDur = Math.max(0.001, seg.endSec - seg.startSec);
       for (const l of scene.templateLayers) {
         if (
           l.type === "video" &&
@@ -428,6 +591,11 @@ export async function generateVideo(
           l.source !== "auto" &&
           l.source !== "user"
         ) {
+          // グローバル時刻→セグメント内相対→シーン内相対（leadingPad 加算）
+          const relStartInSeg = Math.max(0, l.startSec - seg.startSec);
+          const relEndInSeg = Math.min(segDur, l.endSec - seg.startSec);
+          const sceneStart = leadingPad + relStartInSeg;
+          const sceneEnd = leadingPad + Math.max(relStartInSeg, relEndInSeg);
           videoLayers.push({
             path: l.source,
             xPct: l.x,
@@ -441,7 +609,66 @@ export async function generateVideo(
             rotation: l.rotation ?? 0,
             borderWidthPct: l.border?.width ?? 0,
             borderColor: l.border?.color ?? "white",
+            startSec: sceneStart,
+            endSec: sceneEnd,
+            entryAnimation: l.entryAnimation ?? "none",
+            entryDuration: l.entryDuration ?? 0.3,
+            exitAnimation: l.exitAnimation ?? "none",
+            exitDuration: l.exitDuration ?? 0.3,
           });
+        }
+      }
+    }
+
+    // 時間ゲート付き静止レイヤー（image/text/color/shape/comment）を個別 PNG 化
+    const timedOverlays: TimedOverlayAsset[] = [];
+    if (timeGatedLayers.length > 0 && seg) {
+      onProgress({
+        phase: "overlay",
+        sceneIndex: scene.index,
+        totalScenes: totalCount,
+        message: `シーン ${scene.index + 1}/${totalCount}: 時間ゲートレイヤー ${timeGatedLayers.length} 個を処理中...`,
+      });
+      const segDurLocal = Math.max(0.001, seg.endSec - seg.startSec);
+      for (const l of timeGatedLayers) {
+        const relStart = Math.max(0, l.startSec - seg.startSec);
+        const relEnd = Math.min(segDurLocal, l.endSec - seg.startSec);
+        if (relEnd <= relStart) continue;
+        // シーン尺にクランプ（audio 尺がテンプレ segment より短い場合に外枠外へ出るのを防ぐ）
+        const rawStart = leadingPad + relStart;
+        const rawEnd = leadingPad + relEnd;
+        const sceneStart = Math.min(rawStart, sceneDuration);
+        const sceneEnd = Math.min(rawEnd, sceneDuration);
+        if (sceneEnd - sceneStart < 0.05) {
+          console.warn(
+            `[video] timed layer ${l.id} skipped: range out of scene (${rawStart}-${rawEnd}s, scene=${sceneDuration}s)`,
+          );
+          continue;
+        }
+        try {
+          const pngPath = await composeSingleLayerToTransparentPng(
+            l,
+            resolveLayerSrc,
+            sessionId,
+            `scene_${scene.index}_timed_${l.id}`,
+          );
+          timedOverlays.push({
+            pngPath,
+            start: sceneStart,
+            end: sceneEnd,
+            entryAnimation: l.entryAnimation ?? "none",
+            entryDuration: l.entryDuration ?? 0.3,
+            exitAnimation: l.exitAnimation ?? "none",
+            exitDuration: l.exitDuration ?? 0.3,
+          });
+          console.log(
+            `[video] timed layer ${l.id} rendered at ${sceneStart.toFixed(2)}-${sceneEnd.toFixed(2)}s (${l.type})`,
+          );
+        } catch (e) {
+          console.error(
+            `[video] failed to render timed layer ${l.id}:`,
+            e,
+          );
         }
       }
     }
@@ -456,6 +683,7 @@ export async function generateVideo(
       captions,
       audioLeadingPad: leadingPad,
       videoLayers,
+      timedOverlays,
     });
   }
 
@@ -493,6 +721,15 @@ export async function generateVideo(
       })),
       audio_leading_pad: a.audioLeadingPad,
       video_layers: a.videoLayers,
+      timed_overlays: a.timedOverlays.map((c) => ({
+        pngPath: c.pngPath,
+        start: c.start,
+        end: c.end,
+        entryAnimation: c.entryAnimation,
+        entryDuration: c.entryDuration,
+        exitAnimation: c.exitAnimation,
+        exitDuration: c.exitDuration,
+      })),
     }));
 
   const outputPath = await invoke<string>("compose_video", {

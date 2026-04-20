@@ -13,8 +13,12 @@
     "windows": [
       {
         "title": "shorts-script-gen",
-        "width": 800,
-        "height": 600
+        "width": 1400,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {

@@ -54,6 +54,7 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
     case "text":
       return {
         ...base,
+        height: 6,
         text: "テキストを入力",
         fontSize: 64,
         fontColor: "#FFFFFF",
@@ -64,7 +65,7 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
         x: 10,
         y: 70,
         width: 80,
-        height: 18,
+        height: 5,
         shape: "rounded",
         borderRadius: 12,
         fillColor: "rgba(0,0,0,0.6)",
