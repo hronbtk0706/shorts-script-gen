@@ -7,6 +7,7 @@ import {
   moveLayerZ,
   findFreeTrackZIndex,
 } from "../lib/layerUtils";
+import { SeBrowser } from "./SeBrowser";
 
 /** 音声ファイルのメタ情報から再生時間(秒)を取得 */
 function probeAudioDuration(path: string): Promise<number> {
@@ -118,6 +119,16 @@ export function LayerPanel({
     }
   };
 
+  const addAudioFromSe = (path: string, _name: string, dur: number) => {
+    const startSec = newLayerDefaults?.startSec ?? 0;
+    const endSec = startSec + dur;
+    const nextZ = findFreeTrackZIndex(layers, startSec, endSec, "audio");
+    const base = makeLayer({ type: "audio", startSec, endSec }, nextZ);
+    const layer: Layer = { ...base, source: path, volume: 1 };
+    onLayersChange([...layers, layer]);
+    onLayerSelect(layer.id);
+  };
+
   // 選択中の行のアイコン操作は選択全体に適用（単独行なら単独）
   const targetIdsFor = (id: string): string[] =>
     selectedSet.has(id) && selectedSet.size > 1
@@ -221,6 +232,7 @@ export function LayerPanel({
             <span>{LAYER_TYPE_LABELS[t].label}</span>
           </button>
         ))}
+        <SeBrowser onSelect={addAudioFromSe} />
       </div>
 
       <div className="max-h-[320px] overflow-y-auto space-y-1">

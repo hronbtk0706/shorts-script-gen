@@ -169,9 +169,11 @@ export function LayerPreview({ layer, widthPx = 260, heightPx }: Props) {
     ? `rotate(${layer.rotation}deg)`
     : undefined;
 
-  const innerBoxShadow = layer.border
-    ? `inset 0 0 0 ${Math.max(1, layer.border.width * 0.25)}px ${layer.border.color}`
-    : undefined;
+  // テキスト系（comment）は renderAnimatedText 内で border を適用するためここでは省く
+  const innerBoxShadow =
+    layer.border && layer.type !== "comment"
+      ? `inset 0 0 0 ${Math.max(1, layer.border.width * 0.25)}px ${layer.border.color}`
+      : undefined;
 
   const innerStyle: React.CSSProperties = {
     width: "100%",

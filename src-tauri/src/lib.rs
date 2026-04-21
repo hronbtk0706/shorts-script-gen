@@ -1354,10 +1354,16 @@ async fn softalk_tts(
     let wav_path = dir.join(format!("{}.wav", filename));
     let wav_path_str = wav_path.to_string_lossy().into_owned();
 
-    let output = hidden_cmd(&softalk_path)
+    // 出力先に日本語パスが含まれると SofTalk が書き込めない場合があるため一時ディレクトリを使う
+    let temp_wav = std::env::temp_dir().join(format!("st_{}.wav", filename));
+    let _ = std::fs::remove_file(&temp_wav);
+    let temp_wav_str = temp_wav.to_string_lossy().into_owned();
+
+    // SofTalk は GUI アプリのため CREATE_NO_WINDOW を使わず直接起動する
+    let output = std::process::Command::new(&softalk_path)
         .args([
             &format!("/W:{}", text),
-            &format!("/R:{}", wav_path_str),
+            &format!("/R:{}", temp_wav_str),
             &format!("/X:{}", voice),
             "/T:1",
             "/Q:1",
@@ -1365,18 +1371,21 @@ async fn softalk_tts(
         .output()
         .map_err(|e| format!("SofTalk 起動失敗: {}", e))?;
 
-    if !output.status.success() {
+    // ファイルシステムの書き込み完了を少し待つ
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    if !temp_wav.exists() {
         return Err(format!(
-            "SofTalk 失敗: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "SofTalk が WAV を生成しませんでした (終了コード: {})\nstdout: {}\nstderr: {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
         ));
     }
-    if !wav_path.exists() {
-        return Err(
-            "SofTalk が WAV を生成しませんでした。バージョンや引数仕様をご確認ください"
-                .into(),
-        );
-    }
+
+    std::fs::copy(&temp_wav, &wav_path)
+        .map_err(|e| format!("WAV コピー失敗: {}", e))?;
+    let _ = std::fs::remove_file(&temp_wav);
     Ok(wav_path_str)
 }
 
@@ -1671,6 +1680,41 @@ async fn generate_tts(
 }
 
 #[tauri::command]
+async fn list_se_files(dir: Option<String>) -> Result<Vec<serde_json::Value>, String> {
+    let se_dir = match dir {
+        Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
+        _ => {
+            // デフォルト: ユーザーのDocuments\SE
+            let home = std::env::var("USERPROFILE")
+                .or_else(|_| std::env::var("HOME"))
+                .unwrap_or_default();
+            std::path::PathBuf::from(home).join("Documents").join("SE")
+        }
+    };
+    if !se_dir.exists() {
+        return Ok(vec![]);
+    }
+    let audio_exts = ["mp3", "wav", "m4a", "ogg", "aac", "flac"];
+    let mut files: Vec<serde_json::Value> = std::fs::read_dir(&se_dir)
+        .map_err(|e| format!("SEフォルダ読み取り失敗: {}", e))?
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if !path.is_file() { return None; }
+            let ext = path.extension()?.to_str()?.to_lowercase();
+            if !audio_exts.contains(&ext.as_str()) { return None; }
+            let name = path.file_stem()?.to_string_lossy().into_owned();
+            let full = path.to_string_lossy().into_owned();
+            Some(serde_json::json!({ "name": name, "path": full, "ext": ext }))
+        })
+        .collect();
+    files.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or(""))
+    });
+    Ok(files)
+}
+
+#[tauri::command]
 async fn download_bgm(
     app: tauri::AppHandle,
     session_id: String,
@@ -1850,9 +1894,16 @@ fn compose_video_inner(
                     let y_px = ((1920.0_f64) * layer.y_pct / 100.0).round() as i32;
 
                     let layer_label = format!("[vl{}]", qi);
+                    // video_loop=true のとき loop フィルタでフィルタグラフ内でループさせる
+                    // （-stream_loop はコンプレックスフィルタと相性が悪いため）
+                    let loop_prefix = if layer.video_loop {
+                        "loop=loop=-1:size=9000:start=0,".to_string()
+                    } else {
+                        String::new()
+                    };
                     let mut chain = format!(
-                        "[{}:v]scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},format=yuva420p",
-                        input_idx, w_px, h_px, w_px, h_px
+                        "[{}:v]{}scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},format=yuva420p",
+                        input_idx, loop_prefix, w_px, h_px, w_px, h_px
                     );
 
                     if layer.shape == "circle" {
@@ -2184,14 +2235,9 @@ fn compose_video_inner(
             cmd.args(["-loop", "1", "-t", &format!("{:.3}", scene.duration), "-i"])
                 .arg(&tovl.png_path);
         }
-        // 動画レイヤー（色空間まで保持するため他の入力は直後）
-        // video_loop=true なら無限ループ、false なら 1 回だけ再生
+        // 動画レイヤー（ループは filter_complex の loop フィルタで処理するため -stream_loop 不使用）
         for layer in &sorted_layers {
-            if layer.video_loop {
-                cmd.args(["-stream_loop", "-1", "-i"]).arg(&layer.path);
-            } else {
-                cmd.args(["-i"]).arg(&layer.path);
-            }
+            cmd.args(["-i"]).arg(&layer.path);
         }
         cmd.args(["-filter_complex", &filter])
             .args(["-map", "[v]", "-map", audio_map])
@@ -2444,6 +2490,7 @@ pub fn run() {
             softalk_tts,
             get_audio_duration,
             compose_video,
+            list_se_files,
             list_templates,
             save_template,
             save_template_narration,

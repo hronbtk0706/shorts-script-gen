@@ -443,10 +443,11 @@ function LayerView({
   if (ambient.filter) innerFilterParts.push(ambient.filter);
   const innerFilter = innerFilterParts.join(" ");
 
-  // border を内側に inset box-shadow で描画 → アニメと一緒に動く
-  const innerBoxShadow = layer.border
-    ? `inset 0 0 0 ${layer.border.width}px ${layer.border.color}`
-    : undefined;
+  // テキスト系レイヤー（comment）は renderAnimatedText 内で border を適用するためここでは省く
+  const innerBoxShadow =
+    layer.border && layer.type !== "comment"
+      ? `inset 0 0 0 ${layer.border.width}px ${layer.border.color}`
+      : undefined;
 
   const innerStyle: React.CSSProperties = {
     width: "100%",
@@ -565,6 +566,12 @@ export function renderAnimatedText(
   const localTime = currentTimeSec - layer.startSec;
   const layerDur = Math.max(0.1, layer.endSec - layer.startSec);
 
+  // fillColor 背景がある場合、inset box-shadow（innerStyle 側）が背景に隠れるため
+  // border をここのコンテナに直接適用する
+  const borderBoxShadow = layer.border
+    ? `inset 0 0 0 ${layer.border.width}px ${layer.border.color}`
+    : undefined;
+
   const baseStyle: React.CSSProperties = {
     width: "100%",
     height: "100%",
@@ -581,6 +588,7 @@ export function renderAnimatedText(
     whiteSpace: "pre-wrap",
     overflow: "hidden",
     position: "relative",
+    boxShadow: borderBoxShadow,
   };
 
   // 装飾：ネオン / アウトライン / 影ドロップ は text-shadow / -webkit-text-stroke で表現
