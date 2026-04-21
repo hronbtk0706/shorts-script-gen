@@ -12,6 +12,10 @@ const KEY_TTS_PROVIDER = "tts_provider";
 const KEY_SAY_VOICE = "tts_say_voice";
 const KEY_EDGE_VOICE = "tts_edge_voice";
 const KEY_VOICEVOX_SPEAKER = "tts_voicevox_speaker";
+const KEY_OPENAI_TTS_VOICE = "tts_openai_voice";
+const KEY_OPENAI_TTS_MODEL = "tts_openai_model";
+const KEY_SOFTALK_PATH = "tts_softalk_path";
+const KEY_SOFTALK_VOICE = "tts_softalk_voice";
 const KEY_IMAGE_PROVIDER = "image_provider";
 const KEY_POLLINATIONS_MODEL = "pollinations_model";
 const KEY_CLOUDFLARE_ACCOUNT = "cloudflare_account_id";
@@ -28,7 +32,12 @@ const KEY_REFERENCE_VIDEO_COUNT = "reference_video_count";
 const KEY_DEFAULT_TEMPLATE_ID = "default_template_id";
 
 export type LlmProviderId = "gemini" | "groq" | "openai";
-export type TtsProviderId = "say" | "edge" | "voicevox";
+export type TtsProviderId =
+  | "say"
+  | "edge"
+  | "voicevox"
+  | "openai"
+  | "softalk";
 export type ImageProviderId = "pollinations" | "cloudflare";
 export type PollinationsModel =
   | "flux"
@@ -58,6 +67,10 @@ export interface AppSettings {
   sayVoice: string;
   edgeVoice: string;
   voicevoxSpeaker: number;
+  openaiTtsVoice: string;
+  openaiTtsModel: string;
+  softalkPath: string;
+  softalkVoice: number;
   imageProvider: ImageProviderId;
   pollinationsModel: PollinationsModel;
   cloudflareAccountId: string;
@@ -105,7 +118,9 @@ export async function loadSettings(): Promise<AppSettings> {
   let ttsProvider: TtsProviderId =
     rawTtsProvider === "say" ||
     rawTtsProvider === "edge" ||
-    rawTtsProvider === "voicevox"
+    rawTtsProvider === "voicevox" ||
+    rawTtsProvider === "openai" ||
+    rawTtsProvider === "softalk"
       ? (rawTtsProvider as TtsProviderId)
       : "edge";
   if (ttsProvider === "say" && !isMacOS()) {
@@ -138,6 +153,10 @@ export async function loadSettings(): Promise<AppSettings> {
     sayVoice: await get(KEY_SAY_VOICE, "Kyoko"),
     edgeVoice: await get(KEY_EDGE_VOICE, "ja-JP-NanamiNeural"),
     voicevoxSpeaker: await get<number>(KEY_VOICEVOX_SPEAKER, 3),
+    openaiTtsVoice: await get(KEY_OPENAI_TTS_VOICE, "alloy"),
+    openaiTtsModel: await get(KEY_OPENAI_TTS_MODEL, "tts-1"),
+    softalkPath: await get(KEY_SOFTALK_PATH, ""),
+    softalkVoice: await get<number>(KEY_SOFTALK_VOICE, 0),
     imageProvider: await (async (): Promise<ImageProviderId> => {
       const raw = await get<string>(KEY_IMAGE_PROVIDER, "pollinations");
       return raw === "pollinations" || raw === "cloudflare"
@@ -179,6 +198,10 @@ export async function saveSettings(s: AppSettings): Promise<void> {
   await store.set(KEY_SAY_VOICE, s.sayVoice);
   await store.set(KEY_EDGE_VOICE, s.edgeVoice);
   await store.set(KEY_VOICEVOX_SPEAKER, s.voicevoxSpeaker);
+  await store.set(KEY_OPENAI_TTS_VOICE, s.openaiTtsVoice);
+  await store.set(KEY_OPENAI_TTS_MODEL, s.openaiTtsModel);
+  await store.set(KEY_SOFTALK_PATH, s.softalkPath);
+  await store.set(KEY_SOFTALK_VOICE, s.softalkVoice);
   await store.set(KEY_IMAGE_PROVIDER, s.imageProvider);
   await store.set(KEY_POLLINATIONS_MODEL, s.pollinationsModel);
   await store.set(KEY_CLOUDFLARE_ACCOUNT, s.cloudflareAccountId);

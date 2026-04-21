@@ -6,8 +6,8 @@ export type LayerType =
   | "video"
   | "color"
   | "shape"
-  | "text"
-  | "comment";
+  | "comment"
+  | "audio";
 
 export type LayerShape = "rect" | "circle" | "rounded";
 
@@ -24,7 +24,12 @@ export type EntryAnimation =
   | "slide-up"
   | "slide-down"
   | "zoom-in"
-  | "pop";
+  | "pop"
+  | "blur-in"
+  | "elastic-pop"
+  | "flip-in"
+  | "stretch-in"
+  | "roll-in";
 
 export type ExitAnimation =
   | "none"
@@ -33,7 +38,48 @@ export type ExitAnimation =
   | "slide-right"
   | "slide-up"
   | "slide-down"
-  | "zoom-out";
+  | "zoom-out"
+  | "blur-out"
+  | "flip-out"
+  | "stretch-out"
+  | "roll-out";
+
+/** 表示中ずっと続くアニメ（呼吸・揺れ・点滅等） */
+export type AmbientAnimation =
+  | "none"
+  | "pulse"
+  | "shake"
+  | "wiggle"
+  | "bounce"
+  | "blink"
+  | "glow-pulse"
+  | "rainbow"
+  | "float";
+
+/** 文字単位のアニメ（テキスト専用） */
+export type CharAnimation =
+  | "none"
+  | "typewriter"
+  | "stagger-fade"
+  | "wave"
+  | "color-shift";
+
+/** 単語単位のキネティック演出（テキスト専用） */
+export type KineticAnimation =
+  | "none"
+  | "word-pop"
+  | "keyword-color"
+  | "slide-stack"
+  | "zoom-talk";
+
+/** テキスト装飾（背景帯・下線スイープ・ネオン等） */
+export type TextDecoration =
+  | "none"
+  | "highlight-bar"
+  | "underline-sweep"
+  | "neon"
+  | "outline-reveal"
+  | "shadow-drop";
 
 /** @deprecated v1 互換用。新コードは Layer を使用 */
 export interface LayerV1 {
@@ -90,6 +136,32 @@ export interface Layer {
   exitAnimation?: ExitAnimation;
   /** 退場アニメーションの秒数 */
   exitDuration?: number;
+  /** true のとき編集中は非表示かつ書き出しからも除外 */
+  hidden?: boolean;
+  /** true のときドラッグ/リサイズ/プロパティ編集を禁止 */
+  locked?: boolean;
+  /** 音声レイヤー専用: 0..1 の音量 */
+  volume?: number;
+  /** 音声レイヤー専用: フェードイン秒 */
+  audioFadeIn?: number;
+  /** 音声レイヤー専用: フェードアウト秒 */
+  audioFadeOut?: number;
+  /** 音声レイヤー専用: 素材が短いときにループ再生するか */
+  audioLoop?: boolean;
+  /** テキストレイヤー専用: このテキストから生成された音声レイヤーの id（置き換え用） */
+  generatedNarrationLayerId?: string;
+  /** 表示中ずっと続くアニメ（Ambient）。入退場と複合可 */
+  ambientAnimation?: AmbientAnimation;
+  /** Ambient の強度（0〜1 の倍率、デフォルト 1） */
+  ambientIntensity?: number;
+  /** 文字単位のアニメ（テキスト専用） */
+  charAnimation?: CharAnimation;
+  /** 単語単位のキネティック（テキスト専用） */
+  kineticAnimation?: KineticAnimation;
+  /** テキスト装飾 */
+  textDecoration?: TextDecoration;
+  /** キーワード強調時の色（keyword-color で使用） */
+  keywordColor?: string;
 }
 
 export interface TemplateSegment {

@@ -44,15 +44,69 @@ const voicevoxProvider: TtsProvider = {
   },
 };
 
+const openaiProvider: TtsProvider = {
+  id: "openai",
+  label: "OpenAI TTS（API キー必要・有料）",
+  async synthesize({ text, filename, sessionId }, settings) {
+    const voice = settings.openaiTtsVoice || "alloy";
+    const model = settings.openaiTtsModel || "tts-1";
+    return invoke<string>("openai_tts", {
+      sessionId,
+      text,
+      voice,
+      model,
+      apiKey: settings.openaiApiKey,
+      filename,
+    });
+  },
+};
+
+const softalkProvider: TtsProvider = {
+  id: "softalk",
+  label: "SofTalk（ゆっくり霊夢/魔理沙・要 SofTalk.exe）",
+  async synthesize({ text, filename, sessionId }, settings) {
+    const voice = settings.softalkVoice ?? 0;
+    const softalkPath = settings.softalkPath ?? "";
+    return invoke<string>("softalk_tts", {
+      sessionId,
+      text,
+      voice,
+      filename,
+      softalkPath,
+    });
+  },
+};
+
 export const TTS_PROVIDERS: Record<string, TtsProvider> = {
   say: sayProvider,
   edge: edgeProvider,
   voicevox: voicevoxProvider,
+  openai: openaiProvider,
+  softalk: softalkProvider,
 };
 
 export function getTtsProvider(id: string): TtsProvider {
   return TTS_PROVIDERS[id] ?? sayProvider;
 }
+
+export const SOFTALK_VOICES = [
+  { id: 0, label: "女声1（霊夢風）" },
+  { id: 1, label: "男声1（魔理沙風）" },
+  { id: 2, label: "男声2" },
+  { id: 3, label: "機械1" },
+  { id: 4, label: "高声" },
+  { id: 5, label: "低声" },
+  { id: 6, label: "真面目" },
+];
+
+export const OPENAI_TTS_VOICES = [
+  { id: "alloy", label: "Alloy（中性・自然）" },
+  { id: "nova", label: "Nova（女性・明るい）" },
+  { id: "shimmer", label: "Shimmer（女性・柔らか）" },
+  { id: "echo", label: "Echo（男性・落ち着き）" },
+  { id: "fable", label: "Fable（男性・英国風）" },
+  { id: "onyx", label: "Onyx（男性・低音）" },
+];
 
 export const EDGE_VOICES = [
   { id: "ja-JP-NanamiNeural", label: "Nanami（女性・ナチュラル／推奨）" },

@@ -80,6 +80,103 @@ export async function composeSingleLayerToTransparentPng(
   });
 }
 
+/**
+ * レイヤーの「中身だけ」をレイヤーピクセル寸法 (w×h) の透明 PNG に描画して保存する。
+ * 位置と回転は PNG には含めない（Rust 側で overlay 時に適用する）。
+ * 図形クリップ（circle/rounded）は PNG に焼き込む。
+ */
+export async function composeLayerContentPng(
+  layer: Layer,
+  resolveSrc: LayerSourceResolver,
+  sessionId: string,
+  filename: string,
+): Promise<string> {
+  const w = Math.max(2, Math.round((layer.width / 100) * FINAL_W));
+  const h = Math.max(2, Math.round((layer.height / 100) * FINAL_H));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context を取得できませんでした");
+
+  await drawLayerContentOnly(ctx, layer, w, h, resolveSrc);
+
+  const base64 = canvas.toDataURL("image/png").split(",", 2)[1];
+  return invoke<string>("save_overlay_png", {
+    sessionId,
+    filename,
+    base64Data: base64,
+  });
+}
+
+/** レイヤーの中身（図形クリップ + 描画 + ボーダー）だけを (0,0)-(w,h) に描く。位置・回転は扱わない */
+async function drawLayerContentOnly(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  resolveSrc: LayerSourceResolver,
+): Promise<void> {
+  ctx.save();
+  ctx.globalAlpha = layer.opacity ?? 1;
+  applyShapeClip(ctx, layer, w, h);
+
+  try {
+    switch (layer.type) {
+      case "image":
+      case "video": {
+        const src = await resolveSrc(layer);
+        if (src) {
+          const img = await loadImage(src);
+          const imgW = img.width || (img as HTMLImageElement).naturalWidth || w;
+          const imgH = img.height || (img as HTMLImageElement).naturalHeight || h;
+          const scale = Math.max(w / imgW, h / imgH);
+          const drawW = imgW * scale;
+          const drawH = imgH * scale;
+          const dx = (w - drawW) / 2;
+          const dy = (h - drawH) / 2;
+          ctx.drawImage(img, dx, dy, drawW, drawH);
+        }
+        break;
+      }
+      case "color":
+      case "shape":
+        ctx.fillStyle = layer.fillColor ?? "#333";
+        ctx.fillRect(0, 0, w, h);
+        break;
+      case "comment":
+        if (layer.fillColor) {
+          ctx.fillStyle = parseRgba(layer.fillColor);
+          ctx.fillRect(0, 0, w, h);
+        }
+        drawText(ctx, layer, w, h);
+        break;
+    }
+  } catch (e) {
+    console.warn("[layerComposer] layer content draw failed:", layer.id, e);
+  }
+
+  ctx.restore();
+
+  if (layer.border && layer.border.width > 0) {
+    ctx.save();
+    ctx.strokeStyle = layer.border.color;
+    ctx.lineWidth = layer.border.width * (FINAL_W / 360);
+    if (layer.shape === "circle") {
+      ctx.beginPath();
+      ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (layer.shape === "rounded") {
+      const r = (layer.borderRadius ?? 12) * (FINAL_W / 360);
+      roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(0, 0, w, h);
+    }
+    ctx.restore();
+  }
+}
+
 async function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
@@ -131,10 +228,9 @@ async function drawLayer(
         ctx.fillStyle = layer.fillColor ?? "#333";
         ctx.fillRect(0, 0, w, h);
         break;
-      case "text":
       case "comment":
-        if (layer.type === "comment") {
-          ctx.fillStyle = parseRgba(layer.fillColor ?? "rgba(0,0,0,0.6)");
+        if (layer.fillColor) {
+          ctx.fillStyle = parseRgba(layer.fillColor);
           ctx.fillRect(0, 0, w, h);
         }
         drawText(ctx, layer, w, h);

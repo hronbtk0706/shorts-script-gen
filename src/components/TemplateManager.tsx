@@ -106,10 +106,18 @@ export function TemplateManager() {
     setMode("manual-builder");
   };
 
-  const handleBuilderSaved = async () => {
+  const handleBuilderSaved = async (_saved?: VideoTemplate) => {
+    // list を最新化するだけ。editingTemplate は触らない
+    // （TemplateBuilder 内部の committedId で継続編集管理）
     await reload();
-    setEditingTemplate(null);
-    setMode("list");
+  };
+
+  const [builderDirty, setBuilderDirty] = useState(false);
+  const confirmLeaveBuilder = (): boolean => {
+    if (!builderDirty) return true;
+    return confirm(
+      "保存されていない変更があります。破棄して一覧に戻りますか?",
+    );
   };
 
   const stageLabel = (s: AnalysisProgress["stage"]) =>
@@ -128,7 +136,12 @@ export function TemplateManager() {
         <div className="flex items-center gap-2 text-xs">
           <button
             type="button"
-            onClick={() => setMode("list")}
+            onClick={() => {
+              if (!confirmLeaveBuilder()) return;
+              setEditingTemplate(null);
+              setBuilderDirty(false);
+              setMode("list");
+            }}
             className="text-blue-600 hover:underline"
           >
             ← 一覧に戻る
@@ -136,12 +149,20 @@ export function TemplateManager() {
           <span className="text-gray-500">
             {editingTemplate ? `編集中: ${editingTemplate.name}` : "新規テンプレ作成"}
           </span>
+          {builderDirty && (
+            <span className="text-amber-600 dark:text-amber-400 text-[10px]">
+              ● 未保存
+            </span>
+          )}
         </div>
         <TemplateBuilder
           editing={editingTemplate}
           onSaved={handleBuilderSaved}
+          onDirtyChange={setBuilderDirty}
           onCancel={() => {
+            if (!confirmLeaveBuilder()) return;
             setEditingTemplate(null);
+            setBuilderDirty(false);
             setMode("list");
           }}
         />

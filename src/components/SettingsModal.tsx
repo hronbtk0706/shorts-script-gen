@@ -9,7 +9,12 @@ import {
   type LlmProviderId,
   type PollinationsModel,
 } from "../lib/storage";
-import { EDGE_VOICES, VOICEVOX_SPEAKERS } from "../lib/providers/tts";
+import {
+  EDGE_VOICES,
+  VOICEVOX_SPEAKERS,
+  SOFTALK_VOICES,
+  OPENAI_TTS_VOICES,
+} from "../lib/providers/tts";
 import { OPENAI_MODELS } from "../lib/providers/llm";
 import {
   CLOUDFLARE_MODELS,
@@ -46,6 +51,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   sayVoice: "Kyoko",
   edgeVoice: "ja-JP-NanamiNeural",
   voicevoxSpeaker: 3,
+  openaiTtsVoice: "alloy",
+  openaiTtsModel: "tts-1",
+  softalkPath: "",
+  softalkVoice: 0,
   imageProvider: "pollinations",
   pollinationsModel: "flux",
   cloudflareAccountId: "",
@@ -296,8 +305,14 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             <option value="edge">
               Edge TTS（無料・無制限・高品質）
             </option>
+            <option value="openai">
+              OpenAI TTS（API キー・有料・約¥2/1000字）
+            </option>
             <option value="voicevox">
               VOICEVOX（無料・ローカル・キャラ声）
+            </option>
+            <option value="softalk">
+              SofTalk（ゆっくり霊夢/魔理沙・要 SofTalk.exe）
             </option>
             {isMacOS() && (
               <option value="say">
@@ -372,6 +387,93 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
               <p className="text-xs text-gray-500">
                 Premium版はシステム設定 → アクセシビリティ → 読み上げコンテンツからDL
               </p>
+            </>
+          )}
+
+          {s.ttsProvider === "openai" && (
+            <>
+              <label className="block text-sm">声</label>
+              <select
+                value={s.openaiTtsVoice}
+                onChange={(e) => update("openaiTtsVoice", e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              >
+                {OPENAI_TTS_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              <label className="block text-sm">モデル</label>
+              <select
+                value={s.openaiTtsModel}
+                onChange={(e) => update("openaiTtsModel", e.target.value)}
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              >
+                <option value="tts-1">tts-1（高速・標準）</option>
+                <option value="tts-1-hd">tts-1-hd（高品質）</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                OpenAI API キーを上で設定してください。約 ¥2/1000 文字。
+              </p>
+            </>
+          )}
+
+          {s.ttsProvider === "softalk" && (
+            <>
+              <label className="block text-sm">SofTalk.exe のパス</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={s.softalkPath}
+                  onChange={(e) => update("softalkPath", e.target.value)}
+                  placeholder="例: C:\Tools\softalk\SofTalk.exe"
+                  className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const path = await openFileDialog({
+                      multiple: false,
+                      directory: false,
+                      filters: [
+                        {
+                          name: "SofTalk.exe",
+                          extensions: ["exe"],
+                        },
+                      ],
+                    });
+                    if (typeof path === "string") update("softalkPath", path);
+                  }}
+                  className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+                >
+                  📁 選択
+                </button>
+              </div>
+              <label className="block text-sm">声</label>
+              <select
+                value={s.softalkVoice}
+                onChange={(e) =>
+                  update("softalkVoice", Number(e.target.value))
+                }
+                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              >
+                {SOFTALK_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+              <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                <p>⚠ 別途 SofTalk のダウンロードが必要（無料・非商用）</p>
+                <button
+                  type="button"
+                  onClick={() => openUrl("https://cncsoft.com/download/")}
+                  className="text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  → SofTalk をダウンロード（cncsoft.com）
+                </button>
+              </div>
             </>
           )}
         </section>

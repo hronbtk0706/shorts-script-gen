@@ -53,7 +53,7 @@ export function ManualScriptSummary({ scriptInput }: Props) {
                 {l.startSec.toFixed(1)}–{l.endSec.toFixed(1)}s
               </span>
               <span className="flex-1 truncate text-gray-700 dark:text-gray-300">
-                {l.type === "comment" || l.type === "text"
+                {l.type === "comment"
                   ? l.text || "(空)"
                   : l.type === "image" || l.type === "video"
                     ? fileName || `(${l.source ?? "未設定"})`

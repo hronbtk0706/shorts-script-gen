@@ -27,3 +27,8 @@ dist-ssr
 src-tauri/target
 src-tauri/gen
 
+# テンプレの永続音声（per-PC・サイズが大きい）
+templates/audio/
+# 動画生成セッションのキャッシュ
+sessions/
+

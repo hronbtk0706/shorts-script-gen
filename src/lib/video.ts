@@ -19,7 +19,7 @@ import { fetchPixabayBgm } from "./providers/bgm";
 import { resolveEffects } from "./effects";
 import {
   composeLayersToPng,
-  composeSingleLayerToTransparentPng,
+  composeLayerContentPng,
 } from "./layerComposer";
 
 export interface CaptionAsset {
@@ -32,6 +32,12 @@ export interface TimedOverlayAsset {
   pngPath: string;
   start: number;
   end: number;
+  xPct: number;
+  yPct: number;
+  widthPct: number;
+  heightPct: number;
+  rotation: number;
+  zIndex: number;
   entryAnimation: string;
   entryDuration: number;
   exitAnimation: string;
@@ -98,6 +104,12 @@ interface RustTimedOverlayInput {
   pngPath: string;
   start: number;
   end: number;
+  xPct: number;
+  yPct: number;
+  widthPct: number;
+  heightPct: number;
+  rotation: number;
+  zIndex: number;
   entryAnimation: string;
   entryDuration: number;
   exitAnimation: string;
@@ -254,11 +266,12 @@ export async function generateVideo(
     if (ctaSeg) segmentByKey.set("cta_0", ctaSeg);
   }
 
-  /** セグメントと重なるレイヤーを抽出（セグメント内の相対時刻情報付き） */
+  /** セグメントと重なるレイヤーを抽出（hidden は書き出しからも除外） */
   const layersForSegment = (seg: TemplateSegment | null): Layer[] => {
     if (!seg || !template) return [];
     return template.layers.filter(
-      (l) => l.startSec < seg.endSec && l.endSec > seg.startSec,
+      (l) =>
+        !l.hidden && l.startSec < seg.endSec && l.endSec > seg.startSec,
     );
   };
 
@@ -484,7 +497,7 @@ export async function generateVideo(
 
       const narrationLayers = allSegLayers.filter(
         (l) =>
-          (l.type === "comment" || l.type === "text") &&
+          l.type === "comment" &&
           (l.text ?? "").trim().length > 0,
       );
 
@@ -646,7 +659,7 @@ export async function generateVideo(
           continue;
         }
         try {
-          const pngPath = await composeSingleLayerToTransparentPng(
+          const pngPath = await composeLayerContentPng(
             l,
             resolveLayerSrc,
             sessionId,
@@ -656,6 +669,12 @@ export async function generateVideo(
             pngPath,
             start: sceneStart,
             end: sceneEnd,
+            xPct: l.x,
+            yPct: l.y,
+            widthPct: l.width,
+            heightPct: l.height,
+            rotation: l.rotation ?? 0,
+            zIndex: l.zIndex ?? 0,
             entryAnimation: l.entryAnimation ?? "none",
             entryDuration: l.entryDuration ?? 0.3,
             exitAnimation: l.exitAnimation ?? "none",
@@ -701,6 +720,40 @@ export async function generateVideo(
     bgmPath = await fetchPixabayBgm(settings.pixabayApiKey, script.bgm_mood, sessionId);
   }
 
+  // ユーザー配置の音声レイヤーを集めて 1 本のトラックにミックス
+  let userAudioTrackPath: string | null = null;
+  if (template?.layers) {
+    const audioLayers = template.layers.filter(
+      (l) =>
+        l.type === "audio" &&
+        !l.hidden &&
+        l.source &&
+        l.source !== "auto" &&
+        l.source !== "user",
+    );
+    if (audioLayers.length > 0) {
+      const totalDuration = assets.reduce((acc, a) => acc + a.duration, 0);
+      try {
+        userAudioTrackPath = await invoke<string>("build_user_audio_track", {
+          sessionId,
+          filename: "user_audio_track",
+          clips: audioLayers.map((l) => ({
+            path: l.source as string,
+            startSec: l.startSec,
+            endSec: l.endSec,
+            volume: l.volume ?? 1,
+            fadeIn: l.audioFadeIn ?? 0,
+            fadeOut: l.audioFadeOut ?? 0,
+            loopAudio: !!l.audioLoop,
+          })),
+          totalDurationSec: totalDuration,
+        });
+      } catch (e) {
+        console.warn("[video] user audio mix failed:", e);
+      }
+    }
+  }
+
   const rustScenes: RustSceneInput[] = assets
     .sort((a, b) => a.index - b.index)
     .map((a) => ({
@@ -725,6 +778,12 @@ export async function generateVideo(
         pngPath: c.pngPath,
         start: c.start,
         end: c.end,
+        xPct: c.xPct,
+        yPct: c.yPct,
+        widthPct: c.widthPct,
+        heightPct: c.heightPct,
+        rotation: c.rotation,
+        zIndex: c.zIndex,
         entryAnimation: c.entryAnimation,
         entryDuration: c.entryDuration,
         exitAnimation: c.exitAnimation,
@@ -736,6 +795,7 @@ export async function generateVideo(
     sessionId,
     scenes: rustScenes,
     bgmPath,
+    userAudioTrackPath,
     outputFilename: `video_${sessionId}.mp4`,
   });
 

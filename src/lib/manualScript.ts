@@ -54,7 +54,7 @@ export function buildManualScript(
   const textsIn = (startSec: number, endSec: number): string[] => {
     const hits: string[] = [];
     for (const layer of template.layers) {
-      if (layer.type !== "comment" && layer.type !== "text") continue;
+      if (layer.type !== "comment") continue;
       if (layer.startSec >= endSec || layer.endSec <= startSec) continue;
       const txt = (layer.text ?? "").trim();
       if (txt) hits.push(txt);
@@ -172,9 +172,6 @@ export function applyManualAssignments(
       } else if (l.type === "image" || l.type === "video") {
         const src = sourceAssignments[l.id];
         if (src && src.trim()) patched.source = src;
-      } else if (l.type === "text") {
-        const txt = textAssignments[l.id];
-        if (txt !== undefined && txt.trim()) patched.text = txt;
       }
       // ジオメトリ上書き（現状は image/video のみ UI で設定されるが、どの型でも適用）
       const g = geometryAssignments[l.id];

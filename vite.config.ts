@@ -25,8 +25,13 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri` やテンプレ/セッション等の生成物
+      // （templates/*.json が書き変わる度に HMR でリロードされないように）
+      ignored: [
+        "**/src-tauri/**",
+        "**/templates/**",
+        "**/sessions/**",
+      ],
     },
   },
 }));

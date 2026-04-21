@@ -45,7 +45,7 @@ export function ManualLayerAssigner({
 }: Props) {
   // 割り当て対象になるレイヤーのみ（color/shape は除外）
   const assignableLayers = template.layers.filter((l) =>
-    ["image", "video", "text", "comment"].includes(l.type),
+    ["image", "video", "comment"].includes(l.type),
   );
 
   const [editorLayer, setEditorLayer] = useState<Layer | null>(null);
@@ -218,15 +218,7 @@ export function ManualLayerAssigner({
               </div>
             )}
 
-            {layer.type === "text" && (
-              <textarea
-                value={text}
-                onChange={(e) => onTextAssign(layer.id, e.target.value)}
-                placeholder={`空欄ならテンプレ既定: ${layer.text ?? ""}`}
-                rows={2}
-                className="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 resize-none"
-              />
-            )}
+            {null /* 旧 text type は廃止。comment に統合 */}
           </div>
         );
       })}

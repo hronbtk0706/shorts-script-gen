@@ -1,32 +1,56 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Layer, TemplateSegment, VideoTemplate } from "../types";
+import { invoke } from "@tauri-apps/api/core";
+import type { Layer, VideoTemplate } from "../types";
 import { TemplateCanvas } from "./TemplateCanvas";
 import { TemplateTimeline } from "./TemplateTimeline";
 import { LayerPanel } from "./LayerPanel";
 import { LayerPropertyPanel } from "./LayerPropertyPanel";
-import { TemplatePreviewModal } from "./TemplatePreviewModal";
+import { LayerPreview } from "./LayerPreview";
 import {
   genLayerId,
   newBlankTemplateData,
   visibleLayersAt,
-  makeSegment,
+  findFreeTrackZIndex,
+  migrateAudioToNegativeZ,
+  migrateTextToComment,
+  makeLayer,
 } from "../lib/layerUtils";
 import { saveTemplate, makeTemplateId } from "../lib/templateStore";
+import { loadSettings } from "../lib/storage";
+import { getTtsProvider } from "../lib/providers/tts";
+
+function probeAudioDurationPath(url: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const a = new Audio();
+    a.preload = "metadata";
+    a.onloadedmetadata = () =>
+      isFinite(a.duration) && a.duration > 0
+        ? resolve(a.duration)
+        : reject(new Error("invalid duration"));
+    a.onerror = () => reject(new Error("loadedmetadata failed"));
+    a.src = url;
+  });
+}
 
 interface Props {
   editing?: VideoTemplate | null;
-  onSaved: () => void;
+  /** 保存が走ったときに親に通知（list 更新用）。editing 差し替えには使わない */
+  onSaved: (saved?: VideoTemplate) => void;
   onCancel?: () => void;
+  /** 未保存状態が変わるたびに通知（親が離脱前確認ダイアログで使う） */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
-export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
-  const initial = useMemo(
-    () =>
+export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: Props) {
+  const initial = useMemo(() => {
+    const base =
       editing ??
-      newBlankTemplateData("新規テンプレート", makeTemplateId("new-template")),
-    [editing],
-  );
+      newBlankTemplateData("新規テンプレート", makeTemplateId("new-template"));
+    // 旧 text 型を comment に移行 → 音声 zIndex を負値に正規化
+    const migrated = migrateTextToComment(base.layers);
+    return { ...base, layers: migrateAudioToNegativeZ(migrated) };
+  }, [editing]);
 
   const [template, setTemplateState] = useState<VideoTemplate>(initial);
   const [history, setHistory] = useState<VideoTemplate[]>([initial]);
@@ -34,15 +58,62 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
   const skipHistoryRef = useRef(false);
 
   const [playheadSec, setPlayheadSec] = useState(0);
-  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
+  // プライマリ選択（最後に選んだもの。PropertyPanel 等の単一参照用）
+  const selectedLayerId =
+    selectedLayerIds[selectedLayerIds.length - 1] ?? null;
+  // 単一選択の簡易 setter（従来呼び出し互換）
+  const setSelectedLayerId = useCallback((id: string | null) => {
+    setSelectedLayerIds(id === null ? [] : [id]);
+  }, []);
   const [showGrid, setShowGrid] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const clipboardRef = useRef<Layer[]>([]);
+  // このセッション中に保存が完了したテンプレの id（新規初回保存後もここに入る）
+  const [committedId, setCommittedId] = useState<string | null>(
+    editing?.id ?? null,
+  );
+  useEffect(() => {
+    setCommittedId(editing?.id ?? null);
+  }, [editing?.id]);
+  // 未保存変更フラグ
+  const [dirty, setDirty] = useState(false);
+  const dirtySetSkipRef = useRef(true); // 初期マウント時は dirty を立てない
 
   useEffect(() => {
     setHeaderSlot(document.getElementById("app-header-slot"));
+  }, []);
+
+  // ウィンドウのどこでも空白クリックしたら選択解除。
+  // ただしテキスト範囲選択のようにドラッグ開始点がパネル内 → 外で離すケースは解除しない
+  useEffect(() => {
+    let mouseDownTarget: HTMLElement | null = null;
+    const keeps = (el: HTMLElement | null) => {
+      if (!el || typeof el.closest !== "function") return false;
+      return Boolean(
+        el.closest("[data-layer-id]") ||
+          el.closest("[data-keep-selection]") ||
+          el.closest('[class*="moveable-"]'),
+      );
+    };
+    const onMouseDown = (e: MouseEvent) => {
+      mouseDownTarget = e.target as HTMLElement | null;
+    };
+    const onDocClick = (e: MouseEvent) => {
+      // mousedown 起点が維持対象ならスキップ（テキスト選択ドラッグ等）
+      if (keeps(mouseDownTarget)) return;
+      if (keeps(e.target as HTMLElement | null)) return;
+      setSelectedLayerId(null);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("click", onDocClick);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("click", onDocClick);
+    };
   }, []);
 
   useEffect(() => {
@@ -55,11 +126,29 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
 
+  // template が変わったら dirty フラグを立てる（マウント時 / state reset 時は立てない）
+  useEffect(() => {
+    if (dirtySetSkipRef.current) {
+      dirtySetSkipRef.current = false;
+      return;
+    }
+    setDirty(true);
+  }, [template]);
+
+  // 未保存状態を親に通知（新規で未保存のときだけ true）
+  const needsConfirmLeave =
+    dirty && !editing?.id && !committedId && template.layers.length > 0;
+  useEffect(() => {
+    onDirtyChange?.(needsConfirmLeave);
+  }, [needsConfirmLeave, onDirtyChange]);
+
   useEffect(() => {
     skipHistoryRef.current = true;
+    dirtySetSkipRef.current = true;
     setTemplateState(initial);
     setHistory([initial]);
     setHistoryIdx(0);
+    setDirty(false);
   }, [initial]);
 
   const setTemplate: React.Dispatch<
@@ -105,6 +194,58 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
   const canUndo = historyIdx > 0;
   const canRedo = historyIdx < history.length - 1;
 
+  // requestAnimationFrame でタイムライン再生
+  useEffect(() => {
+    if (!isPlaying) return;
+    let rafId = 0;
+    let lastTs = performance.now();
+    const tick = (ts: number) => {
+      const dt = (ts - lastTs) / 1000;
+      lastTs = ts;
+      setPlayheadSec((prev) => {
+        const next = prev + dt;
+        if (next >= template.totalDuration) {
+          // ループ: 先頭に戻す（停止したければ setIsPlaying(false) にする）
+          return 0;
+        }
+        return next;
+      });
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [isPlaying, template.totalDuration]);
+
+  const togglePlay = () => {
+    // 末尾にいる時は先頭からリスタート
+    if (!isPlaying && playheadSec >= template.totalDuration - 0.05) {
+      setPlayheadSec(0);
+    }
+    setIsPlaying((p) => !p);
+  };
+
+  // スペースキーで再生/停止（入力フォーカス中は無視）
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.code !== "Space") return;
+      const target = e.target as HTMLElement;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      e.preventDefault();
+      togglePlay();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, playheadSec, template.totalDuration]);
+
   const visibleLayers = useMemo(
     () => visibleLayersAt(template.layers, playheadSec),
     [template.layers, playheadSec],
@@ -127,44 +268,101 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
     setTemplate((t) => ({ ...t, layers }));
   };
 
-  const addSegment = (type: "hook" | "body" | "cta") => {
-    setTemplate((t) => {
-      const last = t.segments[t.segments.length - 1];
-      const start = last ? last.endSec : 0;
-      const dur = type === "hook" ? 3 : type === "cta" ? 3 : 5;
-      const end = Math.min(start + dur, t.totalDuration);
-      const bodyIndex =
-        type === "body"
-          ? t.segments.filter((s) => s.type === "body").length
-          : undefined;
-      return {
-        ...t,
-        segments: [...t.segments, makeSegment(type, start, end, bodyIndex)],
-      };
-    });
-  };
+  const [narrationBusy, setNarrationBusy] = useState<string | null>(null);
 
-  const updateSegment = (id: string, patch: Partial<TemplateSegment>) => {
-    setTemplate((t) => ({
-      ...t,
-      segments: t.segments.map((s) => (s.id === id ? { ...s, ...patch } : s)),
-    }));
-  };
-
-  const removeSegment = (id: string) => {
-    if (!confirm("セグメントを削除しますか?")) return;
-    setTemplate((t) => {
-      const next = t.segments.filter((s) => s.id !== id);
-      // body index を連番化
-      let bi = 0;
-      return {
-        ...t,
-        segments: next.map((s) =>
-          s.type === "body" ? { ...s, bodyIndex: bi++ } : s,
-        ),
-      };
-    });
-  };
+  const handleGenerateNarration = useCallback(
+    async (textLayerId: string, providerId: string, voice: string) => {
+      const textLayer = template.layers.find((l) => l.id === textLayerId);
+      if (!textLayer) return;
+      const text = (textLayer.text ?? "").trim();
+      if (!text) {
+        setSaveMsg({ type: "err", text: "テキストが空です" });
+        return;
+      }
+      setNarrationBusy(textLayerId);
+      setSaveMsg(null);
+      try {
+        // 設定を基に provider/voice を差し替え
+        const baseSettings = await loadSettings();
+        const settings = {
+          ...baseSettings,
+          ttsProvider: providerId as typeof baseSettings.ttsProvider,
+          edgeVoice: providerId === "edge" ? voice : baseSettings.edgeVoice,
+          sayVoice: providerId === "say" ? voice : baseSettings.sayVoice,
+          voicevoxSpeaker:
+            providerId === "voicevox"
+              ? Number(voice)
+              : baseSettings.voicevoxSpeaker,
+          openaiTtsVoice:
+            providerId === "openai" ? voice : baseSettings.openaiTtsVoice,
+          softalkVoice:
+            providerId === "softalk"
+              ? Number(voice)
+              : baseSettings.softalkVoice,
+        };
+        const provider = getTtsProvider(providerId);
+        const tempSessionId = `narration_${Date.now()}`;
+        const tempPath = await provider.synthesize(
+          {
+            text,
+            filename: `tts_${textLayerId}`,
+            sessionId: tempSessionId,
+          },
+          settings,
+        );
+        const templateId = editing?.id ?? committedId ?? template.id;
+        const savedPath = await invoke<string>("save_template_narration", {
+          templateId,
+          layerId: textLayerId,
+          sourcePath: tempPath,
+        });
+        // 生成音声の尺を取得
+        const { convertFileSrc } = await import("@tauri-apps/api/core");
+        const url = convertFileSrc(savedPath);
+        let dur = 3;
+        try {
+          dur = await probeAudioDurationPath(url);
+        } catch {
+          /* フォールバック 3s */
+        }
+        const startSec = textLayer.startSec;
+        const endSec = Math.min(startSec + dur, template.totalDuration);
+        // 既存ナレーションがあれば置き換え
+        const oldAudioId = textLayer.generatedNarrationLayerId;
+        setTemplate((t) => {
+          const withoutOld = oldAudioId
+            ? t.layers.filter((l) => l.id !== oldAudioId)
+            : t.layers;
+          const nextZ = findFreeTrackZIndex(
+            withoutOld,
+            startSec,
+            endSec,
+            "audio",
+          );
+          const base = makeLayer({ type: "audio", startSec, endSec }, nextZ);
+          const audioLayer: Layer = { ...base, source: savedPath };
+          // text レイヤーに紐付け id を保存
+          const updatedLayers = withoutOld.map((l) =>
+            l.id === textLayerId
+              ? { ...l, generatedNarrationLayerId: audioLayer.id }
+              : l,
+          );
+          return { ...t, layers: [...updatedLayers, audioLayer] };
+        });
+        setSaveMsg({ type: "ok", text: "✓ ナレーションを生成しました" });
+        setTimeout(() => setSaveMsg(null), 2000);
+      } catch (e) {
+        console.error("[narration] failed:", e);
+        setSaveMsg({
+          type: "err",
+          text: `ナレーション生成失敗: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      } finally {
+        setNarrationBusy(null);
+      }
+    },
+    [template, editing?.id, committedId],
+  );
 
   const handleSave = async () => {
     const name = template.name.trim();
@@ -175,19 +373,22 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
     setSaving(true);
     setSaveMsg(null);
     try {
+      const effectiveId = editing?.id ?? committedId;
       const withName: VideoTemplate = { ...template, name };
-      const toSave: VideoTemplate = editing
-        ? withName
+      const toSave: VideoTemplate = effectiveId
+        ? { ...withName, id: effectiveId }
         : { ...withName, id: makeTemplateId(name) };
       toSave.layers = toSave.layers.map((l) => ({
         ...l,
         id: l.id || genLayerId(),
       }));
       await saveTemplate(toSave);
+      setCommittedId(toSave.id);
+      setDirty(false);
       setSaveMsg({ type: "ok", text: `保存しました: ${name}` });
-      setTimeout(() => {
-        onSaved();
-      }, 400);
+      // list 更新のためだけに通知（親は editingTemplate を差し替えない）
+      onSaved(toSave);
+      setTimeout(() => setSaveMsg(null), 2000);
     } catch (e) {
       console.error("[TemplateBuilder] save failed:", e);
       setSaveMsg({
@@ -199,9 +400,299 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
     }
   };
 
+  // 自動保存（初回保存済み 以降のみ。新規未保存は対象外）
+  const autoSaveRef = useRef<{ busy: boolean }>({ busy: false });
+  useEffect(() => {
+    const effectiveId = editing?.id ?? committedId;
+    if (!effectiveId) return;
+    if (!template.name.trim()) return;
+    if (!dirty) return;
+    const timer = setTimeout(async () => {
+      if (autoSaveRef.current.busy) return;
+      autoSaveRef.current.busy = true;
+      try {
+        const toSave: VideoTemplate = {
+          ...template,
+          id: effectiveId,
+          layers: template.layers.map((l) => ({
+            ...l,
+            id: l.id || genLayerId(),
+          })),
+        };
+        await saveTemplate(toSave);
+        setDirty(false);
+        // 成功時は何も表示しない（Breadcrumb の dirty ドット消滅だけで充分）
+      } catch (e) {
+        console.warn("[TemplateBuilder] auto-save failed:", e);
+        setSaveMsg({ type: "err", text: "自動保存失敗" });
+      } finally {
+        autoSaveRef.current.busy = false;
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [template, editing?.id, committedId, dirty]);
+
+  // --- キーボードショートカット用のヘルパー ---
+  // Shift/Ctrl 修飾に対応した選択ハンドラ
+  const handleLayerSelect = useCallback(
+    (id: string | null, modifier: "shift" | "ctrl" | null = null) => {
+      if (id === null) {
+        setSelectedLayerIds([]);
+        return;
+      }
+      if (modifier === "ctrl") {
+        setSelectedLayerIds((prev) =>
+          prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
+        );
+        return;
+      }
+      if (modifier === "shift") {
+        setSelectedLayerIds((prev) => {
+          const sorted = [...template.layers].sort(
+            (a, b) => b.zIndex - a.zIndex,
+          );
+          const ids = sorted.map((l) => l.id);
+          const last = prev[prev.length - 1];
+          const lastIdx = last ? ids.indexOf(last) : -1;
+          const nextIdx = ids.indexOf(id);
+          if (lastIdx < 0 || nextIdx < 0) return [id];
+          const [from, to] =
+            lastIdx <= nextIdx ? [lastIdx, nextIdx] : [nextIdx, lastIdx];
+          return ids.slice(from, to + 1);
+        });
+        return;
+      }
+      setSelectedLayerIds([id]);
+    },
+    [template.layers],
+  );
+
+  const deleteSelected = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    // ロック中のレイヤーは残す
+    const toDelete = new Set(
+      selectedLayerIds.filter(
+        (id) => !template.layers.find((l) => l.id === id)?.locked,
+      ),
+    );
+    if (toDelete.size === 0) return;
+    setTemplateState((t) => ({
+      ...t,
+      layers: t.layers.filter((l) => !toDelete.has(l.id)),
+    }));
+    setSelectedLayerIds([]);
+  }, [selectedLayerIds, template.layers]);
+
+  const duplicateSelected = useCallback(() => {
+    if (selectedLayerIds.length === 0) return;
+    const srcList = selectedLayerIds
+      .map((id) => template.layers.find((l) => l.id === id))
+      .filter((l): l is Layer => !!l);
+    if (srcList.length === 0) return;
+    const copies: Layer[] = [];
+    const working: Layer[] = [...template.layers];
+    for (const src of srcList) {
+      const section = src.type === "audio" ? "audio" : "video";
+      const nextZ = findFreeTrackZIndex(
+        working,
+        src.startSec,
+        src.endSec,
+        section,
+      );
+      const copy: Layer = {
+        ...src,
+        id: genLayerId(),
+        x: Math.min(src.x + 3, 90),
+        y: Math.min(src.y + 3, 90),
+        zIndex: nextZ,
+      };
+      working.push(copy);
+      copies.push(copy);
+    }
+    setTemplateState((t) => ({ ...t, layers: [...t.layers, ...copies] }));
+    setSelectedLayerIds(copies.map((c) => c.id));
+  }, [selectedLayerIds, template.layers]);
+
+  const copySelected = useCallback(() => {
+    const srcs = selectedLayerIds
+      .map((id) => template.layers.find((l) => l.id === id))
+      .filter((l): l is Layer => !!l);
+    if (srcs.length === 0) return;
+    clipboardRef.current = srcs;
+  }, [selectedLayerIds, template.layers]);
+
+  const pasteClipboard = useCallback(() => {
+    const srcs = clipboardRef.current;
+    if (srcs.length === 0) return;
+    // コピー元の最古の startSec を基準に、playhead へスライドする相対オフセットを計算
+    const origin = Math.min(...srcs.map((s) => s.startSec));
+    const offset = playheadSec - origin;
+    const working: Layer[] = [...template.layers];
+    const pasted: Layer[] = [];
+    for (const src of srcs) {
+      const dur = Math.max(0.1, src.endSec - src.startSec);
+      const newStart = Math.max(
+        0,
+        Math.min(template.totalDuration - 0.1, src.startSec + offset),
+      );
+      const newEnd = Math.min(newStart + dur, template.totalDuration);
+      if (newEnd - newStart < 0.1) continue;
+      const section = src.type === "audio" ? "audio" : "video";
+      const nextZ = findFreeTrackZIndex(
+        working,
+        newStart,
+        newEnd,
+        section,
+      );
+      const copy: Layer = {
+        ...src,
+        id: genLayerId(),
+        startSec: newStart,
+        endSec: newEnd,
+        zIndex: nextZ,
+      };
+      working.push(copy);
+      pasted.push(copy);
+    }
+    if (pasted.length === 0) return;
+    setTemplateState((t) => ({ ...t, layers: [...t.layers, ...pasted] }));
+    setSelectedLayerIds(pasted.map((p) => p.id));
+  }, [playheadSec, template.layers, template.totalDuration]);
+
+  const nudgeSelectedLayer = useCallback(
+    (deltaSec: number) => {
+      if (selectedLayerIds.length === 0) return;
+      setTemplateState((t) => {
+        const updates = new Map<string, Partial<Layer>>();
+        for (const id of selectedLayerIds) {
+          const l = t.layers.find((x) => x.id === id);
+          if (!l) continue;
+          const len = l.endSec - l.startSec;
+          const newStart = Math.max(
+            0,
+            Math.min(t.totalDuration - len, l.startSec + deltaSec),
+          );
+          updates.set(id, {
+            startSec: newStart,
+            endSec: newStart + len,
+          });
+        }
+        return {
+          ...t,
+          layers: t.layers.map((x) =>
+            updates.has(x.id) ? { ...x, ...updates.get(x.id)! } : x,
+          ),
+        };
+      });
+    },
+    [selectedLayerIds],
+  );
+
+  // キーボードショートカット
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      // 入力系にフォーカス中はスキップ
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        // Escape は blur のために素通り（ブラウザ既定）
+        return;
+      }
+      const ctrl = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+
+      // Ctrl 系
+      if (ctrl && !e.shiftKey && key === "d") {
+        e.preventDefault();
+        duplicateSelected();
+        return;
+      }
+      if (ctrl && !e.shiftKey && key === "c") {
+        e.preventDefault();
+        copySelected();
+        return;
+      }
+      if (ctrl && !e.shiftKey && key === "v") {
+        e.preventDefault();
+        pasteClipboard();
+        return;
+      }
+      if (ctrl && !e.shiftKey && key === "s") {
+        e.preventDefault();
+        handleSave();
+        return;
+      }
+      if (ctrl && !e.shiftKey && key === "a") {
+        e.preventDefault();
+        // 全レイヤー選択
+        setSelectedLayerIds(template.layers.map((l) => l.id));
+        return;
+      }
+
+      // 単独キー
+      if (key === "delete" || key === "backspace") {
+        if (selectedLayerIds.length > 0) {
+          e.preventDefault();
+          deleteSelected();
+        }
+        return;
+      }
+      if (key === "escape") {
+        setSelectedLayerId(null);
+        return;
+      }
+      if (key === "home") {
+        e.preventDefault();
+        setPlayheadSec(0);
+        return;
+      }
+      if (key === "end") {
+        e.preventDefault();
+        setPlayheadSec(template.totalDuration);
+        return;
+      }
+      if (key === "arrowleft" || key === "arrowright") {
+        const sign = key === "arrowleft" ? -1 : 1;
+        // Alt: 微調整 0.01s / 通常: 0.1s
+        const delta = sign * (e.altKey ? 0.01 : 0.1);
+        if (e.shiftKey && selectedLayerIds.length > 0) {
+          e.preventDefault();
+          nudgeSelectedLayer(delta);
+        } else {
+          e.preventDefault();
+          setPlayheadSec((s) =>
+            Math.max(0, Math.min(template.totalDuration, s + delta)),
+          );
+        }
+        return;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    deleteSelected,
+    duplicateSelected,
+    copySelected,
+    pasteClipboard,
+    nudgeSelectedLayer,
+    handleSave,
+    selectedLayerId,
+    selectedLayerIds,
+    template.layers,
+    template.totalDuration,
+  ]);
+
   // 画像2 = ヘッダーに portal で移動するツールバー（保存等）
   const headerToolbar = (
-    <>
+    <div
+      data-keep-selection
+      className="contents"
+    >
       <input
         type="text"
         value={template.name}
@@ -228,16 +719,6 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
         />
         <span className="text-[10px]">秒</span>
       </label>
-      <button
-        type="button"
-        onClick={() => {
-          setSelectedLayerId(null);
-          setPreviewOpen(true);
-        }}
-        className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
-      >
-        🎬 プレビュー
-      </button>
       {onCancel && (
         <button
           type="button"
@@ -253,18 +734,22 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
         disabled={saving}
         className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:bg-gray-400"
       >
-        {saving ? "保存中..." : editing ? "上書き保存" : "テンプレ保存"}
+        {saving
+          ? "保存中..."
+          : editing
+            ? "今すぐ保存"
+            : "テンプレ保存"}
       </button>
-    </>
+    </div>
   );
 
   return (
-    <div className="space-y-1">
+    <div className="flex flex-col" style={{ height: "calc(100vh - 100px)" }}>
       {headerSlot && createPortal(headerToolbar, headerSlot)}
 
       {saveMsg && (
         <div
-          className={`text-xs px-2 py-1 rounded ${
+          className={`text-xs px-2 py-1 rounded shrink-0 ${
             saveMsg.type === "ok"
               ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
               : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300"
@@ -274,22 +759,89 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
         </div>
       )}
 
-      {/* 3 カラム (固定幅 + 中央寄せ) */}
+      {/* 2 カラム: 左=Canvas+Controls / 右=Panels+Timeline */}
       <div
+        className="flex-1 min-h-0"
         style={{
           display: "grid",
-          gridTemplateColumns: "380px 200px 240px",
-          gap: "1rem",
-          alignItems: "start",
-          justifyContent: "center",
-          margin: "0 auto",
+          gridTemplateColumns: "480px 1fr",
+          gap: "1.5rem",
+          alignItems: "stretch",
         }}
       >
-        {/* 左: キャンバス（＋画像1=undo/redo/grid/info の 2列コンパクト） */}
-        <div className="min-w-0 space-y-1">
+        {/* 左: キャンバスのみ */}
+        <div className="flex flex-col min-w-0 min-h-0">
+          <div className="flex-1 min-h-0 flex items-start justify-center">
+            <TemplateCanvas
+              layers={template.layers}
+              selectedLayerId={selectedLayerId}
+              selectedLayerIds={selectedLayerIds}
+              onLayerSelect={handleLayerSelect}
+              onLayerUpdate={updateLayer}
+              showGrid={showGrid}
+              currentTimeSec={playheadSec}
+              isPlaying={isPlaying}
+              segments={template.segments}
+            />
+          </div>
+        </div>
+
+        {/* 右: パネル + タイムライン */}
+        <div className="flex flex-col min-w-0 min-h-0 gap-2">
           <div
-            className="grid gap-x-2 gap-y-0.5 items-center text-[11px]"
-            style={{ gridTemplateColumns: "auto auto 1fr" }}
+            className="grid shrink-0"
+            style={{
+              gridTemplateColumns: "280px 240px 260px",
+              gap: "1.25rem",
+              height: "460px",
+            }}
+          >
+            <div className="min-w-0 overflow-y-auto" data-keep-selection>
+              <LayerPanel
+                layers={template.layers}
+                selectedLayerId={selectedLayerId}
+                selectedLayerIds={selectedLayerIds}
+                onLayersChange={setLayers}
+                onLayerSelect={handleLayerSelect}
+                newLayerDefaults={{
+                  startSec: playheadSec,
+                  endSec: Math.min(playheadSec + 3, template.totalDuration),
+                }}
+                currentTimeSec={playheadSec}
+              />
+            </div>
+            <div
+              className="min-w-0 overflow-y-auto pr-1"
+              data-keep-selection
+            >
+              <LayerPropertyPanel
+                layers={template.layers.filter((l) =>
+                  selectedLayerIds.includes(l.id),
+                )}
+                onChange={(patch) => {
+                  for (const id of selectedLayerIds) {
+                    updateLayer(id, patch);
+                  }
+                }}
+                onGenerateNarration={handleGenerateNarration}
+                narrationBusyLayerId={narrationBusy}
+              />
+            </div>
+            <div
+              className="min-w-0 overflow-hidden flex flex-col gap-1"
+              data-keep-selection
+            >
+              <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300 shrink-0">
+                プレビュー
+              </h4>
+              <div className="flex-1 min-h-0 flex items-start justify-center">
+                <LayerPreview layer={selectedLayer} />
+              </div>
+            </div>
+          </div>
+          {/* タイムライン上のコントロール */}
+          <div
+            className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] shrink-0"
           >
             <button
               type="button"
@@ -307,10 +859,23 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
             >
               やり直す ↷
             </button>
+            <button
+              type="button"
+              onClick={togglePlay}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                isPlaying
+                  ? "bg-red-600 hover:bg-red-700 text-white"
+                  : "bg-emerald-600 hover:bg-emerald-700 text-white"
+              }`}
+              title={isPlaying ? "一時停止 (Space)" : "再生 (Space)"}
+            >
+              {isPlaying ? "⏸ 一時停止" : "▶ 再生"}
+            </button>
             <span className="text-gray-500">
-              {playheadSec.toFixed(1)}s / 表示中 {visibleLayers.length}/{template.layers.length}
+              {playheadSec.toFixed(1)}s / {template.totalDuration}s · 表示{" "}
+              {visibleLayers.length}/{template.layers.length}
             </span>
-            <label className="flex items-center gap-1 cursor-pointer col-span-2">
+            <label className="flex items-center gap-1 cursor-pointer">
               <input
                 type="checkbox"
                 checked={showGrid}
@@ -325,68 +890,22 @@ export function TemplateBuilder({ editing, onSaved, onCancel }: Props) {
               </span>
             )}
           </div>
-          <TemplateCanvas
-            layers={template.layers}
-            selectedLayerId={selectedLayerId}
-            onLayerSelect={setSelectedLayerId}
-            onLayerUpdate={updateLayer}
-            showGrid={showGrid}
-            currentTimeSec={playheadSec}
-          />
-        </div>
-
-        {/* 右1: レイヤー一覧 */}
-        <div className="min-w-0">
-          <LayerPanel
-            layers={template.layers}
-            selectedLayerId={selectedLayerId}
-            onLayersChange={setLayers}
-            onLayerSelect={setSelectedLayerId}
-            newLayerDefaults={{
-              startSec: playheadSec,
-              endSec: Math.min(playheadSec + 3, template.totalDuration),
-            }}
-          />
-        </div>
-
-        {/* 右2: プロパティパネル */}
-        <div className="min-w-0">
-          <LayerPropertyPanel
-            layer={selectedLayer}
-            onChange={(patch) => {
-              if (selectedLayerId) updateLayer(selectedLayerId, patch);
-            }}
-          />
+          <div className="flex-1 min-h-0">
+            <TemplateTimeline
+              layers={template.layers}
+              segments={template.segments}
+              totalDuration={template.totalDuration}
+              playheadSec={playheadSec}
+              selectedLayerId={selectedLayerId}
+              selectedLayerIds={selectedLayerIds}
+              onLayerUpdate={updateLayer}
+              onLayerSelect={handleLayerSelect}
+              onPlayheadChange={setPlayheadSec}
+              onLayersReorder={setLayers}
+            />
+          </div>
         </div>
       </div>
-
-      {/* 下段: タイムライン（尺に比例。60秒=上段幅×1.2、それ以上は横スクロール） */}
-      <div className="w-full overflow-x-auto">
-        <div
-          style={{
-            // 上段幅 852px = 380+200+240 + 2*16gap、2割増を 60秒の幅とする
-            width: (120 + (template.totalDuration * (852 - 120)) / 60) * 1.2,
-            margin: "0 auto",
-          }}
-        >
-          <TemplateTimeline
-            layers={template.layers}
-            segments={template.segments}
-            totalDuration={template.totalDuration}
-            playheadSec={playheadSec}
-            selectedLayerId={selectedLayerId}
-            onLayerUpdate={updateLayer}
-            onLayerSelect={setSelectedLayerId}
-            onPlayheadChange={setPlayheadSec}
-          />
-        </div>
-      </div>
-
-      <TemplatePreviewModal
-        template={template}
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-      />
     </div>
   );
 }

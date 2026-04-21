@@ -36,6 +36,26 @@ struct AudioClipInput {
     start_sec: f64,
 }
 
+#[derive(serde::Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct UserAudioLayerInput {
+    path: String,
+    start_sec: f64,
+    end_sec: f64,
+    #[serde(default = "default_user_audio_volume")]
+    volume: f64,
+    #[serde(default)]
+    fade_in: f64,
+    #[serde(default)]
+    fade_out: f64,
+    #[serde(default)]
+    loop_audio: bool,
+}
+
+fn default_user_audio_volume() -> f64 {
+    1.0
+}
+
 /// 複数のTTS音声クリップを、それぞれのオフセットで無音ベースに重ねて1本のWAVにミックスする。
 /// total_duration_sec で指定された長さに -t でトリム/パディングされる。
 #[tauri::command]
@@ -138,6 +158,125 @@ async fn mix_audio_clips(
     Ok(out_path.to_string_lossy().to_string())
 }
 
+/// ユーザー音声レイヤーを全てミックスして、total_duration 長の WAV を作る
+/// 各クリップは volume / fade in-out / loop に対応
+#[tauri::command]
+async fn build_user_audio_track(
+    app: tauri::AppHandle,
+    session_id: String,
+    filename: String,
+    clips: Vec<UserAudioLayerInput>,
+    total_duration_sec: f64,
+) -> Result<String, String> {
+    let asset_dir = session_asset_dir(&app, &session_id)?;
+    let out_path = asset_dir.join(format!("{}.wav", filename));
+    let d = total_duration_sec.max(0.5);
+
+    // クリップ無し → 無音
+    if clips.is_empty() {
+        let output = hidden_cmd("ffmpeg")
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("anullsrc=r=44100:cl=stereo:d={:.3}", d),
+                "-c:a",
+                "pcm_s16le",
+            ])
+            .arg(&out_path)
+            .output()
+            .map_err(|e| format!("ffmpeg silent: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "build_user_audio_track silent failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        return Ok(out_path.to_string_lossy().to_string());
+    }
+
+    let mut cmd = hidden_cmd("ffmpeg");
+    cmd.arg("-y");
+    // input 0: 無音ベース（total_duration）
+    cmd.args([
+        "-f",
+        "lavfi",
+        "-i",
+        &format!("anullsrc=r=44100:cl=stereo:d={:.3}", d),
+    ]);
+    // input 1..: 各クリップ
+    for clip in &clips {
+        cmd.args(["-i"]).arg(&clip.path);
+    }
+
+    let mut filter_parts: Vec<String> = Vec::new();
+    for (i, clip) in clips.iter().enumerate() {
+        let idx = i + 1;
+        let dur = (clip.end_sec - clip.start_sec).max(0.001);
+        let delay_ms = (clip.start_sec.max(0.0) * 1000.0) as u64;
+        let fin = clip.fade_in.max(0.0);
+        let fout = clip.fade_out.max(0.0);
+        let vol = clip.volume.max(0.0);
+
+        let mut chain = format!(
+            "[{}:a]aformat=channel_layouts=stereo:sample_rates=44100",
+            idx
+        );
+        if clip.loop_audio {
+            chain.push_str(",aloop=loop=-1:size=2e+09");
+        }
+        // クリップ長にカット（素材が短くループ無しなら素材長まで）
+        chain.push_str(&format!(",atrim=0:{:.3},asetpts=PTS-STARTPTS", dur));
+        // 音量
+        if (vol - 1.0).abs() > 0.01 {
+            chain.push_str(&format!(",volume={:.3}", vol));
+        }
+        // フェードイン
+        if fin > 0.0 {
+            chain.push_str(&format!(",afade=t=in:st=0:d={:.3}", fin));
+        }
+        // フェードアウト
+        if fout > 0.0 {
+            let st = (dur - fout).max(0.0);
+            chain.push_str(&format!(",afade=t=out:st={:.3}:d={:.3}", st, fout));
+        }
+        // 絶対位置にシフト
+        if delay_ms > 0 {
+            chain.push_str(&format!(",adelay={ms}|{ms}", ms = delay_ms));
+        }
+        chain.push_str(&format!("[clip{}]", i));
+        filter_parts.push(chain);
+    }
+
+    // 無音ベース + 全クリップを amix
+    let mix_inputs: String = (0..clips.len())
+        .map(|i| format!("[clip{}]", i))
+        .collect::<Vec<_>>()
+        .join("");
+    filter_parts.push(format!(
+        "[0:a]{}amix=inputs={}:normalize=0:duration=first[mixed]",
+        mix_inputs,
+        clips.len() + 1
+    ));
+
+    let filter = filter_parts.join(";");
+    cmd.args(["-filter_complex", &filter]);
+    cmd.args(["-map", "[mixed]", "-c:a", "pcm_s16le"]);
+    cmd.arg(&out_path);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("ffmpeg user_audio: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "build_user_audio_track failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(out_path.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 async fn generate_silent_wav(
     app: tauri::AppHandle,
@@ -167,6 +306,31 @@ async fn generate_silent_wav(
         ));
     }
     Ok(out_path.to_string_lossy().to_string())
+}
+
+/// セッションで生成した TTS ファイルを templates/audio/{template_id}/ に
+/// 永続コピーして返す（ファイル名はユニークにする）
+#[tauri::command]
+fn save_template_narration(
+    template_id: String,
+    layer_id: String,
+    source_path: String,
+) -> Result<String, String> {
+    let dir = templates_dir().join("audio").join(&template_id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let src = PathBuf::from(&source_path);
+    let ext = src
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("wav")
+        .to_string();
+    let target = dir.join(format!("{}_{}.{}", layer_id, stamp, ext));
+    std::fs::copy(&src, &target).map_err(|e| e.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -253,8 +417,11 @@ fn generate_sec_ms_gec() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // .NET ticks: 100ns since 0001-01-01 UTC. Diff from UNIX epoch = 621355968000000000 ticks
-    let ticks: u64 = 621_355_968_000_000_000u64 + secs * 10_000_000;
+    // Python の edge-tts に合わせ Windows FILETIME (1601-01-01) ベースを使う
+    // WIN_EPOCH = 1601-01-01 から 1970-01-01 までの秒数 = 11_644_473_600
+    // 1 tick = 100ns = 10^-7 秒
+    let win_epoch: u64 = 11_644_473_600;
+    let ticks: u64 = (win_epoch + secs) * 10_000_000;
     // 5分単位に丸める（3_000_000_000 ticks = 300秒）
     let ticks = ticks - (ticks % 3_000_000_000);
     let input = format!("{}{}", ticks, EDGE_TRUSTED_TOKEN);
@@ -281,6 +448,23 @@ pub struct TimedOverlayInput {
     pub png_path: String,
     pub start: f64,
     pub end: f64,
+    /// % of 1080 (0-100) レイヤー左上 X
+    #[serde(default)]
+    pub x_pct: f64,
+    /// % of 1920 (0-100) レイヤー左上 Y
+    #[serde(default)]
+    pub y_pct: f64,
+    /// % of 1080 (0-100) レイヤー幅。未指定（= 0）なら PNG はキャンバスサイズ扱いで overlay=0:0
+    #[serde(default)]
+    pub width_pct: f64,
+    /// % of 1920 (0-100) レイヤー高さ
+    #[serde(default)]
+    pub height_pct: f64,
+    #[serde(default)]
+    pub rotation: f64,
+    /// 動画レイヤーと統合した z 順。video_layers.z_index と比較して昇順に重ねる
+    #[serde(default)]
+    pub z_index: i32,
     #[serde(default)]
     pub entry_animation: String,
     #[serde(default = "default_anim_duration")]
@@ -533,9 +717,150 @@ fn build_fade_filter(
     }
 }
 
+/// 入退場 zoom-in / zoom-out / pop のスケール係数 S(t) を ffmpeg 式で生成
+/// 戻り値は None（該当アニメなし）または S(t) 式（例: "if(..,.., 1)" ）
+fn build_scale_anim_expr(
+    entry_anim: &str,
+    entry_start: f64,
+    entry_dur: f64,
+    exit_anim: &str,
+    exit_start: f64,
+    exit_dur: f64,
+) -> Option<String> {
+    let entry_expr: Option<String> = match entry_anim {
+        "zoom-in" => {
+            let s = entry_start;
+            let e = entry_start + entry_dur;
+            let d = entry_dur.max(0.001);
+            Some(format!(
+                "if(lt(t,{s:.3}),0.01,if(gt(t,{e:.3}),1,max(0.01,(t-{s:.3})/{d:.3})))",
+                s = s,
+                e = e,
+                d = d,
+            ))
+        }
+        "pop" => {
+            // easeOutBack: 1 + c3*(p-1)^3 + c1*(p-1)^2, c1=1.70158, c3=2.70158
+            let s = entry_start;
+            let e = entry_start + entry_dur;
+            let d = entry_dur.max(0.001);
+            Some(format!(
+                "if(lt(t,{s:.3}),0.01,if(gt(t,{e:.3}),1,max(0.01,1+2.70158*pow((t-{s:.3})/{d:.3}-1,3)+1.70158*pow((t-{s:.3})/{d:.3}-1,2))))",
+                s = s,
+                e = e,
+                d = d,
+            ))
+        }
+        _ => None,
+    };
+
+    let exit_expr: Option<String> = match exit_anim {
+        "zoom-out" => {
+            let s = exit_start;
+            let e = exit_start + exit_dur;
+            let d = exit_dur.max(0.001);
+            Some(format!(
+                "if(lt(t,{s:.3}),1,if(gt(t,{e:.3}),0.01,max(0.01,1-(t-{s:.3})/{d:.3})))",
+                s = s,
+                e = e,
+                d = d,
+            ))
+        }
+        _ => None,
+    };
+
+    match (entry_expr, exit_expr) {
+        (None, None) => None,
+        (Some(e), None) => Some(e),
+        (None, Some(x)) => Some(x),
+        (Some(e), Some(x)) => Some(format!("({})*({})", e, x)),
+    }
+}
+
+/// slide 入退場用の overlay x/y 加算オフセット式（中心基準の位置式に足す用途）
+/// 戻り値は (x_offset_expr, y_offset_expr)。slide なしなら ("0", "0")
+fn build_slide_offset_expr(
+    entry_anim: &str,
+    entry_start: f64,
+    entry_end: f64,
+    exit_anim: &str,
+    exit_start: f64,
+    exit_end: f64,
+    main_w: i32,
+    main_h: i32,
+) -> (String, String) {
+    let entry_x_off = match entry_anim {
+        "slide-left" => main_w as f64,
+        "slide-right" => -(main_w as f64),
+        _ => 0.0,
+    };
+    let entry_y_off = match entry_anim {
+        "slide-up" => main_h as f64,
+        "slide-down" => -(main_h as f64),
+        _ => 0.0,
+    };
+    let exit_x_off = match exit_anim {
+        "slide-left" => -(main_w as f64),
+        "slide-right" => main_w as f64,
+        _ => 0.0,
+    };
+    let exit_y_off = match exit_anim {
+        "slide-up" => -(main_h as f64),
+        "slide-down" => main_h as f64,
+        _ => 0.0,
+    };
+
+    let entry_dur = (entry_end - entry_start).max(0.001);
+    let exit_dur = (exit_end - exit_start).max(0.001);
+
+    let build_axis = |entry_off: f64, exit_off: f64| -> String {
+        let has_entry = entry_off.abs() > 0.01;
+        let has_exit = exit_off.abs() > 0.01;
+        if !has_entry && !has_exit {
+            return "0".to_string();
+        }
+        let mut parts: Vec<String> = Vec::new();
+        if has_entry {
+            parts.push(format!(
+                "if(between(t,{s:.3},{e:.3}),{off:.1}*(1-(t-{s:.3})/{d:.3}),0)",
+                s = entry_start,
+                e = entry_end,
+                off = entry_off,
+                d = entry_dur,
+            ));
+        }
+        if has_exit {
+            parts.push(format!(
+                "if(between(t,{s:.3},{e:.3}),{off:.1}*((t-{s:.3})/{d:.3}),0)",
+                s = exit_start,
+                e = exit_end,
+                off = exit_off,
+                d = exit_dur,
+            ));
+        }
+        format!("({})", parts.join("+"))
+    };
+
+    (build_axis(entry_x_off, exit_x_off), build_axis(entry_y_off, exit_y_off))
+}
+
+/// geq による角丸長方形マスク。外接円距離判定で四隅を丸める
+fn build_rounded_mask_geq(w: i32, h: i32, r: i32) -> String {
+    let rr = r.max(1).min(w.min(h) / 2);
+    let wm = w - rr;
+    let hm = h - rr;
+    format!(
+        "format=yuva420p,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lt(X,{r})*lt(Y,{r}),if(lte(hypot({r}-X,{r}-Y),{r}),255,0),if(gt(X,{wm})*lt(Y,{r}),if(lte(hypot(X-{wm},{r}-Y),{r}),255,0),if(lt(X,{r})*gt(Y,{hm}),if(lte(hypot({r}-X,Y-{hm}),{r}),255,0),if(gt(X,{wm})*gt(Y,{hm}),if(lte(hypot(X-{wm},Y-{hm}),{r}),255,0),255))))'",
+        r = rr,
+        wm = wm,
+        hm = hm,
+    )
+}
+
 /// overlay の x/y 式を slide アニメーション用に生成。slide 以外 or animation なしなら固定値
 /// x_final/y_final: 目的位置のピクセル座標
 /// main_w/main_h: メイン動画サイズ（1080/1920）
+#[allow(dead_code)]
 fn build_slide_xy_expr(
     entry_anim: &str,
     entry_start: f64,
@@ -816,6 +1141,130 @@ async fn voicevox_tts(
     let wav_path = dir.join(format!("{}.wav", filename));
     std::fs::write(&wav_path, wav_bytes).map_err(|e| e.to_string())?;
     Ok(wav_path.to_string_lossy().into_owned())
+}
+
+/// OpenAI TTS API (tts-1 / tts-1-hd) を呼んで MP3 を保存する
+#[tauri::command]
+async fn openai_tts(
+    app: tauri::AppHandle,
+    session_id: String,
+    text: String,
+    voice: String,
+    model: String,
+    api_key: String,
+    filename: String,
+) -> Result<String, String> {
+    if api_key.trim().is_empty() {
+        return Err("OpenAI API キーが設定されていません".into());
+    }
+    let m = if model.trim().is_empty() {
+        "tts-1"
+    } else {
+        model.trim()
+    };
+    let v = if voice.trim().is_empty() {
+        "alloy"
+    } else {
+        voice.trim()
+    };
+    let body = format!(
+        r#"{{"model":"{}","voice":"{}","input":{},"response_format":"mp3"}}"#,
+        m,
+        v,
+        serde_json::to_string(&text).map_err(|e| e.to_string())?
+    );
+
+    // curl で POST。ステータスだけ確認するため -s -f -w 組み合わせ
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = hidden_cmd("curl")
+        .args([
+            "-s",
+            "-X",
+            "POST",
+            "-H",
+            "Content-Type: application/json",
+            "-H",
+            &format!("Authorization: Bearer {}", api_key),
+            "--data-binary",
+            "@-",
+            "https://api.openai.com/v1/audio/speech",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("curl spawn: {}", e))?;
+    {
+        let stdin = child.stdin.as_mut().ok_or("no stdin")?;
+        stdin
+            .write_all(body.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("curl wait: {}", e))?;
+    if !output.status.success() {
+        return Err(format!(
+            "OpenAI TTS curl failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    // 先頭が JSON エラーなら拒否
+    if output.stdout.starts_with(b"{") {
+        return Err(format!(
+            "OpenAI TTS エラー応答: {}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    let dir = session_asset_dir(&app, &session_id)?;
+    let mp3_path = dir.join(format!("{}.mp3", filename));
+    std::fs::write(&mp3_path, &output.stdout).map_err(|e| e.to_string())?;
+    Ok(mp3_path.to_string_lossy().into_owned())
+}
+
+/// SofTalk.exe をサブプロセス起動して WAV を生成（ゆっくり霊夢/魔理沙系）
+/// 必要な引数: /W:"text" /R:"out.wav" /X:<voice_index> /T:1 /Q:1
+#[tauri::command]
+async fn softalk_tts(
+    app: tauri::AppHandle,
+    session_id: String,
+    text: String,
+    voice: i32,
+    filename: String,
+    softalk_path: String,
+) -> Result<String, String> {
+    if softalk_path.trim().is_empty() {
+        return Err("SofTalk.exe のパスが設定されていません（設定 → SofTalk）".into());
+    }
+    let dir = session_asset_dir(&app, &session_id)?;
+    let wav_path = dir.join(format!("{}.wav", filename));
+    let wav_path_str = wav_path.to_string_lossy().into_owned();
+
+    let output = hidden_cmd(&softalk_path)
+        .args([
+            &format!("/W:{}", text),
+            &format!("/R:{}", wav_path_str),
+            &format!("/X:{}", voice),
+            "/T:1",
+            "/Q:1",
+        ])
+        .output()
+        .map_err(|e| format!("SofTalk 起動失敗: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "SofTalk 失敗: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if !wav_path.exists() {
+        return Err(
+            "SofTalk が WAV を生成しませんでした。バージョンや引数仕様をご確認ください"
+                .into(),
+        );
+    }
+    Ok(wav_path_str)
 }
 
 fn urlencoding_encode(s: &str) -> String {
@@ -1162,6 +1611,8 @@ async fn compose_video(
     session_id: String,
     scenes: Vec<SceneInput>,
     bgm_path: Option<String>,
+    // 省略可。あればメイン音声と BGM の上に重ねる（ユーザー配置音声レイヤー）
+    user_audio_track_path: Option<String>,
     output_filename: String,
 ) -> Result<String, String> {
     if scenes.is_empty() {
@@ -1223,103 +1674,314 @@ async fn compose_video(
         let mut filter_parts: Vec<String> = Vec::new();
         filter_parts.push(base_chain);
 
-        // 動画レイヤーを順次オーバーレイ
+        // 動画レイヤー + timed_overlays を共通 z_index キューにまとめて
+        // 昇順で順次 overlay する（同 z は video → timed の順で安定化）
+        #[derive(Clone, Copy)]
+        enum LayerKind {
+            Video,
+            Timed,
+        }
+        // (kind, z_index, source_list_index)
+        // video の source index は sorted_layers 内のインデックス（= -i 追加順）
+        // timed の source index は scene.timed_overlays 内のインデックス
+        let mut z_queue: Vec<(LayerKind, i32, usize)> = Vec::new();
+        for (j, l) in sorted_layers.iter().enumerate() {
+            z_queue.push((LayerKind::Video, l.z_index, j));
+        }
+        for (k, t) in scene.timed_overlays.iter().enumerate() {
+            z_queue.push((LayerKind::Timed, t.z_index, k));
+        }
+        z_queue.sort_by(|a, b| {
+            a.1.cmp(&b.1).then_with(|| match (a.0, b.0) {
+                (LayerKind::Video, LayerKind::Timed) => std::cmp::Ordering::Less,
+                (LayerKind::Timed, LayerKind::Video) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            })
+        });
+
         let mut current_bg = base_label.clone();
-        for (li, layer) in sorted_layers.iter().enumerate() {
-            let input_idx = video_layer_input_start + li;
-            let w_px = ((1080.0_f64) * layer.width_pct / 100.0).round().max(2.0) as i32;
-            let h_px = ((1920.0_f64) * layer.height_pct / 100.0).round().max(2.0) as i32;
-            let x_px = ((1080.0_f64) * layer.x_pct / 100.0).round() as i32;
-            let y_px = ((1920.0_f64) * layer.y_pct / 100.0).round() as i32;
+        for (qi, (kind, _z, src_idx)) in z_queue.iter().enumerate() {
+            let next_bg = format!("[bgz{}]", qi);
+            match kind {
+                LayerKind::Video => {
+                    let layer = sorted_layers[*src_idx];
+                    let input_idx = video_layer_input_start + *src_idx;
+                    let w_px = ((1080.0_f64) * layer.width_pct / 100.0).round().max(2.0) as i32;
+                    let h_px = ((1920.0_f64) * layer.height_pct / 100.0).round().max(2.0) as i32;
+                    let x_px = ((1080.0_f64) * layer.x_pct / 100.0).round() as i32;
+                    let y_px = ((1920.0_f64) * layer.y_pct / 100.0).round() as i32;
 
-            let layer_label = format!("[vl{}]", li);
-            let mut chain = format!(
-                "[{}:v]scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},format=yuva420p",
-                input_idx, w_px, h_px, w_px, h_px
-            );
+                    let layer_label = format!("[vl{}]", qi);
+                    let mut chain = format!(
+                        "[{}:v]scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},format=yuva420p",
+                        input_idx, w_px, h_px, w_px, h_px
+                    );
 
-            // 形状マスク
-            if layer.shape == "circle" {
-                let r = w_px.min(h_px) / 2;
-                chain.push_str(&format!(
-                    ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-{}/2,Y-{}/2),{}),255,0)'",
-                    w_px, h_px, r
-                ));
-            }
+                    if layer.shape == "circle" {
+                        let r = w_px.min(h_px) / 2;
+                        chain.push_str(&format!(
+                            ",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-{}/2,Y-{}/2),{}),255,0)'",
+                            w_px, h_px, r
+                        ));
+                    } else if layer.shape == "rounded" && layer.border_radius_pct > 0.0 {
+                        let r_px = ((w_px.min(h_px) as f64) * layer.border_radius_pct / 100.0)
+                            .round()
+                            .max(1.0) as i32;
+                        chain.push_str(&format!(",{}", build_rounded_mask_geq(w_px, h_px, r_px)));
+                    }
 
-            // 不透明度
-            if layer.opacity < 1.0 && layer.opacity >= 0.0 {
-                chain.push_str(&format!(",colorchannelmixer=aa={:.3}", layer.opacity));
-            }
+                    if layer.opacity < 1.0 && layer.opacity >= 0.0 {
+                        chain.push_str(&format!(",colorchannelmixer=aa={:.3}", layer.opacity));
+                    }
 
-            let layer_start = layer.start_sec.max(0.0);
-            let layer_end = if layer.end_sec > layer_start {
-                layer.end_sec.min(scene.duration)
-            } else {
-                scene.duration
-            };
+                    if layer.rotation.abs() > 0.01 {
+                        let rad = layer.rotation * std::f64::consts::PI / 180.0;
+                        chain.push_str(&format!(
+                            ",rotate=a={rad:.6}:c=0x00000000:ow=rotw({rad:.6}):oh=roth({rad:.6})",
+                            rad = rad,
+                        ));
+                    }
 
-            let has_fade = layer.entry_animation == "fade"
-                || layer.exit_animation == "fade";
-            let has_slide = layer.entry_animation.starts_with("slide-")
-                || layer.exit_animation.starts_with("slide-");
+                    let layer_start = layer.start_sec.max(0.0);
+                    let layer_end = if layer.end_sec > layer_start {
+                        layer.end_sec.min(scene.duration)
+                    } else {
+                        scene.duration
+                    };
+                    let exit_start = (layer_end - layer.exit_duration).max(layer_start);
+                    let entry_end = (layer_start + layer.entry_duration).min(layer_end);
 
-            if has_fade {
-                let exit_start = (layer_end - layer.exit_duration).max(layer_start);
-                if let Some(fade) = build_fade_filter(
-                    &layer.entry_animation,
-                    layer_start,
-                    layer.entry_duration,
-                    &layer.exit_animation,
-                    exit_start,
-                    layer.exit_duration,
-                ) {
-                    chain.push_str(&format!(",{}", fade));
+                    let has_fade = layer.entry_animation == "fade"
+                        || layer.exit_animation == "fade";
+                    let has_slide = layer.entry_animation.starts_with("slide-")
+                        || layer.exit_animation.starts_with("slide-");
+                    let has_scale_anim = matches!(
+                        layer.entry_animation.as_str(),
+                        "zoom-in" | "pop"
+                    ) || layer.exit_animation == "zoom-out";
+
+                    if has_scale_anim {
+                        if let Some(s_expr) = build_scale_anim_expr(
+                            &layer.entry_animation,
+                            layer_start,
+                            layer.entry_duration,
+                            &layer.exit_animation,
+                            exit_start,
+                            layer.exit_duration,
+                        ) {
+                            chain.push_str(&format!(
+                                ",scale=w='iw*({s})':h='ih*({s})':eval=frame:flags=bilinear",
+                                s = s_expr,
+                            ));
+                        }
+                    }
+
+                    if has_fade {
+                        if let Some(fade) = build_fade_filter(
+                            &layer.entry_animation,
+                            layer_start,
+                            layer.entry_duration,
+                            &layer.exit_animation,
+                            exit_start,
+                            layer.exit_duration,
+                        ) {
+                            chain.push_str(&format!(",{}", fade));
+                        }
+                    }
+                    chain.push_str(&layer_label);
+                    filter_parts.push(chain);
+
+                    let has_time_gate = layer.start_sec > 0.0
+                        || (layer.end_sec > 0.0 && layer.end_sec < scene.duration - 0.01);
+                    let enable_clause = if has_time_gate {
+                        format!(":enable='between(t,{:.3},{:.3})'", layer_start, layer_end)
+                    } else {
+                        String::new()
+                    };
+
+                    let dynamic_size = has_scale_anim || layer.rotation.abs() > 0.01;
+                    let overlay_pos = if dynamic_size {
+                        let cx = x_px + w_px / 2;
+                        let cy = y_px + h_px / 2;
+                        let (sx, sy) = if has_slide {
+                            build_slide_offset_expr(
+                                &layer.entry_animation,
+                                layer_start,
+                                entry_end,
+                                &layer.exit_animation,
+                                exit_start,
+                                layer_end,
+                                1080,
+                                1920,
+                            )
+                        } else {
+                            ("0".to_string(), "0".to_string())
+                        };
+                        format!(
+                            "x='({cx})-overlay_w/2+{sx}':y='({cy})-overlay_h/2+{sy}':eval=frame",
+                            cx = cx,
+                            cy = cy,
+                            sx = sx,
+                            sy = sy,
+                        )
+                    } else if has_slide {
+                        let (sx, sy) = build_slide_offset_expr(
+                            &layer.entry_animation,
+                            layer_start,
+                            entry_end,
+                            &layer.exit_animation,
+                            exit_start,
+                            layer_end,
+                            1080,
+                            1920,
+                        );
+                        format!(
+                            "x='{xp}+{sx}':y='{yp}+{sy}':eval=frame",
+                            xp = x_px,
+                            yp = y_px,
+                            sx = sx,
+                            sy = sy,
+                        )
+                    } else {
+                        format!("{}:{}", x_px, y_px)
+                    };
+
+                    filter_parts.push(format!(
+                        "{}{}overlay={}:format=auto{}{}",
+                        current_bg, layer_label, overlay_pos, enable_clause, next_bg
+                    ));
+                }
+                LayerKind::Timed => {
+                    let tovl = &scene.timed_overlays[*src_idx];
+                    let input_idx = timed_overlay_input_start + *src_idx;
+
+                    let has_fade = tovl.entry_animation == "fade"
+                        || tovl.exit_animation == "fade";
+                    let has_slide = tovl.entry_animation.starts_with("slide-")
+                        || tovl.exit_animation.starts_with("slide-");
+                    let has_scale_anim = matches!(
+                        tovl.entry_animation.as_str(),
+                        "zoom-in" | "pop"
+                    ) || tovl.exit_animation == "zoom-out";
+                    let has_rotation = tovl.rotation.abs() > 0.01;
+
+                    let entry_end = (tovl.start + tovl.entry_duration).min(tovl.end);
+                    let exit_start = (tovl.end - tovl.exit_duration).max(tovl.start);
+                    let is_layer_sized =
+                        tovl.width_pct > 0.01 && tovl.height_pct > 0.01;
+
+                    // 何のアニメ・回転もなくキャンバスサイズ PNG 互換なら最小 overlay
+                    if !has_fade && !has_slide && !has_scale_anim && !has_rotation && !is_layer_sized {
+                        filter_parts.push(format!(
+                            "{}[{}:v]overlay=0:0:enable='between(t,{:.3},{:.3})'{}",
+                            current_bg, input_idx, tovl.start, tovl.end, next_bg
+                        ));
+                        current_bg = next_bg;
+                        continue;
+                    }
+
+                    let w_px = ((1080.0_f64) * tovl.width_pct / 100.0).round().max(2.0) as i32;
+                    let h_px = ((1920.0_f64) * tovl.height_pct / 100.0).round().max(2.0) as i32;
+                    let x_px = ((1080.0_f64) * tovl.x_pct / 100.0).round() as i32;
+                    let y_px = ((1920.0_f64) * tovl.y_pct / 100.0).round() as i32;
+
+                    let layer_label = format!("[tovl{}]", qi);
+                    let mut chain = format!("[{}:v]format=yuva420p", input_idx);
+
+                    if has_rotation {
+                        let rad = tovl.rotation * std::f64::consts::PI / 180.0;
+                        chain.push_str(&format!(
+                            ",rotate=a={rad:.6}:c=0x00000000:ow=rotw({rad:.6}):oh=roth({rad:.6})",
+                            rad = rad,
+                        ));
+                    }
+
+                    if has_scale_anim {
+                        if let Some(s_expr) = build_scale_anim_expr(
+                            &tovl.entry_animation,
+                            tovl.start,
+                            tovl.entry_duration,
+                            &tovl.exit_animation,
+                            exit_start,
+                            tovl.exit_duration,
+                        ) {
+                            chain.push_str(&format!(
+                                ",scale=w='iw*({s})':h='ih*({s})':eval=frame:flags=bilinear",
+                                s = s_expr,
+                            ));
+                        }
+                    }
+
+                    if has_fade {
+                        if let Some(f) = build_fade_filter(
+                            &tovl.entry_animation,
+                            tovl.start,
+                            tovl.entry_duration,
+                            &tovl.exit_animation,
+                            exit_start,
+                            tovl.exit_duration,
+                        ) {
+                            chain.push_str(&format!(",{}", f));
+                        }
+                    }
+                    chain.push_str(&layer_label);
+                    filter_parts.push(chain);
+
+                    let dynamic_size = has_scale_anim || has_rotation;
+                    let overlay_pos = if is_layer_sized {
+                        let cx = x_px + w_px / 2;
+                        let cy = y_px + h_px / 2;
+                        let (sx, sy) = if has_slide {
+                            build_slide_offset_expr(
+                                &tovl.entry_animation,
+                                tovl.start,
+                                entry_end,
+                                &tovl.exit_animation,
+                                exit_start,
+                                tovl.end,
+                                1080,
+                                1920,
+                            )
+                        } else {
+                            ("0".to_string(), "0".to_string())
+                        };
+                        format!(
+                            "x='({cx})-overlay_w/2+{sx}':y='({cy})-overlay_h/2+{sy}':eval=frame",
+                            cx = cx,
+                            cy = cy,
+                            sx = sx,
+                            sy = sy,
+                        )
+                    } else if has_slide {
+                        let (sx, sy) = build_slide_offset_expr(
+                            &tovl.entry_animation,
+                            tovl.start,
+                            entry_end,
+                            &tovl.exit_animation,
+                            exit_start,
+                            tovl.end,
+                            1080,
+                            1920,
+                        );
+                        format!("x='0+{}':y='0+{}':eval=frame", sx, sy)
+                    } else if dynamic_size {
+                        format!("x='(1080-overlay_w)/2':y='(1920-overlay_h)/2':eval=frame")
+                    } else {
+                        "0:0".to_string()
+                    };
+
+                    filter_parts.push(format!(
+                        "{}{}overlay={}:enable='between(t,{:.3},{:.3})'{}",
+                        current_bg, layer_label, overlay_pos, tovl.start, tovl.end, next_bg
+                    ));
                 }
             }
-            chain.push_str(&layer_label);
-            filter_parts.push(chain);
-
-            let next_bg = format!("[bg{}]", li + 1);
-            let has_time_gate = layer.start_sec > 0.0
-                || (layer.end_sec > 0.0 && layer.end_sec < scene.duration - 0.01);
-            let enable_clause = if has_time_gate {
-                format!(":enable='between(t,{:.3},{:.3})'", layer_start, layer_end)
-            } else {
-                String::new()
-            };
-
-            let overlay_pos = if has_slide {
-                let entry_end = (layer_start + layer.entry_duration).min(layer_end);
-                let exit_start = (layer_end - layer.exit_duration).max(layer_start);
-                let (x_expr, y_expr) = build_slide_xy_expr(
-                    &layer.entry_animation,
-                    layer_start,
-                    entry_end,
-                    &layer.exit_animation,
-                    exit_start,
-                    layer_end,
-                    x_px,
-                    y_px,
-                    1080,
-                    1920,
-                );
-                format!("x='{}':y='{}':eval=frame", x_expr, y_expr)
-            } else {
-                format!("{}:{}", x_px, y_px)
-            };
-
-            filter_parts.push(format!(
-                "{}{}overlay={}:format=auto{}{}",
-                current_bg, layer_label, overlay_pos, enable_clause, next_bg
-            ));
             current_bg = next_bg;
         }
 
-        // テロップ (overlay_png) + キャプション + 時間ゲート静止レイヤー
-        let total_overlays_after_top = n_captions + n_timed;
+        // テロップ (overlay_png=固定字幕) + キャプション（ナレーション字幕）を最上段に重ねる
         let mut overlay_parts: Vec<String> = Vec::new();
-        let top_out = if total_overlays_after_top == 0 {
+        let top_out = if n_captions == 0 {
             "[v]".to_string()
         } else {
             "[vt]".to_string()
@@ -1327,96 +1989,19 @@ async fn compose_video(
         overlay_parts.push(format!("{}[2:v]overlay=0:0{}", current_bg, top_out));
 
         let mut current_label = top_out;
-        let mut overlay_idx = 0usize;
-
-        // キャプション（ナレーション字幕）
         for (ci, cap) in scene.captions.iter().enumerate() {
             let input_idx = caption_input_start + ci;
-            let is_last = overlay_idx + 1 == total_overlays_after_top;
+            let is_last = ci + 1 == n_captions;
             let next_label = if is_last {
                 "[v]".to_string()
             } else {
-                format!("[vc{}]", overlay_idx)
+                format!("[vc{}]", ci)
             };
             overlay_parts.push(format!(
                 "{}[{}:v]overlay=0:0:enable='between(t,{:.3},{:.3})'{}",
                 current_label, input_idx, cap.start, cap.end, next_label
             ));
             current_label = next_label;
-            overlay_idx += 1;
-        }
-
-        // 時間ゲート付き静止レイヤー（画像/テキスト/図形等を透明 PNG 化したもの）
-        for (ti, tovl) in scene.timed_overlays.iter().enumerate() {
-            let input_idx = timed_overlay_input_start + ti;
-            let is_last = overlay_idx + 1 == total_overlays_after_top;
-            let next_label = if is_last {
-                "[v]".to_string()
-            } else {
-                format!("[vc{}]", overlay_idx)
-            };
-
-            let has_fade = tovl.entry_animation == "fade"
-                || tovl.exit_animation == "fade";
-            let has_slide = tovl.entry_animation.starts_with("slide-")
-                || tovl.exit_animation.starts_with("slide-");
-
-            if !has_fade && !has_slide {
-                // アニメなし: 従来通りの単純 overlay
-                overlay_parts.push(format!(
-                    "{}[{}:v]overlay=0:0:enable='between(t,{:.3},{:.3})'{}",
-                    current_label, input_idx, tovl.start, tovl.end, next_label
-                ));
-            } else {
-                let entry_end = (tovl.start + tovl.entry_duration).min(tovl.end);
-                let exit_start = (tovl.end - tovl.exit_duration).max(tovl.start);
-
-                // fade フィルタ適用
-                let fade_filter = build_fade_filter(
-                    &tovl.entry_animation,
-                    tovl.start,
-                    tovl.entry_duration,
-                    &tovl.exit_animation,
-                    exit_start,
-                    tovl.exit_duration,
-                );
-                let faded_label = format!("[tovl{}]", ti);
-                let layer_ref = if let Some(f) = &fade_filter {
-                    filter_parts.push(format!(
-                        "[{}:v]{}{}",
-                        input_idx, f, faded_label
-                    ));
-                    faded_label.clone()
-                } else {
-                    format!("[{}:v]", input_idx)
-                };
-
-                let overlay_pos = if has_slide {
-                    let (x_expr, y_expr) = build_slide_xy_expr(
-                        &tovl.entry_animation,
-                        tovl.start,
-                        entry_end,
-                        &tovl.exit_animation,
-                        exit_start,
-                        tovl.end,
-                        0,
-                        0,
-                        1080,
-                        1920,
-                    );
-                    format!("x='{}':y='{}':eval=frame", x_expr, y_expr)
-                } else {
-                    "0:0".to_string()
-                };
-
-                overlay_parts.push(format!(
-                    "{}{}overlay={}:enable='between(t,{:.3},{:.3})'{}",
-                    current_label, layer_ref, overlay_pos, tovl.start, tovl.end, next_label
-                ));
-            }
-
-            current_label = next_label;
-            overlay_idx += 1;
         }
 
         let overlay_chain = overlay_parts.join(";");
@@ -1607,32 +2192,60 @@ async fn compose_video(
 
     let output_path = base_dir.join(&output_filename);
 
-    if let Some(bgm) = bgm_path.filter(|s| !s.is_empty()) {
-        let status = hidden_cmd("ffmpeg")
-            .args(["-y", "-i"])
-            .arg(&combined)
-            .args(["-i"])
-            .arg(&bgm)
-            .args([
-                "-filter_complex",
-                "[1:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-                "-map",
-                "0:v",
-                "-map",
-                "[aout]",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-            ])
-            .arg(&output_path)
-            .status()
-            .map_err(|e| format!("ffmpeg bgm mix: {}", e))?;
+    let bgm_opt = bgm_path.filter(|s| !s.is_empty());
+    let user_audio_opt = user_audio_track_path.filter(|s| !s.is_empty());
 
+    if bgm_opt.is_some() || user_audio_opt.is_some() {
+        // 最大 3 入力: main (combined) / BGM / user audio
+        let mut cmd = hidden_cmd("ffmpeg");
+        cmd.args(["-y", "-i"]).arg(&combined);
+        let mut input_idx = 1usize;
+        let mut bgm_idx: Option<usize> = None;
+        let mut user_idx: Option<usize> = None;
+        if let Some(b) = &bgm_opt {
+            cmd.args(["-i"]).arg(b);
+            bgm_idx = Some(input_idx);
+            input_idx += 1;
+        }
+        if let Some(u) = &user_audio_opt {
+            cmd.args(["-i"]).arg(u);
+            user_idx = Some(input_idx);
+            // input_idx += 1; // 未使用なのでコメントアウト
+        }
+
+        // フィルター: BGM は volume=0.15, aloop。user_audio はそのまま（build 時に調整済）
+        let mut chains: Vec<String> = Vec::new();
+        let mut mix_inputs: Vec<String> = vec!["[0:a]".to_string()];
+        if let Some(idx) = bgm_idx {
+            chains.push(format!(
+                "[{}:a]volume=0.15,aloop=loop=-1:size=2e+09[bgm]",
+                idx
+            ));
+            mix_inputs.push("[bgm]".to_string());
+        }
+        if let Some(idx) = user_idx {
+            chains.push(format!("[{}:a]anull[usr]", idx));
+            mix_inputs.push("[usr]".to_string());
+        }
+        chains.push(format!(
+            "{}amix=inputs={}:duration=first:dropout_transition=2:normalize=0[aout]",
+            mix_inputs.join(""),
+            mix_inputs.len()
+        ));
+        let filter = chains.join(";");
+
+        cmd.args(["-filter_complex", &filter]);
+        cmd.args([
+            "-map", "0:v", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a",
+            "192k",
+        ]);
+        cmd.arg(&output_path);
+
+        let status = cmd
+            .status()
+            .map_err(|e| format!("ffmpeg final audio mix: {}", e))?;
         if !status.success() {
-            return Err("ffmpeg bgm mix failed".into());
+            return Err("ffmpeg final audio mix failed".into());
         }
     } else {
         std::fs::rename(&combined, &output_path).map_err(|e| e.to_string())?;
@@ -1677,16 +2290,20 @@ pub fn run() {
             get_media_dir,
             download_image,
             download_bgm,
+            build_user_audio_track,
             cloudflare_generate_image,
             save_overlay_png,
             save_audio_base64,
             generate_tts,
             edge_tts,
             voicevox_tts,
+            openai_tts,
+            softalk_tts,
             get_audio_duration,
             compose_video,
             list_templates,
             save_template,
+            save_template_narration,
             delete_template,
             generate_silent_wav,
             mix_audio_clips,
