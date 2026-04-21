@@ -123,6 +123,10 @@ export interface Layer {
   text?: string;
   fontSize?: number;
   fontColor?: string;
+  /** テキストの縁取り（各文字の周囲を stroke）太さ px（0 or 未指定 = 縁取りなし） */
+  textOutlineWidth?: number;
+  /** テキストの縁取り色 */
+  textOutlineColor?: string;
   motion?: Motion;
   /** タイムライン上の開始秒（動画全体の何秒目に表示開始） */
   startSec: number;

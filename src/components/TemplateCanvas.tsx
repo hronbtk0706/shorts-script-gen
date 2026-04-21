@@ -594,6 +594,20 @@ export function renderAnimatedText(
   // 装飾：ネオン / アウトライン / 影ドロップ は text-shadow / -webkit-text-stroke で表現
   const decoration = layer.textDecoration ?? "none";
   const textStyleExtra: React.CSSProperties = {};
+
+  // ユーザー設定の文字縁取り（textDecoration が none 系のときに適用。シャドウ/アウトライン装飾時はそちらを優先）
+  const userOutlineWidth = layer.textOutlineWidth ?? 0;
+  const userOutlineColor = layer.textOutlineColor ?? "#000000";
+  if (
+    userOutlineWidth > 0 &&
+    decoration !== "outline-reveal" &&
+    decoration !== "neon"
+  ) {
+    const scaledStroke = userOutlineWidth * fontScale;
+    textStyleExtra.WebkitTextStroke = `${scaledStroke.toFixed(2)}px ${userOutlineColor}`;
+    textStyleExtra.paintOrder = "stroke fill";
+  }
+
   if (decoration === "neon") {
     const color = layer.fontColor ?? "#ffe600";
     textStyleExtra.textShadow = `0 0 4px ${color}, 0 0 8px ${color}, 0 0 16px ${color}`;

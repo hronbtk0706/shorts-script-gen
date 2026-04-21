@@ -330,16 +330,33 @@ function drawText(
   h: number,
 ): void {
   const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
-  ctx.fillStyle = layer.fontColor ?? "#fff";
   ctx.font = `bold ${fontSize}px "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+
+  // 縁取り（stroke）を先に描いてから塗り（fill）を重ねる
+  const outlineWidth = layer.textOutlineWidth ?? 0;
+  const outlineColor = layer.textOutlineColor ?? "#000000";
+  const scaledOutline = outlineWidth * (FINAL_W / 360);
 
   // 改行を考慮
   const lines = (layer.text ?? "").split(/\n/);
   const lineHeight = fontSize * 1.2;
   const totalHeight = lines.length * lineHeight;
   const startY = h / 2 - totalHeight / 2 + lineHeight / 2;
+
+  if (scaledOutline > 0) {
+    // 縁取りはライン重ね描きで太さを出す（strokeText は内側も描画される）
+    ctx.strokeStyle = outlineColor;
+    ctx.lineWidth = scaledOutline * 2;
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    for (let i = 0; i < lines.length; i++) {
+      ctx.strokeText(lines[i], w / 2, startY + i * lineHeight);
+    }
+  }
+
+  ctx.fillStyle = layer.fontColor ?? "#fff";
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], w / 2, startY + i * lineHeight);
   }

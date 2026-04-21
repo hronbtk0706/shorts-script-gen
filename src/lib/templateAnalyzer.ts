@@ -1,20 +1,211 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import type { VideoTemplate, TemplateSegment, Layer } from "../types";
+import type {
+  VideoTemplate,
+  TemplateSegment,
+  Layer,
+  LayerType,
+  LayerShape,
+  Motion,
+  ColorGrade,
+  TransitionType,
+  EntryAnimation,
+  ExitAnimation,
+  AmbientAnimation,
+  CharAnimation,
+  KineticAnimation,
+  TextDecoration,
+} from "../types";
 import { withRetry } from "./retry";
 import { makeTemplateId } from "./templateStore";
 import { genLayerId, genSegmentId } from "./layerUtils";
 
-interface AnalyzedCut {
-  index: number;
+// 許可 enum（types.ts と同期。違反値は既定値にフォールバック）
+const LAYER_TYPES: LayerType[] = ["image", "video", "color", "shape", "comment"];
+const LAYER_SHAPES: LayerShape[] = ["rect", "rounded", "circle"];
+const MOTIONS: Motion[] = [
+  "static",
+  "zoom_in",
+  "zoom_out",
+  "pan_left",
+  "pan_right",
+  "pan_up",
+  "pan_down",
+  "ken_burns",
+  "push_in",
+  "zoom_punch",
+  "shake",
+];
+const COLOR_GRADES: ColorGrade[] = [
+  "none",
+  "sepia",
+  "bw",
+  "vintage",
+  "vivid",
+  "cool",
+  "warm",
+  "vignette",
+  "neon",
+  "high_contrast",
+  "soft_glow",
+  "film_grain",
+];
+const TRANSITIONS: TransitionType[] = [
+  "cut",
+  "fade",
+  "fadeblack",
+  "fadewhite",
+  "fadegrays",
+  "flash",
+  "slideleft",
+  "slideright",
+  "slideup",
+  "slidedown",
+  "dissolve",
+  "zoomin",
+  "circleopen",
+  "circleclose",
+  "wipeleft",
+  "wiperight",
+  "wipeup",
+  "wipedown",
+  "pixelize",
+  "smoothleft",
+  "radial",
+  "hblur",
+  "squeezev",
+  "squeezeh",
+  "coverleft",
+  "coverright",
+  "coverup",
+  "coverdown",
+  "revealleft",
+  "revealright",
+  "revealup",
+  "revealdown",
+  "diagtl",
+  "diagtr",
+  "diagbl",
+  "diagbr",
+];
+const ENTRY_ANIMS: EntryAnimation[] = [
+  "none",
+  "fade",
+  "slide-left",
+  "slide-right",
+  "slide-up",
+  "slide-down",
+  "zoom-in",
+  "pop",
+  "blur-in",
+  "elastic-pop",
+  "flip-in",
+  "stretch-in",
+  "roll-in",
+];
+const EXIT_ANIMS: ExitAnimation[] = [
+  "none",
+  "fade",
+  "slide-left",
+  "slide-right",
+  "slide-up",
+  "slide-down",
+  "zoom-out",
+  "blur-out",
+  "flip-out",
+  "stretch-out",
+  "roll-out",
+];
+const AMBIENTS: AmbientAnimation[] = [
+  "none",
+  "pulse",
+  "shake",
+  "wiggle",
+  "bounce",
+  "blink",
+  "glow-pulse",
+  "rainbow",
+  "float",
+];
+const CHAR_ANIMS: CharAnimation[] = [
+  "none",
+  "typewriter",
+  "stagger-fade",
+  "wave",
+  "color-shift",
+];
+const KINETICS: KineticAnimation[] = [
+  "none",
+  "word-pop",
+  "keyword-color",
+  "slide-stack",
+  "zoom-talk",
+];
+const TEXT_DECOS: TextDecoration[] = [
+  "none",
+  "highlight-bar",
+  "underline-sweep",
+  "neon",
+  "outline-reveal",
+  "shadow-drop",
+];
+
+function pick<T extends string>(value: unknown, allowed: T[], fallback: T): T {
+  return typeof value === "string" && (allowed as string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+function pickNum(
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const n = typeof value === "number" ? value : Number(value);
+  if (!isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+interface AnalyzedSegment {
+  type: "hook" | "body" | "cta";
   startSec: number;
   endSec: number;
-  type: "hook" | "body" | "cta";
-  shotType?: string;
-  motion?: string;
   color?: string;
-  textOverlay?: { position?: string; style?: string; hasText?: boolean } | null;
   transition?: string;
   transitionDuration?: number;
+  description?: string;
+}
+
+interface AnalyzedLayer {
+  type: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  opacity?: number;
+  zIndex?: number;
+  shape?: string;
+  borderRadius?: number;
+  borderWidth?: number;
+  borderColor?: string;
+  text?: string;
+  fontSize?: number;
+  fontColor?: string;
+  textOutlineWidth?: number;
+  textOutlineColor?: string;
+  fillColor?: string;
+  startSec: number;
+  endSec: number;
+  motion?: string;
+  entryAnimation?: string;
+  entryDuration?: number;
+  exitAnimation?: string;
+  exitDuration?: number;
+  ambientAnimation?: string;
+  charAnimation?: string;
+  kineticAnimation?: string;
+  textDecoration?: string;
   description?: string;
 }
 
@@ -54,6 +245,127 @@ export function extractVideoId(url: string): string | null {
   return null;
 }
 
+const layerSchema = {
+  type: Type.OBJECT,
+  properties: {
+    type: { type: Type.STRING, enum: LAYER_TYPES as unknown as string[] },
+    x: { type: Type.NUMBER },
+    y: { type: Type.NUMBER },
+    width: { type: Type.NUMBER },
+    height: { type: Type.NUMBER },
+    rotation: { type: Type.NUMBER },
+    opacity: { type: Type.NUMBER },
+    zIndex: { type: Type.INTEGER },
+    shape: { type: Type.STRING, enum: LAYER_SHAPES as unknown as string[] },
+    borderRadius: { type: Type.NUMBER },
+    borderWidth: { type: Type.NUMBER },
+    borderColor: { type: Type.STRING },
+    text: { type: Type.STRING },
+    fontSize: { type: Type.NUMBER },
+    fontColor: { type: Type.STRING },
+    textOutlineWidth: { type: Type.NUMBER },
+    textOutlineColor: { type: Type.STRING },
+    fillColor: { type: Type.STRING },
+    startSec: { type: Type.NUMBER },
+    endSec: { type: Type.NUMBER },
+    motion: { type: Type.STRING, enum: MOTIONS as unknown as string[] },
+    entryAnimation: {
+      type: Type.STRING,
+      enum: ENTRY_ANIMS as unknown as string[],
+    },
+    entryDuration: { type: Type.NUMBER },
+    exitAnimation: {
+      type: Type.STRING,
+      enum: EXIT_ANIMS as unknown as string[],
+    },
+    exitDuration: { type: Type.NUMBER },
+    ambientAnimation: {
+      type: Type.STRING,
+      enum: AMBIENTS as unknown as string[],
+    },
+    charAnimation: {
+      type: Type.STRING,
+      enum: CHAR_ANIMS as unknown as string[],
+    },
+    kineticAnimation: {
+      type: Type.STRING,
+      enum: KINETICS as unknown as string[],
+    },
+    textDecoration: {
+      type: Type.STRING,
+      enum: TEXT_DECOS as unknown as string[],
+    },
+    description: { type: Type.STRING },
+  },
+  required: [
+    "type",
+    "x",
+    "y",
+    "width",
+    "height",
+    "startSec",
+    "endSec",
+  ],
+  propertyOrdering: [
+    "type",
+    "x",
+    "y",
+    "width",
+    "height",
+    "rotation",
+    "opacity",
+    "zIndex",
+    "shape",
+    "borderRadius",
+    "borderWidth",
+    "borderColor",
+    "text",
+    "fontSize",
+    "fontColor",
+    "textOutlineWidth",
+    "textOutlineColor",
+    "fillColor",
+    "startSec",
+    "endSec",
+    "motion",
+    "entryAnimation",
+    "entryDuration",
+    "exitAnimation",
+    "exitDuration",
+    "ambientAnimation",
+    "charAnimation",
+    "kineticAnimation",
+    "textDecoration",
+    "description",
+  ],
+};
+
+const segmentSchema = {
+  type: Type.OBJECT,
+  properties: {
+    type: { type: Type.STRING, enum: ["hook", "body", "cta"] },
+    startSec: { type: Type.NUMBER },
+    endSec: { type: Type.NUMBER },
+    color: { type: Type.STRING, enum: COLOR_GRADES as unknown as string[] },
+    transition: {
+      type: Type.STRING,
+      enum: TRANSITIONS as unknown as string[],
+    },
+    transitionDuration: { type: Type.NUMBER },
+    description: { type: Type.STRING },
+  },
+  required: ["type", "startSec", "endSec"],
+  propertyOrdering: [
+    "type",
+    "startSec",
+    "endSec",
+    "color",
+    "transition",
+    "transitionDuration",
+    "description",
+  ],
+};
+
 const templateSchema = {
   type: Type.OBJECT,
   properties: {
@@ -64,60 +376,8 @@ const templateSchema = {
     overallPacing: { type: Type.STRING },
     narrationStyle: { type: Type.STRING },
     suggestedName: { type: Type.STRING },
-    cuts: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          index: { type: Type.INTEGER },
-          startSec: { type: Type.NUMBER },
-          endSec: { type: Type.NUMBER },
-          type: { type: Type.STRING, enum: ["hook", "body", "cta"] },
-          shotType: { type: Type.STRING },
-          motion: { type: Type.STRING },
-          color: { type: Type.STRING },
-          textOverlay: {
-            type: Type.OBJECT,
-            properties: {
-              position: { type: Type.STRING },
-              style: { type: Type.STRING },
-              hasText: { type: Type.BOOLEAN },
-            },
-            required: ["position", "style", "hasText"],
-            propertyOrdering: ["position", "style", "hasText"],
-          },
-          transition: { type: Type.STRING },
-          transitionDuration: { type: Type.NUMBER },
-          description: { type: Type.STRING },
-        },
-        required: [
-          "index",
-          "startSec",
-          "endSec",
-          "type",
-          "shotType",
-          "motion",
-          "color",
-          "textOverlay",
-          "transition",
-          "transitionDuration",
-          "description",
-        ],
-        propertyOrdering: [
-          "index",
-          "startSec",
-          "endSec",
-          "type",
-          "shotType",
-          "motion",
-          "color",
-          "textOverlay",
-          "transition",
-          "transitionDuration",
-          "description",
-        ],
-      },
-    },
+    segments: { type: Type.ARRAY, items: segmentSchema },
+    layers: { type: Type.ARRAY, items: layerSchema },
   },
   required: [
     "sourceTitle",
@@ -127,7 +387,8 @@ const templateSchema = {
     "overallPacing",
     "narrationStyle",
     "suggestedName",
-    "cuts",
+    "segments",
+    "layers",
   ],
   propertyOrdering: [
     "sourceTitle",
@@ -137,49 +398,237 @@ const templateSchema = {
     "overallPacing",
     "narrationStyle",
     "suggestedName",
-    "cuts",
+    "segments",
+    "layers",
   ],
 };
 
 function buildAnalysisPrompt(): string {
   return [
-    "この動画（ショート動画）の構成・カット割り・編集パターンを解析し、**再利用可能な台本テンプレート**として JSON で出力してください。",
+    "この YouTube ショート動画の**構成・レイヤー配置・演出パターン**を解析し、**再利用可能な台本テンプレート**として JSON で出力してください。",
     "",
     "# 目的",
-    "この動画と同じ「型」で、別の内容の台本を生成するためのテンプレートを作ります。",
-    "**内容（セリフやトピック）ではなく、構成・尺配分・カット割り・演出パターン**を抽出してください。",
+    "この動画と同じ「型」で、別の内容（コメントや画像）を差し替えて量産できるテンプレートを作ります。",
+    "**内容ではなく、構成・配置・演出の骨格**を抽出してください。",
     "",
-    "# 抽出する項目",
-    "- sourceTitle: 動画のタイトル",
-    "- sourceChannel: チャンネル名",
-    "- totalDuration: 動画全体の秒数（小数可）",
-    "- themeVibe: 動画全体の雰囲気（例: 『エモーショナル・ノスタルジック』『テンポ速いポップ』『シリアス・重い』など）",
-    "- overallPacing: ペース感の文章説明（例: 『最初は速いカットで引き込み、中盤に1カット長めの感情ホールド、ラストは再び速い切替』）",
-    "- narrationStyle: ナレーションの口調（例: 『口語・短文・語尾やわらかめ』『落ち着いた男性ナレ』『キャラクター声』『ナレーション無し・テロップのみ』）",
-    "- suggestedName: このテンプレートの名前（20字以内、別トピックでも再利用できる汎用名）",
+    "# トップレベル項目",
+    "- sourceTitle / sourceChannel: 動画タイトル・チャンネル名",
+    "- totalDuration: 動画全体の秒数",
+    "- themeVibe: 全体の雰囲気（例: 『反応集・テンポ速め』『エモーショナル』『シリアス重め』）",
+    "- overallPacing: ペース感の文章説明",
+    "- narrationStyle: ナレーションの口調（例: 『AI読み上げ風・短文テロップ多い』『ナレ無しテロップのみ』）",
+    "- suggestedName: 20字以内の汎用名（別トピックで再利用可能な名前）",
     "",
-    "# cuts 配列（各カットの構造）",
-    "動画をシーン切替（カット）ごとに区切り、以下を記録:",
-    "- index: カット番号（0始まり）",
-    "- startSec, endSec: カットの開始・終了秒",
-    "- type: 'hook'（最初の3秒）/ 'body'（本編）/ 'cta'（最後の CTA 部分）",
-    "- shotType: ショット種類（例: 『クローズアップ』『ミディアム』『ワイド』『テキストオンリー画面』『人物の表情』）",
-    "- motion: カメラ/画像モーション（例: 'zoom_in', 'zoom_out', 'pan_left', 'pan_right', 'static', 'ken_burns', 'shake', 'zoom_punch'）",
-    "- color: 色調（例: 'none', 'vivid', 'sepia', 'bw', 'warm', 'cool', 'vintage', 'vignette', 'soft_glow'）",
-    "- textOverlay: テロップ情報",
-    "  - position: 'top', 'center', 'bottom', 'none'",
-    "  - style: テロップのスタイル説明（例: 『大きい黄色・黒縁』『白文字・下部中央』）",
-    "  - hasText: そのカットにテロップがあるか（true/false）",
-    "- transition: 次のカットへの切替方法（'cut', 'fade', 'flash', 'dissolve', 'slideleft', 'zoomin' など）",
-    "- transitionDuration: トランジションの秒数（cut なら 0、通常 0.3〜0.8）",
-    "- description: そのカットの視覚的説明（1 文、内容ではなく『何が映っているか』）",
+    "# segments（hook / body / cta の構造）",
+    "動画を 3 区分（hook=最初の数秒の引き / body=本編 / cta=最後の呼びかけ）に分け、body は複数分けて OK。",
+    "各セグメントに:",
+    "- type: 'hook' | 'body' | 'cta'",
+    "- startSec / endSec",
+    "- color: カラーグレード（none/sepia/bw/vintage/vivid/cool/warm/vignette/neon/high_contrast/soft_glow/film_grain）",
+    "- transition: 次のセグメントへのトランジション（cut/fade/flash/slideleft/zoomin/dissolve ... など Rust 対応済み30+種）",
+    "- transitionDuration: トランジション秒（cut なら 0、通常 0.3〜0.8）",
+    "- description: 1 文で何が映ってるか（内容ではなく構造）",
     "",
-    "# 重要な注意",
-    "- **具体的なトピック・セリフは抽出しない**（この動画のナレーションを書き起こす必要はない）",
-    "- カット数は厳密に数える（映像が変わった瞬間＝カット）",
-    "- 解析不明な項目は合理的な既定値を使う（例: color='none', transition='cut'）",
-    "- テロップが一切無い動画なら全カットの textOverlay.hasText を false に",
+    "# layers（動画全体の global timeline に配置するレイヤー）",
+    "動画内で視覚的に区別できる要素を全てレイヤーとして抽出。背景画像、テロップ、コメント枠、アイコン、帯、図形などを分けて。",
+    "**位置とサイズは 0-100 の % 座標（左上基準、1080×1920 縦動画前提）**。",
+    "各レイヤーに:",
+    "- type: 'image' | 'video' | 'color' | 'shape' | 'comment'",
+    "  - 背景映像や写真 → 'image'",
+    "  - 埋め込み動画 → 'video'",
+    "  - 単色オーバーレイ/帯 → 'color'",
+    "  - 装飾図形（角丸バブル・丸アイコン背景） → 'shape'",
+    "  - テロップ・字幕・コメント風吹き出しなど文字系 → 'comment'",
+    "- x, y, width, height: 0-100 % （画面比率に対する位置/サイズ。おおよそで可）",
+    "- rotation: 度（水平 = 0）",
+    "- opacity: 0-1",
+    "- zIndex: 下から順に 0, 1, 2...（重なり順）",
+    "- shape: 'rect' | 'rounded' | 'circle'（角丸なら rounded）",
+    "- borderRadius: rounded 時の角丸 px（だいたい 8〜24）",
+    "- borderWidth, borderColor: 枠線（なければ 0）",
+    "- text: comment 型の文字列（テロップ本文。固有の言い回しは『内容』扱いなので '{{comment}}' 等の仮値でも可）",
+    "- fontSize: px（1080×1920 基準の実寸。大きな見出しテロップなら 72〜120、本文コメントなら 36〜60 あたり）",
+    "- fontColor: '#RRGGBB'",
+    "- textOutlineWidth: 文字の縁取り太さ px（縁取りが見えるなら 2〜8、無ければ 0 or 省略）",
+    "- textOutlineColor: 縁取り色 '#RRGGBB'（黒縁取りが一般的。白縁取りや赤縁取りもよく見る）",
+    "- fillColor: 塗り色（color/shape は 'rgba(...)' 可、comment の背景帯も可。無色なら未指定）",
+    "- startSec / endSec: **動画全体の絶対秒**（セグメント相対ではない）",
+    "- motion: 画像/動画のカメラモーション（static/zoom_in/zoom_out/pan_*/ken_burns/push_in/zoom_punch/shake）",
+    "- entryAnimation: 入場（none/fade/slide-left/slide-right/slide-up/slide-down/zoom-in/pop/blur-in/elastic-pop/flip-in/stretch-in/roll-in）",
+    "- entryDuration: 入場秒（通常 0.2〜0.5）",
+    "- exitAnimation: 退場（none/fade/slide-left/slide-right/slide-up/slide-down/zoom-out/blur-out/flip-out/stretch-out/roll-out）",
+    "- exitDuration: 退場秒",
+    "- ambientAnimation: 表示中の常時アニメ（none/pulse/shake/wiggle/bounce/blink/glow-pulse/rainbow/float）",
+    "- charAnimation: 文字単位アニメ・comment 専用（none/typewriter/stagger-fade/wave/color-shift）",
+    "- kineticAnimation: 単語単位キネティック・comment 専用（none/word-pop/keyword-color/slide-stack/zoom-talk）",
+    "- textDecoration: テキスト装飾・comment 専用（none/highlight-bar/underline-sweep/neon/outline-reveal/shadow-drop）",
+    "- description: そのレイヤーの 1 文説明",
+    "",
+    "# ルール",
+    "- **必ず上記 enum のいずれかの値で返す**。該当が無ければ 'none' / 'static' / 'cut' / 'rect' 等の既定値を使う",
+    "- 抽出不能な項目は省略（required のみ返せばOK）",
+    "- **同じコメント枠が複数表示される反応集動画の場合、複数の 'comment' レイヤーを別個に返す**（位置・時刻が違う別レイヤーとして）",
+    "- 背景画像が常時表示されるなら 1 レイヤー（startSec=0, endSec=totalDuration）",
+    "- 位置・サイズは動画をよく観察して近似値で OK。ピクセル完璧である必要はない",
+    "- ショート動画（9:16）前提で x/width は 0-100、y/height は 0-100 として解釈",
   ].join("\n");
+}
+
+function toLayer(al: AnalyzedLayer, totalDuration: number): Layer {
+  const type = pick<LayerType>(al.type, LAYER_TYPES, "image");
+  const x = pickNum(al.x, 0, 100, 0);
+  const y = pickNum(al.y, 0, 100, 0);
+  const width = pickNum(al.width, 0.1, 100, 100);
+  const height = pickNum(al.height, 0.1, 100, 100);
+  const startSec = pickNum(al.startSec, 0, totalDuration, 0);
+  const endSec = pickNum(
+    al.endSec,
+    Math.min(startSec + 0.1, totalDuration),
+    totalDuration,
+    totalDuration,
+  );
+  const shape = pick<LayerShape>(al.shape, LAYER_SHAPES, "rect");
+
+  const base: Layer = {
+    id: genLayerId(),
+    type,
+    x,
+    y,
+    width,
+    height,
+    zIndex: typeof al.zIndex === "number" ? al.zIndex : 0,
+    rotation: pickNum(al.rotation, -360, 360, 0),
+    opacity: pickNum(al.opacity, 0, 1, 1),
+    shape,
+    startSec,
+    endSec,
+  };
+
+  if (shape === "rounded") {
+    base.borderRadius = pickNum(al.borderRadius, 0, 200, 12);
+  }
+  if (al.borderWidth && al.borderWidth > 0) {
+    base.border = {
+      width: pickNum(al.borderWidth, 0, 50, 2),
+      color:
+        typeof al.borderColor === "string" && al.borderColor
+          ? al.borderColor
+          : "#ffffff",
+    };
+  }
+  if (al.motion) {
+    base.motion = pick<Motion>(al.motion, MOTIONS, "static");
+  }
+
+  // アニメ群
+  if (al.entryAnimation) {
+    base.entryAnimation = pick<EntryAnimation>(
+      al.entryAnimation,
+      ENTRY_ANIMS,
+      "none",
+    );
+  }
+  if (typeof al.entryDuration === "number") {
+    base.entryDuration = pickNum(al.entryDuration, 0, 5, 0.3);
+  }
+  if (al.exitAnimation) {
+    base.exitAnimation = pick<ExitAnimation>(
+      al.exitAnimation,
+      EXIT_ANIMS,
+      "none",
+    );
+  }
+  if (typeof al.exitDuration === "number") {
+    base.exitDuration = pickNum(al.exitDuration, 0, 5, 0.3);
+  }
+  if (al.ambientAnimation) {
+    base.ambientAnimation = pick<AmbientAnimation>(
+      al.ambientAnimation,
+      AMBIENTS,
+      "none",
+    );
+  }
+
+  // 文字系（comment のときのみ意味を持たせる）
+  if (type === "comment") {
+    base.text = typeof al.text === "string" ? al.text : "";
+    if (typeof al.fontSize === "number") {
+      base.fontSize = pickNum(al.fontSize, 8, 500, 48);
+    }
+    if (typeof al.fontColor === "string" && al.fontColor) {
+      base.fontColor = al.fontColor;
+    } else {
+      base.fontColor = "#FFFFFF";
+    }
+    // 文字の縁取り
+    if (typeof al.textOutlineWidth === "number" && al.textOutlineWidth > 0) {
+      base.textOutlineWidth = pickNum(al.textOutlineWidth, 0, 30, 3);
+      base.textOutlineColor =
+        typeof al.textOutlineColor === "string" && al.textOutlineColor
+          ? al.textOutlineColor
+          : "#000000";
+    }
+    if (al.charAnimation) {
+      base.charAnimation = pick<CharAnimation>(
+        al.charAnimation,
+        CHAR_ANIMS,
+        "none",
+      );
+    }
+    if (al.kineticAnimation) {
+      base.kineticAnimation = pick<KineticAnimation>(
+        al.kineticAnimation,
+        KINETICS,
+        "none",
+      );
+    }
+    if (al.textDecoration) {
+      base.textDecoration = pick<TextDecoration>(
+        al.textDecoration,
+        TEXT_DECOS,
+        "none",
+      );
+    }
+  }
+
+  // 塗り色（color/shape/comment の背景）
+  if (
+    (type === "color" || type === "shape" || type === "comment") &&
+    typeof al.fillColor === "string" &&
+    al.fillColor
+  ) {
+    base.fillColor = al.fillColor;
+  } else if (type === "color" || type === "shape") {
+    base.fillColor = "#333333";
+  }
+
+  // image/video は source="auto"（ユーザーが後で差し替え）
+  if (type === "image") {
+    base.source = "auto";
+  } else if (type === "video") {
+    base.source = "user";
+  }
+
+  return base;
+}
+
+function toSegment(
+  seg: AnalyzedSegment,
+  bodyIdx: { value: number },
+): TemplateSegment {
+  const type = (["hook", "body", "cta"] as const).includes(seg.type)
+    ? seg.type
+    : "body";
+  return {
+    id: genSegmentId(),
+    type,
+    bodyIndex: type === "body" ? bodyIdx.value++ : undefined,
+    startSec: pickNum(seg.startSec, 0, 1e6, 0),
+    endSec: pickNum(seg.endSec, 0, 1e6, 0),
+    color: pick<ColorGrade>(seg.color, COLOR_GRADES, "none"),
+    transitionTo: pick<TransitionType>(seg.transition, TRANSITIONS, "cut"),
+    transitionDuration: pickNum(seg.transitionDuration, 0, 5, 0),
+  };
 }
 
 export async function analyzeTemplate(
@@ -232,7 +681,7 @@ export async function analyzeTemplate(
         config: {
           responseMimeType: "application/json",
           responseSchema: templateSchema,
-          temperature: 0.3,
+          temperature: 0.2,
         },
       }),
     { label: "templateAnalyzer", retries: 1 },
@@ -252,7 +701,8 @@ export async function analyzeTemplate(
     overallPacing: string;
     narrationStyle: string;
     suggestedName: string;
-    cuts: AnalyzedCut[];
+    segments: AnalyzedSegment[];
+    layers: AnalyzedLayer[];
   };
   try {
     parsed = JSON.parse(text);
@@ -262,26 +712,28 @@ export async function analyzeTemplate(
     );
   }
 
-  if (!Array.isArray(parsed.cuts) || parsed.cuts.length === 0) {
-    throw new TemplateAnalysisError("cuts が空または不正です");
-  }
+  const totalDuration = pickNum(parsed.totalDuration, 1, 600, 30);
 
-  // 解析された cuts を v2 の segments + layers に変換
-  const segments: TemplateSegment[] = [];
-  const layers: Layer[] = [];
-  let bodyIdx = 0;
-  parsed.cuts.forEach((c) => {
-    segments.push({
-      id: genSegmentId(),
-      type: c.type,
-      bodyIndex: c.type === "body" ? bodyIdx++ : undefined,
-      startSec: c.startSec,
-      endSec: c.endSec,
-      color: c.color as TemplateSegment["color"],
-      transitionTo: c.transition as TemplateSegment["transitionTo"],
-      transitionDuration: c.transitionDuration,
+  if (!Array.isArray(parsed.segments) || parsed.segments.length === 0) {
+    throw new TemplateAnalysisError("segments が空または不正です");
+  }
+  const bodyIdx = { value: 0 };
+  const segments: TemplateSegment[] = parsed.segments
+    .sort((a, b) => a.startSec - b.startSec)
+    .map((s) => toSegment(s, bodyIdx));
+
+  // layers は無くても OK（その場合は全画面背景を1枚デフォルト追加）
+  let layers: Layer[] = [];
+  if (Array.isArray(parsed.layers) && parsed.layers.length > 0) {
+    // zIndex が全部同じ or 未指定でも衝突しにくいよう、受信順で再割り当て
+    layers = parsed.layers.map((l, i) => {
+      const converted = toLayer(l, totalDuration);
+      if (converted.zIndex === 0 || converted.zIndex == null) {
+        converted.zIndex = i;
+      }
+      return converted;
     });
-    // カット期間中に全画面で表示される auto 画像レイヤーをデフォルトで作成
+  } else {
     layers.push({
       id: genLayerId(),
       type: "image",
@@ -290,12 +742,11 @@ export async function analyzeTemplate(
       y: 0,
       width: 100,
       height: 100,
-      zIndex: c.index,
-      startSec: c.startSec,
-      endSec: c.endSec,
-      motion: (c.motion as Layer["motion"]) ?? undefined,
+      zIndex: 0,
+      startSec: 0,
+      endSec: totalDuration,
     });
-  });
+  }
 
   const name = options.customName?.trim() || parsed.suggestedName || "untitled";
   const template: VideoTemplate = {
@@ -307,7 +758,7 @@ export async function analyzeTemplate(
     sourceTitle: parsed.sourceTitle,
     sourceChannel: parsed.sourceChannel,
     createdAt: new Date().toISOString(),
-    totalDuration: parsed.totalDuration,
+    totalDuration,
     layers,
     segments,
     overallPacing: parsed.overallPacing,

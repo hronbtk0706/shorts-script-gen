@@ -704,6 +704,49 @@ export function LayerPropertyPanel({
               className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
             />
           </div>
+
+          {/* 文字縁取り */}
+          <label className="flex items-center gap-1 text-[11px] pt-1">
+            <input
+              type="checkbox"
+              checked={(common("textOutlineWidth") ?? 0) > 0}
+              onChange={(e) =>
+                onChange({
+                  textOutlineWidth: e.target.checked
+                    ? common("textOutlineWidth") ?? 3
+                    : 0,
+                  textOutlineColor:
+                    common("textOutlineColor") ?? "#000000",
+                })
+              }
+              className="h-3 w-3"
+            />
+            文字に縁取りをつける
+          </label>
+          {(common("textOutlineWidth") ?? 0) > 0 && (
+            <div className="ml-4 space-y-1">
+              {numInput(
+                "縁 太さ",
+                common("textOutlineWidth") ??
+                  (multi ? undefined : primary.textOutlineWidth ?? 3),
+                (v) => onChange({ textOutlineWidth: Math.max(0, v) }),
+                1,
+                "px",
+              )}
+              <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
+                <label className="text-gray-600 dark:text-gray-400">縁の色</label>
+                <input
+                  type="color"
+                  value={common("textOutlineColor") ?? "#000000"}
+                  onChange={(e) =>
+                    onChange({ textOutlineColor: e.target.value })
+                  }
+                  className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
+                />
+              </div>
+            </div>
+          )}
+
           <label className="flex items-center gap-1 text-[11px] pt-1">
             <input
               type="checkbox"
