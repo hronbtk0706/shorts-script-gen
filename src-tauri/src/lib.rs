@@ -1,5 +1,6 @@
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use base64::{engine::general_purpose, Engine as _};
@@ -16,6 +17,111 @@ fn hidden_cmd<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
     cmd
+}
+
+/// 書き出し中の FFmpeg プロセスをキャンセル可能にするための共有状態。
+#[derive(Default)]
+pub struct ExportCancelState {
+    cancelled: AtomicBool,
+    current_child: Mutex<Option<Child>>,
+    session_id: Mutex<Option<String>>,
+}
+
+impl ExportCancelState {
+    fn begin(&self, session_id: String) {
+        self.cancelled.store(false, Ordering::SeqCst);
+        *self.session_id.lock().unwrap() = Some(session_id);
+    }
+    fn end(&self) {
+        *self.session_id.lock().unwrap() = None;
+        *self.current_child.lock().unwrap() = None;
+    }
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+    fn trigger_cancel(&self) -> Option<String> {
+        self.cancelled.store(true, Ordering::SeqCst);
+        let mut guard = self.current_child.lock().unwrap();
+        if let Some(c) = guard.as_mut() {
+            let _ = c.kill();
+        }
+        self.session_id.lock().unwrap().clone()
+    }
+}
+
+/// FFmpeg を呼ぶ共通ヘルパー。cancelled が立っていたら即 Err、
+/// spawn 後は child を state に登録して外部から kill 可能にする。
+fn run_ffmpeg_cancellable(
+    mut cmd: Command,
+    state: &ExportCancelState,
+) -> Result<std::process::Output, String> {
+    if state.is_cancelled() {
+        return Err("cancelled".into());
+    }
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+    let child = cmd.spawn().map_err(|e| format!("spawn: {}", e))?;
+    *state.current_child.lock().unwrap() = Some(child);
+
+    // try_wait ベースのポーリング（50ms）
+    loop {
+        if state.is_cancelled() {
+            // kill 済みのはずだが念のため
+            if let Some(c) = state.current_child.lock().unwrap().as_mut() {
+                let _ = c.kill();
+            }
+            let _ = state.current_child.lock().unwrap().take();
+            return Err("cancelled".into());
+        }
+        let exited: bool = {
+            let mut guard = state.current_child.lock().unwrap();
+            match guard.as_mut() {
+                Some(c) => match c.try_wait() {
+                    Ok(Some(_status)) => true,
+                    Ok(None) => false,
+                    Err(e) => return Err(format!("try_wait: {}", e)),
+                },
+                None => return Err("child removed unexpectedly".into()),
+            }
+        };
+        if exited {
+            let child = state
+                .current_child
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or("child already taken")?;
+            let output = child
+                .wait_with_output()
+                .map_err(|e| format!("wait_with_output: {}", e))?;
+            if state.is_cancelled() {
+                return Err("cancelled".into());
+            }
+            return Ok(output);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn clean_session_dir(app: &tauri::AppHandle, session_id: &str) -> Result<(), String> {
+    let dir = session_asset_dir(app, session_id)?;
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("remove session: {e}"))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn cancel_export(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ExportCancelState>,
+) -> Result<(), String> {
+    let sid = state.trigger_cancel();
+    if let Some(s) = sid {
+        // 書き出し中の中間ファイルをまとめて削除
+        let _ = clean_session_dir(&app, &s);
+    }
+    Ok(())
 }
 
 fn templates_dir() -> PathBuf {
@@ -547,6 +653,13 @@ pub struct VideoLayerInput {
     pub exit_animation: String,
     #[serde(default = "default_anim_duration")]
     pub exit_duration: f64,
+    /// ループ再生するか。default: true（素材が短い場合にループ）
+    #[serde(default = "default_video_loop")]
+    pub video_loop: bool,
+}
+
+fn default_video_loop() -> bool {
+    true
 }
 
 fn default_layer_end_sec() -> f64 {
@@ -1608,6 +1721,7 @@ async fn get_audio_duration(audio_path: String) -> Result<f64, String> {
 #[tauri::command]
 async fn compose_video(
     app: tauri::AppHandle,
+    state: tauri::State<'_, ExportCancelState>,
     session_id: String,
     scenes: Vec<SceneInput>,
     bgm_path: Option<String>,
@@ -1618,6 +1732,30 @@ async fn compose_video(
     if scenes.is_empty() {
         return Err("No scenes provided".into());
     }
+    // 書き出し処理中としてキャンセル状態を初期化（現行の session を登録）
+    state.begin(session_id.clone());
+    let result = compose_video_inner(
+        app.clone(),
+        &state,
+        session_id,
+        scenes,
+        bgm_path,
+        user_audio_track_path,
+        output_filename,
+    );
+    state.end();
+    result
+}
+
+fn compose_video_inner(
+    app: tauri::AppHandle,
+    state: &ExportCancelState,
+    session_id: String,
+    scenes: Vec<SceneInput>,
+    bgm_path: Option<String>,
+    user_audio_track_path: Option<String>,
+    output_filename: String,
+) -> Result<String, String> {
 
     let base_dir = output_base_dir(&app)?;
     let asset_dir = session_asset_dir(&app, &session_id)?;
@@ -2046,9 +2184,14 @@ async fn compose_video(
             cmd.args(["-loop", "1", "-t", &format!("{:.3}", scene.duration), "-i"])
                 .arg(&tovl.png_path);
         }
-        // 動画レイヤー（ループ再生、色空間まで保持するため他の入力は直後）
+        // 動画レイヤー（色空間まで保持するため他の入力は直後）
+        // video_loop=true なら無限ループ、false なら 1 回だけ再生
         for layer in &sorted_layers {
-            cmd.args(["-stream_loop", "-1", "-i"]).arg(&layer.path);
+            if layer.video_loop {
+                cmd.args(["-stream_loop", "-1", "-i"]).arg(&layer.path);
+            } else {
+                cmd.args(["-i"]).arg(&layer.path);
+            }
         }
         cmd.args(["-filter_complex", &filter])
             .args(["-map", "[v]", "-map", audio_map])
@@ -2063,8 +2206,7 @@ async fn compose_video(
             .args(["-t", &format!("{:.3}", scene.duration)])
             .arg(&scene_mp4);
 
-        let output = cmd
-            .output()
+        let output = run_ffmpeg_cancellable(cmd, state)
             .map_err(|e| format!("ffmpeg scene {}: {}", i, e))?;
 
         if !output.status.success() {
@@ -2170,9 +2312,9 @@ async fn compose_video(
         args.push("yuv420p".to_string());
         args.push(combined.to_string_lossy().into_owned());
 
-        let output = hidden_cmd("ffmpeg")
-            .args(&args)
-            .output()
+        let mut cmd = hidden_cmd("ffmpeg");
+        cmd.args(&args);
+        let output = run_ffmpeg_cancellable(cmd, state)
             .map_err(|e| format!("ffmpeg concat xfade: {}", e))?;
 
         if !output.status.success() {
@@ -2241,11 +2383,11 @@ async fn compose_video(
         ]);
         cmd.arg(&output_path);
 
-        let status = cmd
-            .status()
+        let output = run_ffmpeg_cancellable(cmd, state)
             .map_err(|e| format!("ffmpeg final audio mix: {}", e))?;
-        if !status.success() {
-            return Err("ffmpeg final audio mix failed".into());
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("ffmpeg final audio mix failed: {}", stderr));
         }
     } else {
         std::fs::rename(&combined, &output_path).map_err(|e| e.to_string())?;
@@ -2259,6 +2401,7 @@ async fn compose_video(
 pub fn run() {
     tauri::Builder::default()
         .manage(VoicevoxChild(Mutex::new(None)))
+        .manage(ExportCancelState::default())
         .setup(|app| {
             if !is_voicevox_running() {
                 if let Some(exe) = find_voicevox() {
@@ -2307,6 +2450,7 @@ pub fn run() {
             delete_template,
             generate_silent_wav,
             mix_audio_clips,
+            cancel_export,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

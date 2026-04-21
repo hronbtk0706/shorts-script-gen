@@ -7,6 +7,8 @@ import { TemplateTimeline } from "./TemplateTimeline";
 import { LayerPanel } from "./LayerPanel";
 import { LayerPropertyPanel } from "./LayerPropertyPanel";
 import { LayerPreview } from "./LayerPreview";
+import { ExportModal } from "./ExportModal";
+import { ImportCommentsModal } from "./ImportCommentsModal";
 import {
   genLayerId,
   newBlankTemplateData,
@@ -71,6 +73,8 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [importCommentsOpen, setImportCommentsOpen] = useState(false);
   const clipboardRef = useRef<Layer[]>([]);
   // このセッション中に保存が完了したテンプレの id（新規初回保存後もここに入る）
   const [committedId, setCommittedId] = useState<string | null>(
@@ -730,6 +734,27 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
       )}
       <button
         type="button"
+        onClick={() => setImportCommentsOpen(true)}
+        className="px-3 py-1 rounded bg-purple-600 hover:bg-purple-700 text-white text-xs relative"
+        title="YouTube のコメントを取得してテンプレに取り込む"
+      >
+        💬 コメント取得
+        {template.importedComments && template.importedComments.length > 0 && (
+          <span className="absolute -top-1 -right-1 bg-amber-400 text-[10px] text-gray-900 rounded-full px-1 min-w-[16px] h-4 flex items-center justify-center">
+            {template.importedComments.length}
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        onClick={() => setExportOpen(true)}
+        className="px-3 py-1 rounded bg-fuchsia-600 hover:bg-fuchsia-700 text-white text-xs"
+        title="このテンプレの内容そのままを MP4 として書き出す"
+      >
+        🎬 エクスポート
+      </button>
+      <button
+        type="button"
         onClick={handleSave}
         disabled={saving}
         className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:bg-gray-400"
@@ -825,6 +850,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
                 }}
                 onGenerateNarration={handleGenerateNarration}
                 narrationBusyLayerId={narrationBusy}
+                importedComments={template.importedComments}
               />
             </div>
             <div
@@ -906,6 +932,26 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           </div>
         </div>
       </div>
+
+      <ExportModal
+        open={exportOpen}
+        template={template}
+        onClose={() => setExportOpen(false)}
+      />
+
+      <ImportCommentsModal
+        open={importCommentsOpen}
+        existingComments={template.importedComments}
+        existingSource={template.importedCommentsSource}
+        onImport={(comments, source) => {
+          setTemplate((t) => ({
+            ...t,
+            importedComments: comments,
+            importedCommentsSource: source,
+          }));
+        }}
+        onClose={() => setImportCommentsOpen(false)}
+      />
     </div>
   );
 }

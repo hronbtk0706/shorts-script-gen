@@ -41,7 +41,7 @@
       "rotation": 0,
       "startSec": 0,
       "endSec": 15,
-      "source": "C:\\Users\\user1\\Downloads\\OIP.webp",
+      "source": "/Users/saismac03/Documents/生成動画/20260420_062330/scene_5.jpg",
       "entryAnimation": "slide-right",
       "border": {
         "width": 2,
@@ -115,7 +115,7 @@
       "endSec": 15,
       "borderRadius": 12,
       "fillColor": "rgba(0,0,0,0.6)",
-      "text": "コメント引用",
+      "text": "写真を描けって言われたレベルの作品",
       "fontSize": 48,
       "fontColor": "#FFFFFF",
       "entryAnimation": "pop",
@@ -156,5 +156,74 @@
       "fillColor": "rgba(0,0,0,0.6)"
     }
   ],
-  "segments": []
+  "segments": [],
+  "importedComments": [
+    {
+      "id": "UgxCliySdDg6UvGmuGd4AaABAg",
+      "text": "写真を描けって言われたレベルの作品",
+      "author": "@SPINATIOGRAUb",
+      "likeCount": 907,
+      "isReply": false,
+      "publishedAt": "2026-04-20T08:00:34Z"
+    },
+    {
+      "id": "UgyJcLgrg-HFh9tcwBh4AaABAg.AVocFVbofcfAVoef_YkAhH",
+      "text": "今回はありがとうございました🙇",
+      "author": "@ザワつくおもしろ図鑑-t9y",
+      "likeCount": 155,
+      "isReply": true,
+      "parentId": "UgyJcLgrg-HFh9tcwBh4AaABAg",
+      "publishedAt": "2026-04-20T08:05:45Z"
+    },
+    {
+      "id": "UgyJcLgrg-HFh9tcwBh4AaABAg.AVocFVbofcfAVodPX6WKLB",
+      "text": "めっちゃ上手い！！たまに見ます！！",
+      "author": "@あいうえおかきくけこさしすせそたちつああ",
+      "likeCount": 9,
+      "isReply": true,
+      "parentId": "UgyJcLgrg-HFh9tcwBh4AaABAg",
+      "publishedAt": "2026-04-20T07:54:41Z"
+    },
+    {
+      "id": "UgyJcLgrg-HFh9tcwBh4AaABAg.AVocFVbofcfAVocmOrXTT4",
+      "text": "ほまにすげえよ",
+      "author": "@sans_isお兄ちゃん",
+      "likeCount": 10,
+      "isReply": true,
+      "parentId": "UgyJcLgrg-HFh9tcwBh4AaABAg",
+      "publishedAt": "2026-04-20T07:49:12Z"
+    },
+    {
+      "id": "UgyJcLgrg-HFh9tcwBh4AaABAg.AVocFVbofcfAVocTKSIqNf",
+      "text": "@Ohtani-Painting ご本人様!!めちゃくちゃお上手です",
+      "author": "@はるか-s9p6n",
+      "likeCount": 55,
+      "isReply": true,
+      "parentId": "UgyJcLgrg-HFh9tcwBh4AaABAg",
+      "publishedAt": "2026-04-20T07:46:27Z"
+    },
+    {
+      "id": "UgyJcLgrg-HFh9tcwBh4AaABAg.AVocFVbofcfAVocLlgSxuF",
+      "text": "本当だ！！！",
+      "author": "@でんごん",
+      "likeCount": 23,
+      "isReply": true,
+      "parentId": "UgyJcLgrg-HFh9tcwBh4AaABAg",
+      "publishedAt": "2026-04-20T07:45:25Z"
+    },
+    {
+      "id": "UgyJcLgrg-HFh9tcwBh4AaABAg",
+      "text": "ご紹介いただきありがとうございます！✨",
+      "author": "@Ohtani-Painting",
+      "likeCount": 1214,
+      "isReply": false,
+      "publishedAt": "2026-04-20T07:44:34Z"
+    }
+  ],
+  "importedCommentsSource": {
+    "videoUrl": "https://www.youtube.com/watch?v=AAB1_FSYOeU",
+    "videoTitle": "東京藝大出身が描いた絵がレベチすぎるwww #おもしろ #アート",
+    "channelTitle": "ザワつく!おもしろ図鑑",
+    "fetchedAt": "2026-04-21T09:49:03.888Z"
+  }
 }

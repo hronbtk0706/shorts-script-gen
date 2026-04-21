@@ -98,6 +98,7 @@ interface RustVideoLayerInput {
   entryDuration: number;
   exitAnimation: string;
   exitDuration: number;
+  videoLoop: boolean;
 }
 
 interface RustTimedOverlayInput {
@@ -628,6 +629,7 @@ export async function generateVideo(
             entryDuration: l.entryDuration ?? 0.3,
             exitAnimation: l.exitAnimation ?? "none",
             exitDuration: l.exitDuration ?? 0.3,
+            videoLoop: (l.videoLoop ?? true) === true,
           });
         }
       }

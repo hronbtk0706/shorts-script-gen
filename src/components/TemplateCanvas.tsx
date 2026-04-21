@@ -1285,6 +1285,7 @@ function VideoLayerContent({
       muted
       playsInline
       preload="auto"
+      loop={(layer.videoLoop ?? true) === true}
       onLoadedMetadata={handleLoadedMetadata}
       style={{
         width: "100%",

@@ -30,6 +30,26 @@ const TTS_PROVIDER_OPTIONS = [
   { id: "say", label: "macOS say" },
 ];
 
+function probeVideoDuration(path: string): Promise<number> {
+  const url =
+    path.startsWith("http") ||
+    path.startsWith("data:") ||
+    path.startsWith("blob:")
+      ? path
+      : convertFileSrc(path);
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.muted = true;
+    v.onloadedmetadata = () =>
+      isFinite(v.duration) && v.duration > 0
+        ? resolve(v.duration)
+        : reject(new Error("invalid video duration"));
+    v.onerror = () => reject(new Error("video loadedmetadata failed"));
+    v.src = url;
+  });
+}
+
 function probeAudioDuration(path: string): Promise<number> {
   const url =
     path.startsWith("http") ||
@@ -63,6 +83,8 @@ interface Props {
   ) => Promise<void>;
   /** ナレーション生成中のレイヤー id（ボタンのローディング表示用） */
   narrationBusyLayerId?: string | null;
+  /** テンプレにインポート済みのコメント（comment レイヤー向け DDL に使う） */
+  importedComments?: import("../types").ExtractedComment[];
 }
 
 const SHAPES: { id: LayerShape; label: string }[] = [
@@ -187,6 +209,7 @@ export function LayerPropertyPanel({
   onChange,
   onGenerateNarration,
   narrationBusyLayerId,
+  importedComments,
 }: Props) {
   const list: Layer[] = layers ?? (layer ? [layer] : []);
   const [openSections, setOpenSections] = useState<Set<SectionId>>(
@@ -292,8 +315,23 @@ export function LayerPropertyPanel({
         try {
           const dur = await probeAudioDuration(path);
           patch.endSec = primary.startSec + dur;
+          patch.sourceDurationSec = dur;
         } catch (e) {
           console.warn("[LayerPropertyPanel] audio duration probe failed:", e);
+        }
+      }
+      // 動画も素材尺を測ってキャッシュ（ループOFF時の上限に使う）
+      if (kind === "video" && list.length === 1) {
+        try {
+          const dur = await probeVideoDuration(path);
+          patch.sourceDurationSec = dur;
+          // ループOFF設定済みでレイヤー長 > 素材長なら素材長に合わせる
+          if (primary.videoLoop === false) {
+            const maxEnd = primary.startSec + dur;
+            if (primary.endSec > maxEnd) patch.endSec = maxEnd;
+          }
+        } catch (e) {
+          console.warn("[LayerPropertyPanel] video duration probe failed:", e);
         }
       }
       onChange(patch);
@@ -605,6 +643,38 @@ export function LayerPropertyPanel({
 
       {showText && (
         <Section id="text" title="テキスト" open={isOpen("text")} onToggle={toggle}>
+          {/* インポート済みコメントから挿入 DDL（comment レイヤー・単独選択時のみ） */}
+          {!multi &&
+            primary.type === "comment" &&
+            importedComments &&
+            importedComments.length > 0 && (
+              <div className="pb-1 border-b border-gray-200 dark:border-gray-700 mb-1">
+                <label className="block text-[10px] text-gray-500 mb-0.5">
+                  📋 インポート済みコメントから挿入（{importedComments.length}件）
+                </label>
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    if (!id) return;
+                    const c = importedComments.find((x) => x.id === id);
+                    if (c) onChange({ text: c.text });
+                    // select はイベント後に値を空に戻す
+                    e.target.value = "";
+                  }}
+                  className="w-full px-1.5 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                >
+                  <option value="">— コメントを選んで挿入 —</option>
+                  {importedComments.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.isReply ? "↪ " : ""}
+                      {c.author ? `@${c.author}: ` : ""}
+                      {c.text.length > 48 ? c.text.slice(0, 48) + "…" : c.text}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           {!multi && (
             <div>
               <label className="block text-[11px] text-gray-600 dark:text-gray-400 mb-0.5">
@@ -849,6 +919,40 @@ export function LayerPropertyPanel({
             )}
           {primary.source === "user" && primary.type === "video" && (
             <p className="text-[10px] text-gray-400">ファイルを選択してください</p>
+          )}
+          {/* 動画レイヤー: ループ再生トグル */}
+          {primary.type === "video" && (
+            <div className="pt-1 mt-1 border-t border-gray-200 dark:border-gray-700 space-y-1">
+              <label className="flex items-center gap-1 text-[11px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={(primary.videoLoop ?? true) === true}
+                  onChange={(e) => {
+                    const loop = e.target.checked;
+                    const patch: Partial<Layer> = { videoLoop: loop };
+                    // OFFに切替時、素材尺を超えていれば endSec をクランプ
+                    if (
+                      !loop &&
+                      primary.sourceDurationSec &&
+                      primary.sourceDurationSec > 0
+                    ) {
+                      const maxEnd =
+                        primary.startSec + primary.sourceDurationSec;
+                      if (primary.endSec > maxEnd) patch.endSec = maxEnd;
+                    }
+                    onChange(patch);
+                  }}
+                  className="h-3 w-3"
+                />
+                🔁 短いときループ再生
+              </label>
+              {primary.videoLoop === false && primary.sourceDurationSec && (
+                <p className="text-[10px] text-gray-500">
+                  素材尺 {primary.sourceDurationSec.toFixed(2)}s
+                  を超える長さは設定できません
+                </p>
+              )}
+            </div>
           )}
         </Section>
       )}

@@ -148,6 +148,10 @@ export interface Layer {
   audioFadeOut?: number;
   /** 音声レイヤー専用: 素材が短いときにループ再生するか */
   audioLoop?: boolean;
+  /** 動画レイヤー専用: 素材が短いときにループ再生するか（default: true） */
+  videoLoop?: boolean;
+  /** 動画/音声レイヤー: 素材の秒数（ファイル読み込み時にキャッシュ。ループOFF時の長さ制限に使用） */
+  sourceDurationSec?: number;
   /** テキストレイヤー専用: このテキストから生成された音声レイヤーの id（置き換え用） */
   generatedNarrationLayerId?: string;
   /** 表示中ずっと続くアニメ（Ambient）。入退場と複合可 */
@@ -193,6 +197,15 @@ export interface VideoTemplate {
   layers: Layer[];
   /** 台本マッピング用のセグメント（hook/body/cta） */
   segments: TemplateSegment[];
+  /** テンプレ編集画面でインポートした YouTube コメント（次回取得で上書き） */
+  importedComments?: ExtractedComment[];
+  /** importedComments の取得元動画メタ情報 */
+  importedCommentsSource?: {
+    videoUrl: string;
+    videoTitle?: string;
+    channelTitle?: string;
+    fetchedAt: string;
+  };
 }
 
 export interface ReferenceVideo {

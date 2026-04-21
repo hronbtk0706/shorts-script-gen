@@ -392,6 +392,26 @@ export function TemplateTimeline({
         newEnd = Math.min(rightBound, newEnd);
       }
 
+      // 動画レイヤー + videoLoop=false の場合は素材尺を超えないようクランプ
+      const dragLayer = layers.find((l) => l.id === drag.layerId);
+      if (
+        dragLayer &&
+        dragLayer.type === "video" &&
+        dragLayer.videoLoop === false &&
+        dragLayer.sourceDurationSec &&
+        dragLayer.sourceDurationSec > 0
+      ) {
+        const maxDur = dragLayer.sourceDurationSec;
+        if (drag.mode === "resize-right") {
+          newEnd = Math.min(newEnd, newStart + maxDur);
+        } else if (drag.mode === "resize-left") {
+          // 左端を左に引っ張る = 長くする方向 → 制限
+          if (newEnd - newStart > maxDur) {
+            newStart = newEnd - maxDur;
+          }
+        }
+      }
+
       if (drag.mode === "move") {
         const snappedStart = snapToPoint(newStart, {
           excludeLayerId: drag.layerId,
