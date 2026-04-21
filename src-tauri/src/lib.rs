@@ -9,8 +9,77 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Manager;
 
+/// ffmpeg / ffprobe / curl 等の外部バイナリの絶対パスを解決する。
+/// macOS の .app から起動すると shell の PATH を継承しないため、
+/// Homebrew や MacPorts の既知パスを先に探し、無ければ PATH から検索、
+/// それでも無ければプログラム名のままフォールバック（エラーメッセージ用）。
+fn resolve_binary(name: &str) -> PathBuf {
+    // Windows では通常 PATH が効くが、一応 .exe 名で探す
+    #[cfg(target_os = "windows")]
+    let exe_name = if name.ends_with(".exe") {
+        name.to_string()
+    } else {
+        format!("{}.exe", name)
+    };
+    #[cfg(not(target_os = "windows"))]
+    let exe_name = name.to_string();
+
+    // macOS / Linux 用の既知パス（Homebrew、MacPorts、システム）
+    #[cfg(target_os = "macos")]
+    let known_dirs: &[&str] = &[
+        "/opt/homebrew/bin",  // Apple Silicon Homebrew
+        "/usr/local/bin",     // Intel Homebrew / 汎用
+        "/opt/local/bin",     // MacPorts
+        "/usr/bin",
+        "/bin",
+    ];
+    #[cfg(target_os = "linux")]
+    let known_dirs: &[&str] = &[
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ];
+    #[cfg(target_os = "windows")]
+    let known_dirs: &[&str] = &[
+        "C:\\ffmpeg\\bin",
+        "C:\\Program Files\\ffmpeg\\bin",
+    ];
+
+    for dir in known_dirs {
+        let p = PathBuf::from(dir).join(&exe_name);
+        if p.exists() {
+            return p;
+        }
+    }
+
+    // PATH 環境変数から検索
+    if let Ok(path_env) = std::env::var("PATH") {
+        let sep = if cfg!(target_os = "windows") { ';' } else { ':' };
+        for dir in path_env.split(sep) {
+            if dir.is_empty() {
+                continue;
+            }
+            let p = PathBuf::from(dir).join(&exe_name);
+            if p.exists() {
+                return p;
+            }
+        }
+    }
+
+    // 最終フォールバック: プログラム名のまま（Command::new で PATH 検索に任せる）
+    PathBuf::from(&exe_name)
+}
+
 fn hidden_cmd<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
-    let mut cmd = Command::new(program);
+    // "ffmpeg" / "ffprobe" / "curl" 等の短い名前は絶対パスに解決
+    let program_str = program.as_ref().to_string_lossy().to_string();
+    let path = if program_str.contains('/') || program_str.contains('\\') {
+        // 既に絶対/相対パスなので解決不要
+        PathBuf::from(&program_str)
+    } else {
+        resolve_binary(&program_str)
+    };
+    let mut cmd = Command::new(&path);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
@@ -943,8 +1012,10 @@ fn build_slide_offset_expr(
             ));
         }
         if has_exit {
+            // 退場: exit_start 以前は 0、exit_start..exit_end で 0→off、exit_end 以降は off で固定
+            // （0 に戻すと enable のフレーム境界で一瞬元位置に戻る flicker が起きる）
             parts.push(format!(
-                "if(between(t,{s:.3},{e:.3}),{off:.1}*((t-{s:.3})/{d:.3}),0)",
+                "if(lt(t,{s:.3}),0,if(lt(t,{e:.3}),{off:.1}*((t-{s:.3})/{d:.3}),{off:.1}))",
                 s = exit_start,
                 e = exit_end,
                 off = exit_off,
@@ -1035,8 +1106,9 @@ fn build_slide_xy_expr(
             );
         }
         if has_exit {
+            // 退場後はオフセットを exit_off のまま固定（0 に戻すと境界フレームで flicker）
             expr = format!(
-                "(if(between(t,{s:.3},{e:.3}),{off:.1}*((t-{s:.3})/{d:.3}),0)+{base})",
+                "(if(lt(t,{s:.3}),0,if(lt(t,{e:.3}),{off:.1}*((t-{s:.3})/{d:.3}),{off:.1}))+{base})",
                 s = exit_start,
                 e = exit_end,
                 off = exit_off,
@@ -2230,7 +2302,16 @@ fn compose_video_inner(
         eprintln!("[compose_video] scene {} filter = {}", i, filter);
 
         let mut cmd = hidden_cmd("ffmpeg");
-        cmd.args(["-y", "-loop", "1", "-i"])
+        // 静止画の入力は -framerate N をつけて出力 fps と一致させる
+        // （未指定だと ffmpeg 既定 25fps 入力 → 出力 30fps リサンプルで微小な jitter が出る）
+        cmd.args([
+            "-y",
+            "-loop",
+            "1",
+            "-framerate",
+            &FPS.to_string(),
+            "-i",
+        ])
             .arg(&scene.image_path)
             .args(["-i"])
             .arg(&scene.audio_path)
@@ -2240,10 +2321,17 @@ fn compose_video_inner(
             cmd.args(["-i"]).arg(&cap.png_path);
         }
         // 時間ゲート付き静止レイヤー（透明PNG）
-        // loop + t を指定して、シーン全期間に渡って同フレームを供給
-        // （fade/slide フィルタが時間軸で動作するために必要）
+        // loop + t + framerate を指定して、シーン全期間に渡って同フレームを滑らかに供給
         for tovl in &scene.timed_overlays {
-            cmd.args(["-loop", "1", "-t", &format!("{:.3}", scene.duration), "-i"])
+            cmd.args([
+                "-loop",
+                "1",
+                "-framerate",
+                &FPS.to_string(),
+                "-t",
+                &format!("{:.3}", scene.duration),
+                "-i",
+            ])
                 .arg(&tovl.png_path);
         }
         // 動画レイヤー（ループは filter_complex の loop フィルタで処理するため -stream_loop 不使用）
@@ -2260,6 +2348,10 @@ fn compose_video_inner(
         cmd.args(["-c:a", "aac", "-b:a", "192k"])
             .args(["-pix_fmt", "yuv420p"])
             .args(["-r", &FPS.to_string()])
+            // 固定フレームレート（CFR）で出力 + GOP を 2 秒ぶん（60 フレーム）
+            // → 再生時のカクつき抑制 & 編集ソフトでの扱いやすさ向上
+            .args(["-fps_mode", "cfr"])
+            .args(["-g", &(FPS as i32 * 2).to_string()])
             .args(["-t", &format!("{:.3}", scene.duration)])
             .arg(&scene_mp4);
 
@@ -2367,6 +2459,13 @@ fn compose_video_inner(
         args.push("192k".to_string());
         args.push("-pix_fmt".to_string());
         args.push("yuv420p".to_string());
+        // CFR + 固定 GOP で concat 後も滑らかに
+        args.push("-r".to_string());
+        args.push(FPS.to_string());
+        args.push("-fps_mode".to_string());
+        args.push("cfr".to_string());
+        args.push("-g".to_string());
+        args.push((FPS as i32 * 2).to_string());
         args.push(combined.to_string_lossy().into_owned());
 
         let mut cmd = hidden_cmd("ffmpeg");

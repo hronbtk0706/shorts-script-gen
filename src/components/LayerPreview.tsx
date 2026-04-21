@@ -204,7 +204,7 @@ export function LayerPreview({ layer, widthPx = 260, heightPx }: Props) {
         }}
       >
         <div style={innerStyle}>
-          {renderContent(layer, videoRef, isPlaying, currentTimeSec)}
+          {renderContent(layer, videoRef, isPlaying, currentTimeSec, w)}
         </div>
       </div>
       <PlayButton
@@ -242,6 +242,7 @@ function renderContent(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   isPlaying: boolean,
   currentTimeSec: number,
+  widthPx: number,
 ): React.ReactNode {
   const resolved = resolveSrc(layer.source);
   switch (layer.type) {
@@ -324,8 +325,8 @@ function renderContent(
       );
     }
     case "comment":
-      // プレビュー用に 0.12 倍スケール（ボックス幅 260px 前提）
-      return renderAnimatedText(layer, currentTimeSec, 0.12);
+      // エクスポートと同じ fontScale = widthPx / 360 で統一
+      return renderAnimatedText(layer, currentTimeSec, widthPx / 360);
     default:
       return null;
   }

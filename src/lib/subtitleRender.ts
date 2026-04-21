@@ -2,7 +2,9 @@ import type { SubtitleStyle } from "../types";
 
 const CANVAS_WIDTH = 1080;
 const CANVAS_HEIGHT = 1920;
-const FONT_FAMILY = '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif';
+// OS 横断の日本語フォント指定（Windows/macOS/Linux いずれでもフォールバック可能に）
+const FONT_FAMILY =
+  '"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "游ゴシック", "Meiryo", "メイリオ", "MS Gothic", "MSゴシック", "Noto Sans JP", "Noto Sans CJK JP", sans-serif';
 
 const FONT_SIZE_MAP: Record<SubtitleStyle["font_size"], number> = {
   md: 64,

@@ -330,7 +330,8 @@ function drawText(
   h: number,
 ): void {
   const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
-  ctx.font = `bold ${fontSize}px "Hiragino Sans", "Yu Gothic", "Noto Sans JP", sans-serif`;
+  // 日本語フォントを OS 横断で指定（Windows/macOS/Linux いずれでもフォールバック可能に）
+  ctx.font = `bold ${fontSize}px "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "游ゴシック", "Meiryo", "メイリオ", "MS Gothic", "MSゴシック", "Noto Sans JP", "Noto Sans CJK JP", sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
