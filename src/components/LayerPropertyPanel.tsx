@@ -160,6 +160,74 @@ const TEXT_DECORATIONS: { id: TextDecoration; label: string }[] = [
   { id: "shadow-drop", label: "影ドロップ" },
 ];
 
+/**
+ * 数値入力フィールド。
+ * - 空欄や "-" を一時的に受け入れる（ユーザーが全消しして入力し直せるように）
+ * - 有効な数字が入った瞬間に setter を呼ぶ
+ * - blur 時に無効値が残っていれば前の値に戻す
+ */
+function NumField({
+  value,
+  setter,
+  step = 1,
+  unit = "",
+  mixed = false,
+}: {
+  value: number | undefined;
+  setter: (v: number) => void;
+  step?: number;
+  unit?: string;
+  mixed?: boolean;
+}) {
+  const precision = step < 1 ? 2 : 0;
+  const formatted =
+    !mixed && value !== undefined && Number.isFinite(value)
+      ? Number(value.toFixed(precision)).toString()
+      : "";
+  // 編集中のローカル文字列（フォーカス中は external 値の変化を無視）
+  const [local, setLocal] = useState<string | null>(null);
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focused) setLocal(null);
+  }, [formatted, focused]);
+  const display = local ?? formatted;
+
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        type="number"
+        value={display}
+        placeholder={mixed ? "—" : ""}
+        step={step}
+        onFocus={() => setFocused(true)}
+        onBlur={() => {
+          setFocused(false);
+          // 無効値や空欄なら表示を formatted に戻す（state は不変）
+          if (display === "" || display === "-" || !Number.isFinite(Number(display))) {
+            setLocal(null);
+          } else {
+            setLocal(null);
+          }
+        }}
+        onChange={(e) => {
+          const raw = e.target.value;
+          setLocal(raw);
+          if (raw === "" || raw === "-") return; // 編集途中
+          const n = Number(raw);
+          if (Number.isFinite(n)) setter(n);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className="w-20 px-1 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+      />
+      {unit && <span className="text-gray-400">{unit}</span>}
+    </div>
+  );
+}
+
 type SectionId =
   | "timing"
   | "geometry"
@@ -347,30 +415,17 @@ export function LayerPropertyPanel({
     step = 1,
     unit = "",
   ) => {
-    const precision = step < 1 ? 2 : 0;
     const mixed = value === undefined;
-    const displayValue =
-      !mixed && Number.isFinite(value as number)
-        ? Number((value as number).toFixed(precision))
-        : "";
     return (
       <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
         <label className="text-gray-600 dark:text-gray-400">{label}</label>
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            value={displayValue}
-            placeholder={mixed ? "—" : ""}
-            step={step}
-            onChange={(e) => {
-              const raw = e.target.value;
-              if (raw === "") return; // 空欄はスキップ
-              setter(Number(raw));
-            }}
-            className="flex-1 px-1 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-          />
-          {unit && <span className="text-gray-400">{unit}</span>}
-        </div>
+        <NumField
+          value={value}
+          setter={setter}
+          step={step}
+          unit={unit}
+          mixed={mixed}
+        />
       </div>
     );
   };

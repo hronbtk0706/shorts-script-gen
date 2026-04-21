@@ -383,11 +383,13 @@ function LayerView({
   const heightPx = (layer.height / 100) * canvasHPx;
 
   // 形状の borderRadius。外側（クリップ）と内側（border 描画）で共有する
+  // layerComposer が borderRadius * (FINAL_W/360) で描画するため、プレビューも canvasWPx/360 倍する
+  const dimScale = canvasWPx / 360;
   let borderRadius: string | number | undefined;
   if (layer.shape === "circle") {
     borderRadius = "50%";
   } else if (layer.shape === "rounded") {
-    borderRadius = layer.borderRadius ?? 12;
+    borderRadius = (layer.borderRadius ?? 12) * dimScale;
   }
 
   const outerStyle: React.CSSProperties = {};
@@ -430,7 +432,10 @@ function LayerView({
     ...outerStyle,
   };
 
-  const inner = renderLayerContent(layer, currentTimeSec, isPlaying);
+  // エクスポート側（layerComposer.drawText）が fontSize * (FINAL_W/360) = fontSize * 3 で
+  // 1080×1920 に描画するため、プレビューも同じ係数 (canvasWPx / 360) を掛けないと見た目が一致しない。
+  const fontScale = canvasWPx / 360;
+  const inner = renderLayerContent(layer, currentTimeSec, isPlaying, fontScale);
   const motionTransform = computeLayerMotionTransform(layer, currentTimeSec);
   // 入退場 / motion / ambient の transform / filter を合成した内側 style
   const innerTransformParts: string[] = [];
@@ -444,9 +449,10 @@ function LayerView({
   const innerFilter = innerFilterParts.join(" ");
 
   // テキスト系レイヤー（comment）は renderAnimatedText 内で border を適用するためここでは省く
+  // layerComposer が border.width * (FINAL_W/360) で描画するためプレビューも同じ係数に
   const innerBoxShadow =
     layer.border && layer.type !== "comment"
-      ? `inset 0 0 0 ${layer.border.width}px ${layer.border.color}`
+      ? `inset 0 0 0 ${(layer.border.width * dimScale).toFixed(2)}px ${layer.border.color}`
       : undefined;
 
   const innerStyle: React.CSSProperties = {
@@ -568,8 +574,9 @@ export function renderAnimatedText(
 
   // fillColor 背景がある場合、inset box-shadow（innerStyle 側）が背景に隠れるため
   // border をここのコンテナに直接適用する
+  // layerComposer と同じスケール（fontScale = canvasWPx/360）で太さを合わせる
   const borderBoxShadow = layer.border
-    ? `inset 0 0 0 ${layer.border.width}px ${layer.border.color}`
+    ? `inset 0 0 0 ${(layer.border.width * fontScale).toFixed(2)}px ${layer.border.color}`
     : undefined;
 
   const baseStyle: React.CSSProperties = {

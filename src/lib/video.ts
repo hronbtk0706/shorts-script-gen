@@ -321,6 +321,18 @@ export async function generateVideo(
 
   const totalCount = allScenes.length;
 
+  // 手動モードのシーン用に使いまわす無音 wav（1 度だけ生成）
+  // 全シーンの最長尺より長く作っておけば Rust 側で -t により自動で切り詰められる
+  let sharedSilentAudioPath: string | null = null;
+  const maxSceneDuration = Math.max(
+    ...allScenes.map((s) => {
+      const seg = s.templateSegment;
+      if (!seg) return 1;
+      return Math.max(0.001, seg.endSec - seg.startSec);
+    }),
+    1,
+  );
+
   for (const scene of allScenes) {
     let imagePath: string;
     // レイヤー合成（テンプレのセグメントに対応するレイヤー群が複雑な場合）
@@ -490,69 +502,24 @@ export async function generateVideo(
     let sceneDuration: number;
 
     if (manualMode) {
-      // レイヤーごとにTTSを生成し、layer.startSec にオフセットして1本にミックス
+      // 手動モードでは comment テキストからの自動 TTS は行わない。
+      // ナレーションは LayerPropertyPanel で明示生成して音声レイヤー化して
+      // もらう（build_user_audio_track で最終ミックスされる）。
+      // Rust 側の compose_video がシーンごとに audio_path を要求するため、
+      // ここでは共通の無音 wav を 1 本だけ作って全シーンで使いまわす。
       const seg = scene.templateSegment;
       const segStart = seg?.startSec ?? 0;
       const segEnd = seg?.endSec ?? segStart;
-      const origSegDur = Math.max(0.001, segEnd - segStart);
+      const finalSceneDuration = Math.max(0.001, segEnd - segStart);
 
-      const narrationLayers = allSegLayers.filter(
-        (l) =>
-          l.type === "comment" &&
-          (l.text ?? "").trim().length > 0,
-      );
-
-      type Clip = { path: string; startSec: number };
-      const clips: Clip[] = [];
-      let maxLayerEndAbs = segEnd;
-
-      for (const layer of narrationLayers) {
-        const ttsPath = await ttsProvider.synthesize(
-          {
-            text: (layer.text ?? "").trim(),
-            filename: `scene_${scene.index}_layer_${layer.id}`,
-            sessionId,
-          },
-          settings,
-        );
-        const ttsDur = await invoke<number>("get_audio_duration", {
-          audioPath: ttsPath,
-        });
-        const origDur = layer.endSec - layer.startSec;
-        const layerEndAbs =
-          ttsDur > origDur ? layer.startSec + ttsDur : layer.endSec;
-        if (ttsDur > origDur) {
-          // レイヤーの endSec を延長（描画・タイムドオーバーレイに反映）
-          const idx = allSegLayers.findIndex((x) => x.id === layer.id);
-          if (idx >= 0) allSegLayers[idx] = { ...layer, endSec: layerEndAbs };
-          const tgIdx = timeGatedLayers.findIndex((x) => x.id === layer.id);
-          if (tgIdx >= 0)
-            timeGatedLayers[tgIdx] = {
-              ...timeGatedLayers[tgIdx],
-              endSec: layerEndAbs,
-            };
-          const avIdx = alwaysVisibleLayers.findIndex((x) => x.id === layer.id);
-          if (avIdx >= 0)
-            alwaysVisibleLayers[avIdx] = {
-              ...alwaysVisibleLayers[avIdx],
-              endSec: layerEndAbs,
-            };
-        }
-        if (layerEndAbs > maxLayerEndAbs) maxLayerEndAbs = layerEndAbs;
-
-        clips.push({
-          path: ttsPath,
-          startSec: Math.max(0, layer.startSec - segStart),
+      // 同一 session で既に作られていればキャッシュ再利用
+      if (!sharedSilentAudioPath) {
+        sharedSilentAudioPath = await invoke<string>("generate_silent_wav", {
+          sessionId,
+          duration: maxSceneDuration,
         });
       }
-
-      const finalSceneDuration = Math.max(origSegDur, maxLayerEndAbs - segStart);
-      audioPath = await invoke<string>("mix_audio_clips", {
-        sessionId,
-        filename: `scene_${scene.index}_mixed`,
-        clips,
-        totalDurationSec: finalSceneDuration,
-      });
+      audioPath = sharedSilentAudioPath;
       audioDuration = finalSceneDuration;
       leadingPad = 0;
       sceneDuration = finalSceneDuration;

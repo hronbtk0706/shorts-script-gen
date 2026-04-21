@@ -9,22 +9,6 @@
   "totalDuration": 56,
   "layers": [
     {
-      "id": "ly_mo8ih807_z0sg02",
-      "type": "image",
-      "x": 0,
-      "y": 0,
-      "width": 100,
-      "height": 100,
-      "zIndex": 0,
-      "rotation": 0,
-      "opacity": 1,
-      "shape": "rect",
-      "startSec": 0,
-      "endSec": 56,
-      "motion": "static",
-      "source": "auto"
-    },
-    {
       "id": "ly_mo8ih807_1unzny",
       "type": "shape",
       "x": 10,
@@ -61,17 +45,22 @@
       "entryDuration": 0.3,
       "exitAnimation": "fade",
       "exitDuration": 0.3,
-      "text": "東京藝大出身が描いた絵がレベチすぎるwww",
+      "text": "ルフィVSベラミー（１回戦）\nみんなの反応が面白すぎるwww",
       "fontSize": 48,
-      "fontColor": "#FFFFFF",
-      "textOutlineWidth": 4,
-      "textOutlineColor": "#000000"
+      "fontColor": "#ffffff",
+      "textOutlineWidth": 0,
+      "textOutlineColor": "#000000",
+      "border": {
+        "width": 13,
+        "color": "#ff40ff"
+      },
+      "fillColor": "#ffffff"
     },
     {
       "id": "ly_mo8ih807_x5azwx",
       "type": "image",
       "x": 10,
-      "y": 25,
+      "y": 26.785714285714285,
       "width": 80,
       "height": 45,
       "zIndex": 1,
@@ -122,7 +111,8 @@
       "exitDuration": 0.3,
       "text": "2時間40分くらいで描いたぼやけた風景のアクリル画",
       "fontSize": 40,
-      "fontColor": "#000000"
+      "fontColor": "#000000",
+      "generatedNarrationLayerId": "ly_mo8j9qq9_pbb709"
     },
     {
       "id": "ly_mo8ih807_9imwhh",
@@ -1420,6 +1410,22 @@
       "fontColor": "#FFFFFF",
       "textOutlineWidth": 4,
       "textOutlineColor": "#000000"
+    },
+    {
+      "id": "ly_mo8jjl5b_9g7g1b",
+      "type": "video",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 0,
+      "shape": "rect",
+      "opacity": 1,
+      "rotation": 0,
+      "startSec": 0,
+      "endSec": 56,
+      "source": "/Users/saismac03/Downloads/Pop-speech-bubble_ye.mp4",
+      "sourceDurationSec": 7.007
     }
   ],
   "segments": [
@@ -1485,5 +1491,167 @@
   ],
   "overallPacing": "非常に速いペースで、次々と驚きの絵画と視聴者の反応が切り替わる。短いテロップとAI音声でテンポ良く進行する。",
   "narrationStyle": "AI読み上げ風・短文テロップ多い",
-  "themeVibe": "驚愕と感動の芸術作品紹介"
+  "themeVibe": "驚愕と感動の芸術作品紹介",
+  "importedComments": [
+    {
+      "id": "UgyOxgZCtQNcuLV437p4AaABAg",
+      "text": "ずーっと起きてる黒ひげが夢について話すのがなんか良い",
+      "author": "@tu_mirai",
+      "likeCount": 13719,
+      "isReply": false,
+      "publishedAt": "2025-07-12T10:26:03Z"
+    },
+    {
+      "id": "UgyOxgZCtQNcuLV437p4AaABAg.AKTmZKmS4KfAKUN8uHzcuk",
+      "text": "寝ないからこそ、醒めないからこそ、夢は終わらないっていう感じいいよね",
+      "author": "@azxgd9098",
+      "likeCount": 1411,
+      "isReply": true,
+      "parentId": "UgyOxgZCtQNcuLV437p4AaABAg",
+      "publishedAt": "2025-07-12T15:54:28Z"
+    },
+    {
+      "id": "Ugz6QxeKA5-_-Z-cLWd4AaABAg",
+      "text": "このころは黒ひげがちょっと変わった良い奴なイメージだったなぁ…",
+      "author": "@ilovesupura-owl",
+      "likeCount": 8853,
+      "isReply": false,
+      "publishedAt": "2025-07-12T02:26:34Z"
+    },
+    {
+      "id": "UgwXm9BVVKi6F_KzxwN4AaABAg",
+      "text": "ルフィは打撃効かないからいいけど\n巻き込まれたゾロはしっかりダメージ負わされてんのおもろい",
+      "author": "@れとろげーまー",
+      "likeCount": 4821,
+      "isReply": false,
+      "publishedAt": "2025-07-12T13:23:40Z"
+    },
+    {
+      "id": "UgwXm9BVVKi6F_KzxwN4AaABAg.AKU5tQiTiSPAKVc3OewvDf",
+      "text": "ベラミーさん、既に武装色を使っていた疑惑",
+      "author": "@mama_mama_mama_mama_mama",
+      "likeCount": 137,
+      "isReply": true,
+      "parentId": "UgwXm9BVVKi6F_KzxwN4AaABAg",
+      "publishedAt": "2025-07-13T03:32:46Z"
+    },
+    {
+      "id": "UgwXm9BVVKi6F_KzxwN4AaABAg.AKU5tQiTiSPAKWFgqxOBP1",
+      "text": "なにもな゛かった...",
+      "author": "@mgpoc",
+      "likeCount": 23,
+      "isReply": true,
+      "parentId": "UgwXm9BVVKi6F_KzxwN4AaABAg",
+      "publishedAt": "2025-07-13T09:27:49Z"
+    },
+    {
+      "id": "UgzSHANZ_1GTQX8Ccvt4AaABAg",
+      "text": "黒ひげが「今の戦いはそいつらの勝ちだぜ」って言ってくれるのいいな",
+      "author": "@ホロライブとワンピースが好きな男",
+      "likeCount": 3422,
+      "isReply": false,
+      "publishedAt": "2025-07-20T01:09:47Z"
+    },
+    {
+      "id": "UgzSHANZ_1GTQX8Ccvt4AaABAg.AKmOGEokjgyASZ9QgcURTw",
+      "text": "黒ひげは普通に倍返ししそう",
+      "author": "@石野ブラシ",
+      "likeCount": 67,
+      "isReply": true,
+      "parentId": "UgzSHANZ_1GTQX8Ccvt4AaABAg",
+      "publishedAt": "2026-01-29T08:41:55Z"
+    },
+    {
+      "id": "UgxIwEvCgDD40PpnAUZ4AaABAg",
+      "text": "この頃のルフィはふざけてるけど一本の芯がある船長だった…",
+      "author": "@マサ-g7u",
+      "likeCount": 1506,
+      "isReply": false,
+      "publishedAt": "2025-07-12T09:11:34Z"
+    },
+    {
+      "id": "UgxIwEvCgDD40PpnAUZ4AaABAg.AKTe1uGzx4lAKTpi1LULwe",
+      "text": "ギア5の副作用だとしてもあの変わり方は看過できない",
+      "author": "@user-rd8hj1vn6d",
+      "likeCount": 52,
+      "isReply": true,
+      "parentId": "UgxIwEvCgDD40PpnAUZ4AaABAg",
+      "publishedAt": "2025-07-12T10:53:34Z"
+    },
+    {
+      "id": "Ugw0twsazWPhbhLFiDh4AaABAg",
+      "text": "この時期のワンピは間違いなく名作だった",
+      "author": "@チャイカツ",
+      "likeCount": 1126,
+      "isReply": false,
+      "publishedAt": "2025-10-25T13:17:07Z"
+    },
+    {
+      "id": "Ugw0twsazWPhbhLFiDh4AaABAg.AOhSbF-_4wIAQiFsNJ-OHn",
+      "text": "今では神が出てきて、王がぼこぼこにされて、キャラの実力に差があって、昔死んだ奴はインフレに取り残されて雑魚みたいになってるもんな、それでもまぁ面白いから好きだけど",
+      "author": "@user-melon-metamo-tapioka",
+      "likeCount": 44,
+      "isReply": true,
+      "parentId": "Ugw0twsazWPhbhLFiDh4AaABAg",
+      "publishedAt": "2025-12-14T13:47:53Z"
+    },
+    {
+      "id": "UgyvRdRXk9Qn6JibjBt4AaABAg",
+      "text": "ベラミーは敵としてめっちゃ魅力あったわ。\n噛ませとしてめっちゃよく描けてて秀逸なキャラだった。",
+      "author": "@ハニ-j1b",
+      "likeCount": 907,
+      "isReply": false,
+      "publishedAt": "2025-07-12T20:49:58Z"
+    },
+    {
+      "id": "UgyvRdRXk9Qn6JibjBt4AaABAg.AKUtyBmQJVHAQa7KoxJ2oo",
+      "text": "ドフラミンゴの時はマジで泣いた…",
+      "author": "@swallow_children",
+      "likeCount": 0,
+      "isReply": true,
+      "parentId": "UgyvRdRXk9Qn6JibjBt4AaABAg",
+      "publishedAt": "2025-12-11T09:59:20Z"
+    },
+    {
+      "id": "UgwX9dAWrYk7Rba5bbN4AaABAg",
+      "text": "この後ルフィがワンパンしてるの見てかなりスカッとした印象ある。",
+      "author": "@ゆとり世代代表",
+      "likeCount": 369,
+      "isReply": false,
+      "publishedAt": "2025-07-12T07:51:21Z"
+    },
+    {
+      "id": "UgwX9dAWrYk7Rba5bbN4AaABAg.AKTVrNQmDHsAKgBc2WIVs9",
+      "text": "ゴムゴムすら使ってない",
+      "author": "@ちくしゃ-m5h",
+      "likeCount": 4,
+      "isReply": true,
+      "parentId": "UgwX9dAWrYk7Rba5bbN4AaABAg",
+      "publishedAt": "2025-07-17T15:23:52Z"
+    },
+    {
+      "id": "UgwX9dAWrYk7Rba5bbN4AaABAg.AKTVrNQmDHsAKiWUXMRxGz",
+      "text": "パンチの打ち方を知ってるかって？",
+      "author": "@時の旅人-o2h",
+      "likeCount": 9,
+      "isReply": true,
+      "parentId": "UgwX9dAWrYk7Rba5bbN4AaABAg",
+      "publishedAt": "2025-07-18T13:04:41Z"
+    },
+    {
+      "id": "UgwX9dAWrYk7Rba5bbN4AaABAg.AKTVrNQmDHsALZJfFS0Rhn",
+      "text": "でもこれはベラミーを成長させちまう一撃だったんだよな",
+      "author": "@JJ-xm6gh",
+      "likeCount": 3,
+      "isReply": true,
+      "parentId": "UgwX9dAWrYk7Rba5bbN4AaABAg",
+      "publishedAt": "2025-08-08T10:31:40Z"
+    }
+  ],
+  "importedCommentsSource": {
+    "videoUrl": "https://www.youtube.com/watch?v=YkoVsZwMkss",
+    "videoTitle": "【ワンピース】 ルフィとベラミー/海賊としての格が違う #shorts #ワンピース #anime",
+    "channelTitle": "コントロールゼットライフ",
+    "fetchedAt": "2026-04-21T11:33:27.505Z"
+  }
 }
