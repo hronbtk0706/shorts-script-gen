@@ -43,6 +43,8 @@ interface Props {
   newLayerDefaults?: { startSec?: number; endSec?: number };
   /** 指定時刻に可視なレイヤーだけ一覧に表示（未指定なら全表示） */
   currentTimeSec?: number;
+  /** SEブラウザで使うフォルダパス（未指定なら Documents\SE） */
+  seFolderPath?: string;
 }
 
 const LAYER_TYPE_LABELS: Record<LayerType, { icon: string; label: string }> = {
@@ -62,6 +64,7 @@ export function LayerPanel({
   onLayerSelect,
   newLayerDefaults,
   currentTimeSec,
+  seFolderPath,
 }: Props) {
   const selectedSet = new Set<string>(
     selectedLayerIds ?? (selectedLayerId ? [selectedLayerId] : []),
@@ -232,7 +235,7 @@ export function LayerPanel({
             <span>{LAYER_TYPE_LABELS[t].label}</span>
           </button>
         ))}
-        <SeBrowser onSelect={addAudioFromSe} />
+        <SeBrowser onSelect={addAudioFromSe} seDir={seFolderPath} />
       </div>
 
       <div className="max-h-[320px] overflow-y-auto space-y-1">

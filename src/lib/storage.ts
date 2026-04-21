@@ -30,6 +30,7 @@ const KEY_MULTI_CANDIDATE_ENABLED = "multi_candidate_enabled";
 const KEY_MULTI_CANDIDATE_COUNT = "multi_candidate_count";
 const KEY_REFERENCE_VIDEO_COUNT = "reference_video_count";
 const KEY_DEFAULT_TEMPLATE_ID = "default_template_id";
+const KEY_SE_FOLDER_PATH = "se_folder_path";
 
 export type LlmProviderId = "gemini" | "groq" | "openai";
 export type TtsProviderId =
@@ -85,6 +86,7 @@ export interface AppSettings {
   multiCandidateCount: number;
   referenceVideoCount: number;
   defaultTemplateId: string;
+  seFolderPath: string;
 }
 
 async function get<T>(key: string, fallback: T): Promise<T> {
@@ -185,6 +187,7 @@ export async function loadSettings(): Promise<AppSettings> {
       Math.min(10, await get<number>(KEY_REFERENCE_VIDEO_COUNT, 5)),
     ),
     defaultTemplateId: await get(KEY_DEFAULT_TEMPLATE_ID, ""),
+    seFolderPath: await get(KEY_SE_FOLDER_PATH, ""),
   };
 }
 
@@ -216,6 +219,7 @@ export async function saveSettings(s: AppSettings): Promise<void> {
   await store.set(KEY_MULTI_CANDIDATE_COUNT, s.multiCandidateCount);
   await store.set(KEY_REFERENCE_VIDEO_COUNT, s.referenceVideoCount);
   await store.set(KEY_DEFAULT_TEMPLATE_ID, s.defaultTemplateId);
+  await store.set(KEY_SE_FOLDER_PATH, s.seFolderPath);
   await store.save();
 }
 

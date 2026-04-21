@@ -86,9 +86,14 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   // 未保存変更フラグ
   const [dirty, setDirty] = useState(false);
   const dirtySetSkipRef = useRef(true); // 初期マウント時は dirty を立てない
+  const [seFolderPath, setSeFolderPath] = useState("");
 
   useEffect(() => {
     setHeaderSlot(document.getElementById("app-header-slot"));
+  }, []);
+
+  useEffect(() => {
+    loadSettings().then((s) => setSeFolderPath(s.seFolderPath ?? ""));
   }, []);
 
   // ウィンドウのどこでも空白クリックしたら選択解除。
@@ -833,6 +838,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
                   endSec: Math.min(playheadSec + 3, template.totalDuration),
                 }}
                 currentTimeSec={playheadSec}
+                seFolderPath={seFolderPath}
               />
             </div>
             <div

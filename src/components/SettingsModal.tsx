@@ -69,6 +69,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   multiCandidateCount: 3,
   referenceVideoCount: 5,
   defaultTemplateId: "",
+  seFolderPath: "",
 };
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
@@ -666,6 +667,46 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
           >
             → Pixabayでアカウント登録・APIキー取得（無料）
           </button>
+        </section>
+
+        <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
+          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
+            SE（効果音）フォルダ
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            テンプレートエディタのSEブラウザで表示するフォルダを指定します。未設定の場合は Documents\SE を使います。
+          </p>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={s.seFolderPath}
+              onChange={(e) => update("seFolderPath", e.target.value)}
+              placeholder="例: C:\Users\...\Documents\SE"
+              className="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs font-mono"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const result = await openFileDialog({
+                  multiple: false,
+                  directory: true,
+                });
+                if (typeof result === "string") update("seFolderPath", result);
+              }}
+              className="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm whitespace-nowrap"
+            >
+              📁 選択
+            </button>
+            {s.seFolderPath && (
+              <button
+                type="button"
+                onClick={() => update("seFolderPath", "")}
+                className="px-3 py-2 rounded-lg border border-red-300 text-red-600 text-sm"
+              >
+                ✕
+              </button>
+            )}
+          </div>
         </section>
 
         <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
