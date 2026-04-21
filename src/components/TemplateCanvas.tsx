@@ -498,6 +498,7 @@ function renderLayerContent(
   layer: Layer,
   currentTimeSec: number,
   isPlaying: boolean,
+  fontScale?: number,
 ): React.ReactNode {
   switch (layer.type) {
     case "color":
@@ -552,7 +553,7 @@ function renderLayerContent(
       );
     }
     case "comment":
-      return renderAnimatedText(layer, currentTimeSec, 0.25);
+      return renderAnimatedText(layer, currentTimeSec, fontScale ?? 0.25);
     case "audio":
       return null;
   }
