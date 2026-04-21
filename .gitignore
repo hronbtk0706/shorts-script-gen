@@ -32,4 +32,3 @@ templates/audio/
 # 動画生成セッションのキャッシュ
 sessions/
 
-src-tauri/resources/SE/
