@@ -674,7 +674,7 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
             SE（効果音）フォルダ
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            テンプレートエディタのSEブラウザで表示するフォルダを指定します。未設定の場合は Documents\SE を使います。
+            アプリに136件のSEが同梱されています。追加のSEフォルダを指定すると、そちらが優先されます。
           </p>
           <div className="flex gap-2">
             <input

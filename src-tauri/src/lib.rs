@@ -1680,15 +1680,26 @@ async fn generate_tts(
 }
 
 #[tauri::command]
-async fn list_se_files(dir: Option<String>) -> Result<Vec<serde_json::Value>, String> {
+async fn list_se_files(app: tauri::AppHandle, dir: Option<String>) -> Result<Vec<serde_json::Value>, String> {
     let se_dir = match dir {
         Some(d) if !d.is_empty() => std::path::PathBuf::from(d),
         _ => {
-            // デフォルト: ユーザーのDocuments\SE
-            let home = std::env::var("USERPROFILE")
-                .or_else(|_| std::env::var("HOME"))
-                .unwrap_or_default();
-            std::path::PathBuf::from(home).join("Documents").join("SE")
+            // 同梱リソース内の SE フォルダを優先
+            let bundled = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|p| p.join("SE"))
+                .filter(|p| p.exists());
+            if let Some(p) = bundled {
+                p
+            } else {
+                // フォールバック: ユーザーのDocuments\SE
+                let home = std::env::var("USERPROFILE")
+                    .or_else(|_| std::env::var("HOME"))
+                    .unwrap_or_default();
+                std::path::PathBuf::from(home).join("Documents").join("SE")
+            }
         }
     };
     if !se_dir.exists() {
