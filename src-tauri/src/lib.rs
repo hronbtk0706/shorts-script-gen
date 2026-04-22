@@ -767,61 +767,61 @@ fn motion_and_base_filter(motion: &str, duration: f64) -> String {
 
     match motion {
         "zoom_in" => format!(
-            "{base},zoompan=z='1.0+on/{tf}*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.0+on/{tf}*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "zoom_out" => format!(
-            "{base},zoompan=z='1.25-on/{tf}*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.25-on/{tf}*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "pan_left" => format!(
-            "{base},zoompan=z='1.15':d={tf}:x='(iw-iw/zoom)*(1-on/{tf})':y='ih/2-ih/zoom/2':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.15':d={tf}:x='(iw-iw/zoom)*(1-on/{tf})':y='ih/2-ih/zoom/2':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "pan_right" => format!(
-            "{base},zoompan=z='1.15':d={tf}:x='(iw-iw/zoom)*(on/{tf})':y='ih/2-ih/zoom/2':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.15':d={tf}:x='(iw-iw/zoom)*(on/{tf})':y='ih/2-ih/zoom/2':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "pan_up" => format!(
-            "{base},zoompan=z='1.15':d={tf}:x='iw/2-iw/zoom/2':y='(ih-ih/zoom)*(1-on/{tf})':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.15':d={tf}:x='iw/2-iw/zoom/2':y='(ih-ih/zoom)*(1-on/{tf})':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "pan_down" => format!(
-            "{base},zoompan=z='1.15':d={tf}:x='iw/2-iw/zoom/2':y='(ih-ih/zoom)*(on/{tf})':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.15':d={tf}:x='iw/2-iw/zoom/2':y='(ih-ih/zoom)*(on/{tf})':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "ken_burns" => format!(
-            "{base},zoompan=z='1.0+on/{tf}*0.12':d={tf}:x='(iw-iw/zoom)*(on/{tf}*0.4+0.3)':y='ih/2-ih/zoom/2':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.0+on/{tf}*0.12':d={tf}:x='(iw-iw/zoom)*(on/{tf}*0.4+0.3)':y='ih/2-ih/zoom/2':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "push_in" => format!(
-            "{base},zoompan=z='1.0+on/{tf}*0.10':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.0+on/{tf}*0.10':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "zoom_punch" => format!(
-            "{base},zoompan=z='1.0+min(on,9)/9*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.0+min(on,9)/9*0.25':d={tf}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
         ),
         "shake" => format!(
-            "{base},zoompan=z='1.12':d={tf}:x='iw/2-iw/zoom/2+sin(on*0.9)*18':y='ih/2-ih/zoom/2+cos(on*1.1)*14':s=1080x1920:fps={fps}",
+            "{base},zoompan=z='1.12':d={tf}:x='iw/2-iw/zoom/2+sin(on*0.9)*18':y='ih/2-ih/zoom/2+cos(on*1.1)*14':s=1080x1920:fps={fps},setpts=PTS-STARTPTS",
             base = base,
             tf = tf,
             fps = FPS
@@ -981,14 +981,15 @@ fn build_slide_offset_expr(
         "slide-down" => -(main_h as f64),
         _ => 0.0,
     };
+    // 2x canvas width/height で exit: 要素が画面端付近にあっても確実に画外へ出す
     let exit_x_off = match exit_anim {
-        "slide-left" => -(main_w as f64),
-        "slide-right" => main_w as f64,
+        "slide-left" => -(2 * main_w) as f64,
+        "slide-right" => (2 * main_w) as f64,
         _ => 0.0,
     };
     let exit_y_off = match exit_anim {
-        "slide-up" => -(main_h as f64),
-        "slide-down" => main_h as f64,
+        "slide-up" => -(2 * main_h) as f64,
+        "slide-down" => (2 * main_h) as f64,
         _ => 0.0,
     };
 
@@ -2066,7 +2067,7 @@ fn compose_video_inner(
                     let has_time_gate = layer.start_sec > 0.0
                         || (layer.end_sec > 0.0 && layer.end_sec < scene.duration - 0.01);
                     let enable_clause = if has_time_gate {
-                        format!(":enable='between(t,{:.3},{:.3})'", layer_start, layer_end)
+                        format!(":enable='gte(t,{:.3})*lt(t,{:.3})'", layer_start, layer_end)
                     } else {
                         String::new()
                     };
@@ -2145,7 +2146,7 @@ fn compose_video_inner(
                     // 何のアニメ・回転もなくキャンバスサイズ PNG 互換なら最小 overlay
                     if !has_fade && !has_slide && !has_scale_anim && !has_rotation && !is_layer_sized {
                         filter_parts.push(format!(
-                            "{}[{}:v]overlay=0:0:enable='between(t,{:.3},{:.3})'{}",
+                            "{}[{}:v]overlay=0:0:enable='gte(t,{:.3})*lt(t,{:.3})'{}",
                             current_bg, input_idx, tovl.start, tovl.end, next_bg
                         ));
                         current_bg = next_bg;
@@ -2243,7 +2244,7 @@ fn compose_video_inner(
                     };
 
                     filter_parts.push(format!(
-                        "{}{}overlay={}:enable='between(t,{:.3},{:.3})'{}",
+                        "{}{}overlay={}:enable='gte(t,{:.3})*lt(t,{:.3})'{}",
                         current_bg, layer_label, overlay_pos, tovl.start, tovl.end, next_bg
                     ));
                 }
@@ -2270,7 +2271,7 @@ fn compose_video_inner(
                 format!("[vc{}]", ci)
             };
             overlay_parts.push(format!(
-                "{}[{}:v]overlay=0:0:enable='between(t,{:.3},{:.3})'{}",
+                "{}[{}:v]overlay=0:0:enable='gte(t,{:.3})*lt(t,{:.3})'{}",
                 current_label, input_idx, cap.start, cap.end, next_label
             ));
             current_label = next_label;
