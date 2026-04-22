@@ -10,6 +10,10 @@ import {
   type AnalysisProgress,
 } from "../lib/templateAnalyzer";
 import { loadSettings } from "../lib/storage";
+import {
+  exportTemplatePack,
+  importTemplatePack,
+} from "../lib/templatePack";
 import type { VideoTemplate } from "../types";
 import { TemplateBuilder } from "./TemplateBuilder";
 
@@ -91,6 +95,27 @@ export function TemplateManager() {
       const dup = duplicateTemplate(t);
       await saveTemplate(dup);
       await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleExportPack = async (t: VideoTemplate) => {
+    try {
+      const out = await exportTemplatePack(t);
+      if (out) alert(`書き出し完了:\n${out}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const handleImportPack = async () => {
+    try {
+      const tpl = await importTemplatePack();
+      if (!tpl) return;
+      await saveTemplate(tpl);
+      await reload();
+      alert(`読み込み完了: ${tpl.name}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -192,6 +217,14 @@ export function TemplateManager() {
           className="px-3 py-1.5 rounded text-sm bg-emerald-600 text-white hover:bg-emerald-700"
         >
           ✏️ 手動で作成
+        </button>
+        <button
+          type="button"
+          onClick={handleImportPack}
+          className="px-3 py-1.5 rounded text-sm bg-indigo-600 text-white hover:bg-indigo-700"
+          title="テンプレート＋素材を同梱した .zip を読み込む"
+        >
+          📦 パック読み込み
         </button>
         <button
           type="button"
@@ -331,6 +364,13 @@ export function TemplateManager() {
                       title="複製"
                     >
                       📋
+                    </button>
+                    <button
+                      onClick={() => handleExportPack(t)}
+                      className="p-1.5 text-xs rounded hover:bg-gray-100 dark:hover:bg-gray-800"
+                      title="パック書き出し（テンプレ＋素材をzipに同梱）"
+                    >
+                      📦
                     </button>
                     <button
                       onClick={() => handleDelete(t)}
