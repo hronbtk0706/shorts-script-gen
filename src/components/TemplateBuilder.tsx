@@ -19,6 +19,14 @@ import {
   makeLayer,
 } from "../lib/layerUtils";
 import { saveTemplate, makeTemplateId } from "../lib/templateStore";
+import {
+  createPresetFromLayers,
+  deletePreset,
+  instantiatePreset,
+  listPresets,
+  savePreset,
+  type LayerPreset,
+} from "../lib/presetStore";
 import { loadSettings } from "../lib/storage";
 import { getTtsProvider } from "../lib/providers/tts";
 
@@ -58,6 +66,17 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const [history, setHistory] = useState<VideoTemplate[]>([initial]);
   const [historyIdx, setHistoryIdx] = useState(0);
   const skipHistoryRef = useRef(false);
+  // Undo/Redo の挙動修正用:
+  //   マウス押下中（ドラッグ / リサイズ / 回転）は pointer event が離されるまで
+  //   history に push しない。離したタイミングで最後の template を 1 件だけ commit する。
+  //   これでドラッグ 1 回 = history 1 件になり、Ctrl+Z 1 回で操作 1 回分戻せる。
+  const isPointerDownRef = useRef(false);
+  const pendingCommitRef = useRef<VideoTemplate | null>(null);
+  // setTimeout 等のコールバックから最新の historyIdx を参照するため
+  const historyIdxRef = useRef(0);
+  useEffect(() => {
+    historyIdxRef.current = historyIdx;
+  }, [historyIdx]);
 
   const [playheadSec, setPlayheadSec] = useState(0);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
@@ -75,6 +94,9 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [importCommentsOpen, setImportCommentsOpen] = useState(false);
+  const [presetOpen, setPresetOpen] = useState(false);
+  const [presetList, setPresetList] = useState<LayerPreset[]>([]);
+  const [newPresetName, setNewPresetName] = useState("");
   const clipboardRef = useRef<Layer[]>([]);
   // このセッション中に保存が完了したテンプレの id（新規初回保存後もここに入る）
   const [committedId, setCommittedId] = useState<string | null>(
@@ -130,10 +152,42 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
       skipHistoryRef.current = false;
       return;
     }
-    setHistory((h) => [...h.slice(0, historyIdx + 1), template]);
-    setHistoryIdx((i) => i + 1);
+    if (isPointerDownRef.current) {
+      // ドラッグ/リサイズ中は最新 snapshot を pending に保持するだけ。
+      // pointer up のタイミングでまとめて 1 件だけ commit する。
+      pendingCommitRef.current = template;
+      return;
+    }
+    const idx = historyIdxRef.current;
+    setHistory((h) => [...h.slice(0, idx + 1), template]);
+    setHistoryIdx(idx + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template]);
+
+  // マウス/タッチ/ペンのボタン押下中はドラッグと見なして history 抑制。
+  // 離したタイミングに pending があれば history へ commit する。
+  useEffect(() => {
+    const onDown = () => {
+      isPointerDownRef.current = true;
+    };
+    const onUp = () => {
+      isPointerDownRef.current = false;
+      const snap = pendingCommitRef.current;
+      if (!snap) return;
+      pendingCommitRef.current = null;
+      const idx = historyIdxRef.current;
+      setHistory((h) => [...h.slice(0, idx + 1), snap]);
+      setHistoryIdx(idx + 1);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, []);
 
   // template が変わったら dirty フラグを立てる（マウント時 / state reset 時は立てない）
   useEffect(() => {
@@ -530,6 +584,72 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
     clipboardRef.current = srcs;
   }, [selectedLayerIds, template.layers]);
 
+  // プリセット
+  const reloadPresets = useCallback(async () => {
+    try {
+      const list = await listPresets();
+      setPresetList(list);
+    } catch (e) {
+      console.warn("[TemplateBuilder] listPresets failed:", e);
+    }
+  }, []);
+  useEffect(() => {
+    if (presetOpen) reloadPresets();
+  }, [presetOpen, reloadPresets]);
+
+  const handleCreatePreset = useCallback(async () => {
+    const srcs = selectedLayerIds
+      .map((id) => template.layers.find((l) => l.id === id))
+      .filter((l): l is Layer => !!l);
+    if (srcs.length === 0) {
+      setSaveMsg({ type: "err", text: "レイヤーを選択してから保存してください" });
+      return;
+    }
+    const preset = createPresetFromLayers(newPresetName, srcs);
+    try {
+      await savePreset(preset);
+      setNewPresetName("");
+      await reloadPresets();
+      setSaveMsg({ type: "ok", text: `プリセット「${preset.name}」を保存しました` });
+    } catch (e) {
+      setSaveMsg({
+        type: "err",
+        text: e instanceof Error ? e.message : "保存失敗",
+      });
+    }
+  }, [selectedLayerIds, template.layers, newPresetName, reloadPresets]);
+
+  const handleInsertPreset = useCallback(
+    (preset: LayerPreset) => {
+      const newLayers = instantiatePreset(
+        preset,
+        playheadSec,
+        template.totalDuration,
+      );
+      if (newLayers.length === 0) return;
+      setTemplateState((t) => ({
+        ...t,
+        layers: [...t.layers, ...newLayers],
+      }));
+      setSelectedLayerIds(newLayers.map((l) => l.id));
+      setPresetOpen(false);
+    },
+    [playheadSec, template.totalDuration],
+  );
+
+  const handleDeletePreset = useCallback(
+    async (preset: LayerPreset) => {
+      if (!confirm(`プリセット「${preset.name}」を削除しますか?`)) return;
+      try {
+        await deletePreset(preset.id);
+        await reloadPresets();
+      } catch (e) {
+        console.warn("[TemplateBuilder] deletePreset failed:", e);
+      }
+    },
+    [reloadPresets],
+  );
+
   const pasteClipboard = useCallback(() => {
     const srcs = clipboardRef.current;
     if (srcs.length === 0) return;
@@ -667,12 +787,15 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
       }
       if (key === "arrowleft" || key === "arrowright") {
         const sign = key === "arrowleft" ? -1 : 1;
-        // Alt: 微調整 0.01s / 通常: 0.1s
-        const delta = sign * (e.altKey ? 0.01 : 0.1);
-        if (e.shiftKey && selectedLayerIds.length > 0) {
+        // Alt: 微調整 0.01s / Shift: 大きく 1.0s / 通常: 0.1s
+        const step = e.altKey ? 0.01 : e.shiftKey ? 1.0 : 0.1;
+        const delta = sign * step;
+        if (selectedLayerIds.length > 0) {
+          // 何か選択中 → レイヤーを時間方向に微調整
           e.preventDefault();
           nudgeSelectedLayer(delta);
         } else {
+          // 未選択 → プレイヘッドを左右に動かす
           e.preventDefault();
           setPlayheadSec((s) =>
             Math.max(0, Math.min(template.totalDuration, s + delta)),
@@ -737,6 +860,14 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           キャンセル
         </button>
       )}
+      <button
+        type="button"
+        onClick={() => setPresetOpen(true)}
+        className="px-3 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs"
+        title="選択レイヤーの見た目・アニメをプリセットに保存／プリセットから挿入"
+      >
+        🎁 プリセット
+      </button>
       <button
         type="button"
         onClick={() => setImportCommentsOpen(true)}
@@ -857,6 +988,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
                 onGenerateNarration={handleGenerateNarration}
                 narrationBusyLayerId={narrationBusy}
                 importedComments={template.importedComments}
+                playheadSec={playheadSec}
               />
             </div>
             <div
@@ -958,6 +1090,95 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         }}
         onClose={() => setImportCommentsOpen(false)}
       />
+
+      {presetOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setPresetOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-[520px] max-h-[80vh] overflow-hidden flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h3 className="font-semibold text-sm">🎁 レイヤープリセット</h3>
+              <button
+                type="button"
+                onClick={() => setPresetOpen(false)}
+                className="text-gray-500 hover:text-gray-700 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+              <div className="text-[11px] text-gray-500">
+                選択中のレイヤー（{selectedLayerIds.length}件）の見た目・アニメ・キーフレームをプリセットとして保存。
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={newPresetName}
+                  onChange={(e) => setNewPresetName(e.target.value)}
+                  placeholder="プリセット名"
+                  className="flex-1 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                />
+                <button
+                  type="button"
+                  onClick={handleCreatePreset}
+                  disabled={selectedLayerIds.length === 0}
+                  className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white text-xs"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {presetList.length === 0 ? (
+                <div className="px-4 py-6 text-center text-[11px] text-gray-400">
+                  プリセット未作成。上で作成してください。
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {presetList.map((p) => (
+                    <li
+                      key={p.id}
+                      className="px-4 py-2 flex items-center justify-between gap-2"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium truncate">
+                          {p.name}
+                        </div>
+                        <div className="text-[10px] text-gray-500">
+                          {p.layers.length}レイヤー ·{" "}
+                          {new Date(p.createdAt).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleInsertPreset(p)}
+                        className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px]"
+                        title={`現在のプレイヘッド位置 (${playheadSec.toFixed(2)}s) に挿入`}
+                      >
+                        ＋ 挿入
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePreset(p)}
+                        className="px-2 py-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 text-[11px]"
+                        title="削除"
+                      >
+                        🗑
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

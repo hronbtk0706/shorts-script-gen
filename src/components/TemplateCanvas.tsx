@@ -3,6 +3,7 @@ import Moveable from "react-moveable";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { ColorGrade, Layer, TemplateSegment } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
+import { sampleLayerAt } from "../lib/keyframes";
 
 function resolveSrcForWebview(src: string | undefined): string | null {
   if (!src) return null;
@@ -359,7 +360,7 @@ interface LayerViewProps {
 }
 
 function LayerView({
-  layer,
+  layer: rawLayer,
   isSelected,
   isPrimary = false,
   dimmed = false,
@@ -376,6 +377,23 @@ function LayerView({
   useEffect(() => {
     if (isSelected) onRefReady(ref.current);
   }, [isSelected, onRefReady]);
+
+  // 再生中はキーフレーム補間値で表示（編集中は静的値のまま、ドラッグ等の操作を妨げない）
+  const layer: Layer =
+    isPlaying && rawLayer.keyframes
+      ? (() => {
+          const s = sampleLayerAt(rawLayer, currentTimeSec);
+          return {
+            ...rawLayer,
+            x: s.x,
+            y: s.y,
+            width: s.width,
+            height: s.height,
+            rotation: s.rotation,
+            opacity: s.opacity,
+          };
+        })()
+      : rawLayer;
 
   const leftPx = (layer.x / 100) * canvasWPx;
   const topPx = (layer.y / 100) * canvasHPx;

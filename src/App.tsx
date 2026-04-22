@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { ScriptForm, type ScriptFormSubmit } from "./components/ScriptForm";
 import { ScriptResult } from "./components/ScriptResult";
 import { SettingsModal } from "./components/SettingsModal";
-import { VideoGenerator } from "./components/VideoGenerator";
 import { AnalyticsPanel } from "./components/AnalyticsPanel";
 import { CandidatePicker } from "./components/CandidatePicker";
 import { TemplateManager } from "./components/TemplateManager";
@@ -139,8 +138,6 @@ function App() {
     }
   };
 
-  const videoApiKey = settings?.geminiApiKey ?? "";
-
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
       <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
@@ -222,11 +219,9 @@ function App() {
                   ) : (
                     <ScriptResult script={script} onChange={setScript} />
                   )}
-                  <VideoGenerator
-                    apiKey={videoApiKey}
-                    script={script}
-                    scriptInput={scriptInput ?? undefined}
-                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    動画書き出しは「テンプレート管理」タブからテンプレートを開いて行ってください。
+                  </p>
                 </div>
               )}
             </section>

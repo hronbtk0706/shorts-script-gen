@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
 import { sortedLayers } from "./layerUtils";
+import { sampleLayerAt } from "./keyframes";
 
 const FINAL_W = 1080;
 const FINAL_H = 1920;
@@ -55,10 +56,27 @@ export async function composeLayersToDataUrl(
     if (layer.type === "video" && opts.skipVideoLayers) continue;
     // 指定時刻で不可視なら描画しない
     if (t !== undefined && (t < layer.startSec || t >= layer.endSec)) continue;
-    await drawLayer(ctx, layer, resolveSrc);
+    // 時刻指定があればキーフレーム補間を反映
+    const drawTarget = t !== undefined ? applyKeyframesAtTime(layer, t) : layer;
+    await drawLayer(ctx, drawTarget, resolveSrc);
   }
 
   return canvas.toDataURL("image/png");
+}
+
+/** 指定時刻でのキーフレーム補間値を layer に適用した新しい Layer を返す */
+function applyKeyframesAtTime(layer: Layer, t: number): Layer {
+  if (!layer.keyframes) return layer;
+  const s = sampleLayerAt(layer, t);
+  return {
+    ...layer,
+    x: s.x,
+    y: s.y,
+    width: s.width,
+    height: s.height,
+    rotation: s.rotation,
+    opacity: s.opacity,
+  };
 }
 
 /** 単一レイヤーを透明背景の PNG として保存して絶対パスを返す（時間ゲート overlay 用） */

@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Script, VideoTemplate } from "../types";
-import { applyManualAssignments, buildManualScript } from "./manualScript";
-import { generateVideo, type ProgressUpdate } from "./video";
+import type { VideoTemplate } from "../types";
+import { generateVideoFromTemplate, type ProgressUpdate } from "./video";
 
 export interface ExportOptions {
   template: VideoTemplate;
@@ -15,26 +14,15 @@ export interface ExportResult {
 
 /**
  * テンプレ編集画面から単体のテンプレをそのまま 1 本の MP4 に書き出す。
- * 内部では manual モード相当で Script を合成してから generateVideo を呼ぶ。
+ * 新方式: レイヤーだけで動画全体を 1 本の filter_complex で合成する。
+ * シーン分割 / hook-body-cta / motion / color / xfade の概念は一切使わない。
  * キャンセルする場合は `invoke("cancel_export")` を呼ぶこと。
  */
 export async function exportTemplateToVideo(
   opts: ExportOptions,
 ): Promise<ExportResult> {
   const { template, onProgress } = opts;
-
-  // manualScript と同じ経路で hook/body/cta セグメントを補完しつつテンプレをクローン
-  const patched = applyManualAssignments(template, {}, {}, {}, {});
-  const prebuilt: Script = buildManualScript(patched, null);
-
-  const result = await generateVideo(
-    "",
-    prebuilt,
-    onProgress,
-    patched,
-    { manualMode: true },
-  );
-  return result;
+  return generateVideoFromTemplate(template, onProgress);
 }
 
 export async function cancelTemplateExport(): Promise<void> {

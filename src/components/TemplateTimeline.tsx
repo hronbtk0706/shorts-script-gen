@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer, TemplateSegment } from "../types";
+import type { Layer, LayerKeyframes, TemplateSegment } from "../types";
 import { applyTrackAction, hasTimeConflictOnTrack } from "../lib/layerUtils";
+
+const KEYFRAME_PROPS = ["x", "y", "scale", "opacity", "rotation"] as const;
 
 /** レイヤーソース → Webview で表示可能な URL に変換（ローカルパスは convertFileSrc） */
 function resolveLayerSrcForBar(src: string | undefined): string | null {
@@ -155,6 +157,13 @@ export function TemplateTimeline({
   const tracksContainerRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [playheadDragging, setPlayheadDragging] = useState(false);
+  // タイムライン上のキーフレームマーカーを掴んで時刻編集するときの状態
+  const [kfDrag, setKfDrag] = useState<{
+    layerId: string;
+    originalTime: number;
+    initialMouseX: number;
+    currentTime: number;
+  } | null>(null);
   const [pxPerSec, setPxPerSec] = useState(DEFAULT_PX_PER_SEC);
   const pxPerSecRef = useRef(pxPerSec);
   useEffect(() => {
@@ -624,6 +633,50 @@ export function TemplateTimeline({
     };
   }, [playheadDragging, pxPerSec, totalDuration, segments, layers, onPlayheadChange]);
 
+  // キーフレームマーカーのドラッグ
+  useEffect(() => {
+    if (!kfDrag) return;
+    const onMouseMove = (e: MouseEvent) => {
+      const deltaPx = e.clientX - kfDrag.initialMouseX;
+      const deltaSec = pxToSec(deltaPx);
+      const rawTime = kfDrag.originalTime + deltaSec;
+      const clamped = Math.max(0, Math.min(totalDuration, rawTime));
+      // 他レイヤー端 / プレイヘッド / セグメント境界にスナップ
+      const snapped = snapToPoint(clamped);
+      setKfDrag((s) => (s ? { ...s, currentTime: snapped } : null));
+    };
+    const onMouseUp = () => {
+      const layer = layers.find((l) => l.id === kfDrag.layerId);
+      if (!layer || !layer.keyframes) {
+        setKfDrag(null);
+        return;
+      }
+      const nextKf: LayerKeyframes = { ...layer.keyframes };
+      for (const prop of KEYFRAME_PROPS) {
+        const track = nextKf[prop];
+        if (!track) continue;
+        const changed = track.frames.map((f) =>
+          Math.abs(f.time - kfDrag.originalTime) < 0.001
+            ? { ...f, time: kfDrag.currentTime }
+            : f,
+        );
+        changed.sort((a, b) => a.time - b.time);
+        nextKf[prop] = { ...track, frames: changed };
+      }
+      onLayerUpdate(kfDrag.layerId, { keyframes: nextKf });
+      setKfDrag(null);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "ew-resize";
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kfDrag, pxPerSec, totalDuration, layers, segments]);
+
   const isDraggingMove = drag !== null && drag.mode === "move";
 
   return (
@@ -867,6 +920,79 @@ export function TemplateTimeline({
                                 )}
                               </div>
                             )}
+                            {(() => {
+                              // キーフレームのマーカー（上端に黄色ドット）
+                              const kf = layer.keyframes;
+                              if (!kf) return null;
+                              const timeSet = new Set<number>();
+                              for (const prop of [
+                                "x",
+                                "y",
+                                "scale",
+                                "opacity",
+                                "rotation",
+                              ] as const) {
+                                const track = kf[prop];
+                                if (!track || !track.enabled) continue;
+                                for (const f of track.frames) {
+                                  timeSet.add(f.time);
+                                }
+                              }
+                              if (timeSet.size === 0) return null;
+                              const times = Array.from(timeSet);
+                              return (
+                                <>
+                                  {times.map((t, i) => {
+                                    // ドラッグ中はプレビュー位置（元の時刻のマーカーだけ動かす）
+                                    const isDraggingThis =
+                                      kfDrag?.layerId === layer.id &&
+                                      Math.abs(kfDrag.originalTime - t) < 0.001;
+                                    const displayTime = isDraggingThis
+                                      ? kfDrag!.currentTime
+                                      : t;
+                                    const offsetPx =
+                                      (displayTime - layer.startSec) *
+                                      pxPerSec;
+                                    if (
+                                      offsetPx < 0 ||
+                                      offsetPx > barWidth
+                                    )
+                                      return null;
+                                    return (
+                                      <div
+                                        key={`kf-${i}`}
+                                        onMouseDown={(ev) => {
+                                          ev.preventDefault();
+                                          ev.stopPropagation();
+                                          setKfDrag({
+                                            layerId: layer.id,
+                                            originalTime: t,
+                                            initialMouseX: ev.clientX,
+                                            currentTime: t,
+                                          });
+                                        }}
+                                        className="absolute"
+                                        style={{
+                                          left: offsetPx - 4,
+                                          top: -5,
+                                          width: 8,
+                                          height: 8,
+                                          background: isDraggingThis
+                                            ? "#f97316"
+                                            : "#fbbf24",
+                                          border:
+                                            "1px solid rgba(0,0,0,0.5)",
+                                          transform: "rotate(45deg)",
+                                          zIndex: 3,
+                                          cursor: "ew-resize",
+                                        }}
+                                        title={`キーフレーム t=${displayTime.toFixed(2)}s（ドラッグで時刻変更）`}
+                                      />
+                                    );
+                                  })}
+                                </>
+                              );
+                            })()}
                             {(() => {
                               const isAudio = layer.type === "audio";
                               const entryDurSec = isAudio

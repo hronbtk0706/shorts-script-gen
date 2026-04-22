@@ -103,6 +103,32 @@ export interface LayerV1 {
   motion?: Motion;
 }
 
+/** キーフレーム補間の 1 点（グローバル時刻 / 値） */
+export interface Keyframe {
+  /** グローバル時刻 (秒) */
+  time: number;
+  /** そのプロパティの値 */
+  value: number;
+}
+
+/** 1 プロパティ分のキーフレームトラック */
+export interface KeyframeTrack {
+  /** false なら無効化（レイヤーの静的値を使う） */
+  enabled: boolean;
+  /** 時刻順に並んでいることが望ましい（表示/エクスポート時にソートされる） */
+  frames: Keyframe[];
+}
+
+/** レイヤーの各プロパティ別キーフレームトラック */
+export interface LayerKeyframes {
+  x?: KeyframeTrack;
+  y?: KeyframeTrack;
+  /** 追加倍率（1.0 = 等倍）。width/height にこれを掛けて描画される */
+  scale?: KeyframeTrack;
+  opacity?: KeyframeTrack;
+  rotation?: KeyframeTrack;
+}
+
 /** v2 Timeline 型レイヤー */
 export interface Layer {
   id: string;
@@ -152,6 +178,8 @@ export interface Layer {
   audioFadeOut?: number;
   /** 音声レイヤー専用: 素材が短いときにループ再生するか */
   audioLoop?: boolean;
+  /** 音声/動画レイヤー: 再生速度倍率。1.0 = 等速、0.5 = 半分、2.0 = 倍速 */
+  playbackRate?: number;
   /** 動画レイヤー専用: 素材が短いときにループ再生するか（default: true） */
   videoLoop?: boolean;
   /** 動画/音声レイヤー: 素材の秒数（ファイル読み込み時にキャッシュ。ループOFF時の長さ制限に使用） */
@@ -170,6 +198,8 @@ export interface Layer {
   textDecoration?: TextDecoration;
   /** キーワード強調時の色（keyword-color で使用） */
   keywordColor?: string;
+  /** キーフレームアニメーション（最小版: x / y / scale / opacity / rotation、linear 補間） */
+  keyframes?: LayerKeyframes;
 }
 
 export interface TemplateSegment {
