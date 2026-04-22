@@ -202,18 +202,6 @@ export interface Layer {
   keyframes?: LayerKeyframes;
 }
 
-export interface TemplateSegment {
-  id: string;
-  type: "hook" | "body" | "cta";
-  /** type="body" のとき台本 body[i] の i */
-  bodyIndex?: number;
-  startSec: number;
-  endSec: number;
-  color?: ColorGrade;
-  transitionTo?: TransitionType;
-  transitionDuration?: number;
-}
-
 export interface VideoTemplate {
   version: 2;
   id: string;
@@ -229,8 +217,6 @@ export interface VideoTemplate {
   themeVibe?: string;
   /** 全レイヤーを global timeline に配置 */
   layers: Layer[];
-  /** 台本マッピング用のセグメント（hook/body/cta） */
-  segments: TemplateSegment[];
   /** テンプレ編集画面でインポートした YouTube コメント（次回取得で上書き） */
   importedComments?: ExtractedComment[];
   /** importedComments の取得元動画メタ情報 */

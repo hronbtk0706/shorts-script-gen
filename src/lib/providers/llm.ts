@@ -134,40 +134,30 @@ function buildPromptBody(input: ScriptInput): string {
 
   if (input.template) {
     const t = input.template;
-    const bodySegments = t.segments.filter((s) => s.type === "body");
-    const hookSeg = t.segments.find((s) => s.type === "hook");
-    const ctaSeg = t.segments.find((s) => s.type === "cta");
+    const total = Math.max(1, t.totalDuration);
+    const hookDur = Math.min(3, total * 0.1);
+    const ctaDur = Math.min(3, total * 0.1);
+    const bodyStart = hookDur;
+    const bodyEnd = total - ctaDur;
     lines.push(
       "",
       "# 使用テンプレート【重要：構成・尺はこれに従う】",
       `- 名前: ${t.name}`,
       `- 全体尺: ${t.totalDuration}秒（厳守）`,
-      `- body セグメント数: ${bodySegments.length}`,
+      `- body セグメント数: 1`,
       t.themeVibe ? `- 雰囲気: ${t.themeVibe}` : "",
       t.overallPacing ? `- ペース: ${t.overallPacing}` : "",
       t.narrationStyle ? `- ナレーション口調: ${t.narrationStyle}` : "",
       "",
       "## セグメント指定",
+      `- hook: 0-${hookDur.toFixed(1)}s (${hookDur.toFixed(1)}秒)`,
+      `- body[0]: ${bodyStart.toFixed(1)}-${bodyEnd.toFixed(1)}s (${(bodyEnd - bodyStart).toFixed(1)}秒)`,
+      `- cta: ${bodyEnd.toFixed(1)}-${total.toFixed(1)}s (${ctaDur.toFixed(1)}秒)`,
     );
-    if (hookSeg) {
-      lines.push(
-        `- hook: ${hookSeg.startSec}-${hookSeg.endSec}s (${(hookSeg.endSec - hookSeg.startSec).toFixed(1)}秒)`,
-      );
-    }
-    bodySegments.forEach((s, i) => {
-      lines.push(
-        `- body[${i}]: ${s.startSec}-${s.endSec}s (${(s.endSec - s.startSec).toFixed(1)}秒)`,
-      );
-    });
-    if (ctaSeg) {
-      lines.push(
-        `- cta: ${ctaSeg.startSec}-${ctaSeg.endSec}s (${(ctaSeg.endSec - ctaSeg.startSec).toFixed(1)}秒)`,
-      );
-    }
     lines.push(
       "",
       "## テンプレ適用ルール",
-      `- body[] は **body セグメント数（${bodySegments.length}個）と同じ要素数**にする`,
+      "- body[] は **body セグメント数（1個）と同じ要素数**にする",
       "- 各 body[i] の seconds はテンプレの対応 body セグメントに一致",
       "- hook/cta の seconds も対応するセグメントに一致",
       "- ガイドラインとして柔軟に扱ってよいが、**セグメント数と全体尺は変えない**",

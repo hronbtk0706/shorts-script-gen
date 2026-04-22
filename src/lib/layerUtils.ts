@@ -1,15 +1,9 @@
-import type { Layer, LayerType, TemplateSegment, VideoTemplate } from "../types";
+import type { Layer, LayerType, VideoTemplate } from "../types";
 
 export function genLayerId(): string {
   return `ly_${Date.now().toString(36)}_${Math.random()
     .toString(36)
     .slice(2, 8)}`;
-}
-
-export function genSegmentId(): string {
-  return `sg_${Date.now().toString(36)}_${Math.random()
-    .toString(36)
-    .slice(2, 6)}`;
 }
 
 interface NewLayerDefaults {
@@ -75,23 +69,6 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
         audioLoop: false,
       };
   }
-}
-
-export function makeSegment(
-  type: "hook" | "body" | "cta",
-  startSec: number,
-  endSec: number,
-  bodyIndex?: number,
-): TemplateSegment {
-  return {
-    id: genSegmentId(),
-    type,
-    startSec,
-    endSec,
-    bodyIndex,
-    transitionTo: type === "hook" ? "flash" : "cut",
-    transitionDuration: type === "hook" ? 0.15 : 0,
-  };
 }
 
 /** 指定時刻に可視なレイヤーを返す */
@@ -314,12 +291,10 @@ export function isValidV2Template(t: unknown): t is VideoTemplate {
   return (
     tpl.version === 2 &&
     typeof tpl.id === "string" &&
-    Array.isArray(tpl.layers) &&
-    Array.isArray(tpl.segments)
+    Array.isArray(tpl.layers)
   );
 }
 
-/** 新規空テンプレを作成（hook/body/cta の 3 セグメント付き） */
 export function newBlankTemplateData(name: string, id: string): VideoTemplate {
   const totalDuration = 30;
   return {
@@ -332,10 +307,5 @@ export function newBlankTemplateData(name: string, id: string): VideoTemplate {
     overallPacing: "",
     narrationStyle: "",
     layers: [],
-    segments: [
-      makeSegment("hook", 0, 3),
-      makeSegment("body", 3, 27, 0),
-      makeSegment("cta", 27, 30),
-    ],
   };
 }

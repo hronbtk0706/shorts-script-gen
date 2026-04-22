@@ -7,32 +7,5 @@
   "themeVibe": "",
   "overallPacing": "",
   "narrationStyle": "",
-  "layers": [],
-  "segments": [
-    {
-      "id": "sg_mo83y7en_qv3l",
-      "type": "hook",
-      "startSec": 0,
-      "endSec": 3,
-      "transitionTo": "flash",
-      "transitionDuration": 0.15
-    },
-    {
-      "id": "sg_mo83y7en_q49f",
-      "type": "body",
-      "startSec": 3,
-      "endSec": 27,
-      "bodyIndex": 0,
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo83y7en_uebm",
-      "type": "cta",
-      "startSec": 27,
-      "endSec": 30,
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    }
-  ]
+  "layers": []
 }

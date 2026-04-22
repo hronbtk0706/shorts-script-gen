@@ -334,8 +334,7 @@ export function TemplateManager() {
                   >
                     <div className="font-medium text-sm truncate">{t.name}</div>
                     <div className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">
-                      {t.totalDuration}秒 / {t.layers.length}レイヤー ·{" "}
-                      {t.segments.length}セグメント
+                      {t.totalDuration}秒 / {t.layers.length}レイヤー
                       {t.themeVibe && ` / ${t.themeVibe}`}
                     </div>
                     {t.note && (

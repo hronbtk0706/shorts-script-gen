@@ -1511,67 +1511,6 @@
       "fillColor": "#FFFFFF"
     }
   ],
-  "segments": [
-    {
-      "id": "sg_mo8hdwt3_szw7",
-      "type": "hook",
-      "startSec": 0,
-      "endSec": 2.5,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8hdwt4_769y",
-      "type": "body",
-      "bodyIndex": 0,
-      "startSec": 2.5,
-      "endSec": 17,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8hdwt4_8yib",
-      "type": "body",
-      "bodyIndex": 1,
-      "startSec": 17,
-      "endSec": 27,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8hdwt4_vku7",
-      "type": "body",
-      "bodyIndex": 2,
-      "startSec": 27,
-      "endSec": 39,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8hdwt4_iug6",
-      "type": "body",
-      "bodyIndex": 3,
-      "startSec": 39,
-      "endSec": 45.5,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8hdwt4_5m45",
-      "type": "body",
-      "bodyIndex": 4,
-      "startSec": 45.5,
-      "endSec": 57,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    }
-  ],
   "overallPacing": "速いテンポで、絵の紹介とコメントが交互に表示される",
   "narrationStyle": "AI読み上げ風・短文テロップ多い",
   "themeVibe": "驚きとユーモアのある反応集"

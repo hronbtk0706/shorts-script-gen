@@ -1,13 +1,10 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type {
   VideoTemplate,
-  TemplateSegment,
   Layer,
   LayerType,
   LayerShape,
   Motion,
-  ColorGrade,
-  TransitionType,
   EntryAnimation,
   ExitAnimation,
   AmbientAnimation,
@@ -17,7 +14,7 @@ import type {
 } from "../types";
 import { withRetry } from "./retry";
 import { makeTemplateId } from "./templateStore";
-import { genLayerId, genSegmentId } from "./layerUtils";
+import { genLayerId } from "./layerUtils";
 
 // 許可 enum（types.ts と同期。違反値は既定値にフォールバック）
 const LAYER_TYPES: LayerType[] = ["image", "video", "color", "shape", "comment"];
@@ -34,58 +31,6 @@ const MOTIONS: Motion[] = [
   "push_in",
   "zoom_punch",
   "shake",
-];
-const COLOR_GRADES: ColorGrade[] = [
-  "none",
-  "sepia",
-  "bw",
-  "vintage",
-  "vivid",
-  "cool",
-  "warm",
-  "vignette",
-  "neon",
-  "high_contrast",
-  "soft_glow",
-  "film_grain",
-];
-const TRANSITIONS: TransitionType[] = [
-  "cut",
-  "fade",
-  "fadeblack",
-  "fadewhite",
-  "fadegrays",
-  "flash",
-  "slideleft",
-  "slideright",
-  "slideup",
-  "slidedown",
-  "dissolve",
-  "zoomin",
-  "circleopen",
-  "circleclose",
-  "wipeleft",
-  "wiperight",
-  "wipeup",
-  "wipedown",
-  "pixelize",
-  "smoothleft",
-  "radial",
-  "hblur",
-  "squeezev",
-  "squeezeh",
-  "coverleft",
-  "coverright",
-  "coverup",
-  "coverdown",
-  "revealleft",
-  "revealright",
-  "revealup",
-  "revealdown",
-  "diagtl",
-  "diagtr",
-  "diagbl",
-  "diagbr",
 ];
 const ENTRY_ANIMS: EntryAnimation[] = [
   "none",
@@ -164,16 +109,6 @@ function pickNum(
   const n = typeof value === "number" ? value : Number(value);
   if (!isFinite(n)) return fallback;
   return Math.max(min, Math.min(max, n));
-}
-
-interface AnalyzedSegment {
-  type: "hook" | "body" | "cta";
-  startSec: number;
-  endSec: number;
-  color?: string;
-  transition?: string;
-  transitionDuration?: number;
-  description?: string;
 }
 
 interface AnalyzedLayer {
@@ -340,32 +275,6 @@ const layerSchema = {
   ],
 };
 
-const segmentSchema = {
-  type: Type.OBJECT,
-  properties: {
-    type: { type: Type.STRING, enum: ["hook", "body", "cta"] },
-    startSec: { type: Type.NUMBER },
-    endSec: { type: Type.NUMBER },
-    color: { type: Type.STRING, enum: COLOR_GRADES as unknown as string[] },
-    transition: {
-      type: Type.STRING,
-      enum: TRANSITIONS as unknown as string[],
-    },
-    transitionDuration: { type: Type.NUMBER },
-    description: { type: Type.STRING },
-  },
-  required: ["type", "startSec", "endSec"],
-  propertyOrdering: [
-    "type",
-    "startSec",
-    "endSec",
-    "color",
-    "transition",
-    "transitionDuration",
-    "description",
-  ],
-};
-
 const templateSchema = {
   type: Type.OBJECT,
   properties: {
@@ -376,7 +285,6 @@ const templateSchema = {
     overallPacing: { type: Type.STRING },
     narrationStyle: { type: Type.STRING },
     suggestedName: { type: Type.STRING },
-    segments: { type: Type.ARRAY, items: segmentSchema },
     layers: { type: Type.ARRAY, items: layerSchema },
   },
   required: [
@@ -387,7 +295,6 @@ const templateSchema = {
     "overallPacing",
     "narrationStyle",
     "suggestedName",
-    "segments",
     "layers",
   ],
   propertyOrdering: [
@@ -398,7 +305,6 @@ const templateSchema = {
     "overallPacing",
     "narrationStyle",
     "suggestedName",
-    "segments",
     "layers",
   ],
 };
@@ -418,16 +324,6 @@ function buildAnalysisPrompt(): string {
     "- overallPacing: ペース感の文章説明",
     "- narrationStyle: ナレーションの口調（例: 『AI読み上げ風・短文テロップ多い』『ナレ無しテロップのみ』）",
     "- suggestedName: 20字以内の汎用名（別トピックで再利用可能な名前）",
-    "",
-    "# segments（hook / body / cta の構造）",
-    "動画を 3 区分（hook=最初の数秒の引き / body=本編 / cta=最後の呼びかけ）に分け、body は複数分けて OK。",
-    "各セグメントに:",
-    "- type: 'hook' | 'body' | 'cta'",
-    "- startSec / endSec",
-    "- color: カラーグレード（none/sepia/bw/vintage/vivid/cool/warm/vignette/neon/high_contrast/soft_glow/film_grain）",
-    "- transition: 次のセグメントへのトランジション（cut/fade/flash/slideleft/zoomin/dissolve ... など Rust 対応済み30+種）",
-    "- transitionDuration: トランジション秒（cut なら 0、通常 0.3〜0.8）",
-    "- description: 1 文で何が映ってるか（内容ではなく構造）",
     "",
     "# layers（動画全体の global timeline に配置するレイヤー）",
     "動画内で視覚的に区別できる要素を全てレイヤーとして抽出。背景画像、テロップ、コメント枠、アイコン、帯、図形などを分けて。",
@@ -612,25 +508,6 @@ function toLayer(al: AnalyzedLayer, totalDuration: number): Layer {
   return base;
 }
 
-function toSegment(
-  seg: AnalyzedSegment,
-  bodyIdx: { value: number },
-): TemplateSegment {
-  const type = (["hook", "body", "cta"] as const).includes(seg.type)
-    ? seg.type
-    : "body";
-  return {
-    id: genSegmentId(),
-    type,
-    bodyIndex: type === "body" ? bodyIdx.value++ : undefined,
-    startSec: pickNum(seg.startSec, 0, 1e6, 0),
-    endSec: pickNum(seg.endSec, 0, 1e6, 0),
-    color: pick<ColorGrade>(seg.color, COLOR_GRADES, "none"),
-    transitionTo: pick<TransitionType>(seg.transition, TRANSITIONS, "cut"),
-    transitionDuration: pickNum(seg.transitionDuration, 0, 5, 0),
-  };
-}
-
 export async function analyzeTemplate(
   apiKey: string,
   url: string,
@@ -701,7 +578,6 @@ export async function analyzeTemplate(
     overallPacing: string;
     narrationStyle: string;
     suggestedName: string;
-    segments: AnalyzedSegment[];
     layers: AnalyzedLayer[];
   };
   try {
@@ -713,14 +589,6 @@ export async function analyzeTemplate(
   }
 
   const totalDuration = pickNum(parsed.totalDuration, 1, 600, 30);
-
-  if (!Array.isArray(parsed.segments) || parsed.segments.length === 0) {
-    throw new TemplateAnalysisError("segments が空または不正です");
-  }
-  const bodyIdx = { value: 0 };
-  const segments: TemplateSegment[] = parsed.segments
-    .sort((a, b) => a.startSec - b.startSec)
-    .map((s) => toSegment(s, bodyIdx));
 
   // layers は無くても OK（その場合は全画面背景を1枚デフォルト追加）
   let layers: Layer[] = [];
@@ -760,7 +628,6 @@ export async function analyzeTemplate(
     createdAt: new Date().toISOString(),
     totalDuration,
     layers,
-    segments,
     overallPacing: parsed.overallPacing,
     narrationStyle: parsed.narrationStyle,
     themeVibe: parsed.themeVibe,

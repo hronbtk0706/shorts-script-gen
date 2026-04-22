@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer, LayerKeyframes, TemplateSegment } from "../types";
+import type { Layer, LayerKeyframes } from "../types";
 import { applyTrackAction, hasTimeConflictOnTrack } from "../lib/layerUtils";
 
 const KEYFRAME_PROPS = ["x", "y", "scale", "opacity", "rotation"] as const;
@@ -71,7 +71,6 @@ function BarThumbnail({ layer }: { layer: Layer }) {
 
 interface Props {
   layers: Layer[];
-  segments: TemplateSegment[];
   totalDuration: number;
   playheadSec: number;
   selectedLayerId: string | null;
@@ -131,15 +130,8 @@ const LAYER_ICON: Record<string, string> = {
   audio: "🎵",
 };
 
-const SEGMENT_BG: Record<string, string> = {
-  hook: "rgba(245, 158, 11, 0.12)",
-  body: "rgba(59, 130, 246, 0.08)",
-  cta: "rgba(16, 185, 129, 0.12)",
-};
-
 export function TemplateTimeline({
   layers,
-  segments,
   totalDuration,
   playheadSec,
   selectedLayerId,
@@ -315,9 +307,6 @@ export function TemplateTimeline({
     const tolerance = tolerancePx / Math.max(pxPerSec, 1);
     const points: number[] = [0, totalDuration];
     if (!opts?.excludePlayhead) points.push(playheadSec);
-    for (const seg of segments) {
-      points.push(seg.startSec, seg.endSec);
-    }
     for (const layer of layers) {
       if (layer.id === opts?.excludeLayerId) continue;
       points.push(layer.startSec, layer.endSec);
@@ -552,7 +541,7 @@ export function TemplateTimeline({
       window.removeEventListener("mouseup", onMouseUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag, pxPerSec, totalDuration, segments, layers, playheadSec, tracks]);
+  }, [drag, pxPerSec, totalDuration, layers, playheadSec, tracks]);
 
   const startDrag = (
     e: React.MouseEvent,
@@ -631,7 +620,7 @@ export function TemplateTimeline({
       window.removeEventListener("mouseup", onMouseUp);
       document.body.style.cursor = "";
     };
-  }, [playheadDragging, pxPerSec, totalDuration, segments, layers, onPlayheadChange]);
+  }, [playheadDragging, pxPerSec, totalDuration, layers, onPlayheadChange]);
 
   // キーフレームマーカーのドラッグ
   useEffect(() => {
@@ -675,7 +664,7 @@ export function TemplateTimeline({
       document.body.style.cursor = "";
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kfDrag, pxPerSec, totalDuration, layers, segments]);
+  }, [kfDrag, pxPerSec, totalDuration, layers, layers]);
 
   const isDraggingMove = drag !== null && drag.mode === "move";
 
@@ -710,24 +699,6 @@ export function TemplateTimeline({
               style={{ width: trackContentWidth, height: RULER_HEIGHT }}
               onMouseDown={handleTrackBgMouseDown}
             >
-              {segments.map((s) => (
-                <div
-                  key={s.id}
-                  className="absolute top-0 bottom-0 border-l border-gray-300 dark:border-gray-600"
-                  style={{
-                    left: secToPx(s.startSec),
-                    width: Math.max(2, secToPx(s.endSec - s.startSec)),
-                    background: SEGMENT_BG[s.type] ?? "transparent",
-                  }}
-                >
-                  <div className="text-[9px] text-gray-500 pl-1 pt-0.5">
-                    {s.type}
-                    {s.type === "body" && s.bodyIndex !== undefined
-                      ? `[${s.bodyIndex}]`
-                      : ""}
-                  </div>
-                </div>
-              ))}
               {Array.from({ length: Math.floor(totalDuration) + 1 }).map(
                 (_, s) => (
                   <div

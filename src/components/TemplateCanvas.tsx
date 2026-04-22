@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { ColorGrade, Layer, TemplateSegment } from "../types";
+import type { Layer } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
 
@@ -42,8 +42,6 @@ interface Props {
   currentTimeSec?: number;
   /** タイムライン再生中かどうか（動画レイヤー再生同期用） */
   isPlaying?: boolean;
-  /** セグメント一覧（Color グレード / トランジション算出用） */
-  segments?: TemplateSegment[];
 }
 
 /** 9:16 仮想キャンバスの最大サイズ。親幅／ビューポート高さに応じて拡縮 */
@@ -62,7 +60,6 @@ export function TemplateCanvas({
   showGrid = false,
   currentTimeSec,
   isPlaying = false,
-  segments = [],
 }: Props) {
   const selectedSet = new Set<string>(
     selectedLayerIds ?? (selectedLayerId ? [selectedLayerId] : []),
@@ -111,14 +108,6 @@ export function TemplateCanvas({
 
   const CANVAS_W_PX = canvasSize.w;
   const CANVAS_H_PX = canvasSize.h;
-
-  // 現在のセグメントから色効果を計算
-  const colorEffects = computeSegmentColorEffects(segments, currentTimeSec ?? 0);
-  // セグメント境界のトランジション表示
-  const transitionOverlay = computeSegmentTransitionOverlay(
-    segments,
-    currentTimeSec ?? 0,
-  );
 
   // 表示中（in-time）でかつ selected のレイヤーだけ Moveable を出す。hidden/locked は除外
   const selected =
@@ -193,7 +182,7 @@ export function TemplateCanvas({
             canvasHPx={CANVAS_H_PX}
             currentTimeSec={currentTimeSec ?? 0}
             isPlaying={isPlaying}
-            cssFilter={colorEffects.cssFilter}
+            cssFilter=""
             onSelect={(modifier) => onLayerSelect(layer.id, modifier)}
             onRefReady={(el) => {
               if (layer.id === selectedLayerId) {
@@ -203,19 +192,6 @@ export function TemplateCanvas({
             }}
           />
         ))}
-
-      {colorEffects.vignette && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-            zIndex: 9000,
-            background:
-              "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%)",
-          }}
-        />
-      )}
 
       {/* 音声レイヤー（視覚なし、<audio> を playhead 同期） */}
       {layers
@@ -228,19 +204,6 @@ export function TemplateCanvas({
             isPlaying={isPlaying}
           />
         ))}
-
-      {transitionOverlay && (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            pointerEvents: "none",
-            zIndex: 9500,
-            background: transitionOverlay.color,
-            opacity: transitionOverlay.alpha,
-          }}
-        />
-      )}
 
       {selected && targetRef.current && (
         <Moveable
@@ -1019,102 +982,6 @@ export function computeLayerAmbientStyle(
     }
   }
   return { opacity, transform: parts.join(" "), filter: filters.join(" ") };
-}
-
-/**
- * セグメント境界のトランジション (fade/fadeblack/fadewhite/flash) を
- * CSS オーバーレイ情報に変換する。該当なしなら null。
- */
-function computeSegmentTransitionOverlay(
-  segments: TemplateSegment[],
-  currentTimeSec: number,
-): { color: string; alpha: number } | null {
-  const current = segments.find(
-    (s) => currentTimeSec >= s.startSec && currentTimeSec < s.endSec,
-  );
-  if (!current) return null;
-  const transType = current.transitionTo ?? "cut";
-  const dur = current.transitionDuration ?? 0;
-  if (transType === "cut" || dur <= 0) return null;
-
-  const timeUntilEnd = current.endSec - currentTimeSec;
-  if (timeUntilEnd > dur) return null;
-
-  const p = Math.max(0, Math.min(1, 1 - timeUntilEnd / dur));
-
-  switch (transType) {
-    case "fade":
-    case "dissolve":
-    case "fadegrays":
-      return { color: "#000", alpha: p * 0.5 };
-    case "fadeblack":
-      return { color: "#000", alpha: p };
-    case "fadewhite":
-      return { color: "#fff", alpha: p };
-    case "flash": {
-      const peak = 1 - Math.abs(p - 0.5) * 2;
-      return { color: "#fff", alpha: peak };
-    }
-    default:
-      // 未対応のトランジションは表示しない（タイムライン上の印で判別してもらう）
-      return null;
-  }
-}
-
-/**
- * セグメントの ColorGrade を CSS filter + オプションの vignette オーバーレイに変換する。
- */
-function computeSegmentColorEffects(
-  segments: TemplateSegment[],
-  currentTimeSec: number,
-): { cssFilter: string; vignette: boolean } {
-  const seg = segments.find(
-    (s) => currentTimeSec >= s.startSec && currentTimeSec < s.endSec,
-  );
-  const color: ColorGrade = seg?.color ?? "none";
-  switch (color) {
-    case "none":
-      return { cssFilter: "", vignette: false };
-    case "sepia":
-      return { cssFilter: "sepia(1)", vignette: false };
-    case "bw":
-      return { cssFilter: "grayscale(1)", vignette: false };
-    case "vintage":
-      return {
-        cssFilter: "sepia(0.4) contrast(0.85) saturate(0.7)",
-        vignette: false,
-      };
-    case "vivid":
-      return { cssFilter: "saturate(1.5) contrast(1.1)", vignette: false };
-    case "cool":
-      return {
-        cssFilter: "hue-rotate(-10deg) saturate(1.1) brightness(0.95)",
-        vignette: false,
-      };
-    case "warm":
-      return {
-        cssFilter: "hue-rotate(10deg) saturate(1.1) brightness(1.05)",
-        vignette: false,
-      };
-    case "vignette":
-      return { cssFilter: "", vignette: true };
-    case "neon":
-      return {
-        cssFilter: "saturate(2) contrast(1.3) brightness(1.1)",
-        vignette: false,
-      };
-    case "high_contrast":
-      return { cssFilter: "contrast(1.4)", vignette: false };
-    case "soft_glow":
-      return {
-        cssFilter: "brightness(1.1) saturate(1.1) blur(0.5px)",
-        vignette: false,
-      };
-    case "film_grain":
-      return { cssFilter: "contrast(1.05) sepia(0.1)", vignette: false };
-    default:
-      return { cssFilter: "", vignette: false };
-  }
 }
 
 /**

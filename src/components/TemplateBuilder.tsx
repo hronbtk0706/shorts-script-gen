@@ -942,7 +942,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               showGrid={showGrid}
               currentTimeSec={playheadSec}
               isPlaying={isPlaying}
-              segments={template.segments}
+
             />
           </div>
         </div>
@@ -1057,7 +1057,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           <div className="flex-1 min-h-0">
             <TemplateTimeline
               layers={template.layers}
-              segments={template.segments}
+
               totalDuration={template.totalDuration}
               playheadSec={playheadSec}
               selectedLayerId={selectedLayerId}

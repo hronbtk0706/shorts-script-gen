@@ -32,25 +32,20 @@ function fmtSeconds(start: number, end: number): string {
 
 /**
  * マニュアルモード用の Script を組み立てる。
- * テンプレのセグメント区間ごとに、その区間内のコメント型レイヤーのテキストを
- * 連結してナレーション / text_overlay に入れる。
+ * セグメントの概念を持たないテンプレートに対応：
+ * テンプレート全体を1つのbodyとして扱い、コメント型レイヤーのテキストを連結する。
  */
 export function buildManualScript(
   template: VideoTemplate,
   commentBundle: CommentBundle | null,
 ): Script {
-  const hookSeg =
-    template.segments.find((s) => s.type === "hook") ??
-    { startSec: 0, endSec: 3 };
-  const ctaSeg =
-    template.segments.find((s) => s.type === "cta") ??
-    { startSec: template.totalDuration - 3, endSec: template.totalDuration };
-  const bodySegs = template.segments
-    .filter((s) => s.type === "body")
-    .sort((a, b) => a.startSec - b.startSec);
+  const total = Math.max(1, template.totalDuration);
+  const hookDur = Math.min(3, total * 0.1);
+  const ctaDur = Math.min(3, total * 0.1);
+  const bodyStart = hookDur;
+  const bodyEnd = total - ctaDur;
 
-  // 指定時間帯に含まれる comment/text レイヤーのテキストを集める
-  // template は applyManualAssignments で既にパッチ済みなので layer.text が最終値
+  // 指定時間帯に含まれる comment レイヤーのテキストを集める
   const textsIn = (startSec: number, endSec: number): string[] => {
     const hits: string[] = [];
     for (const layer of template.layers) {
@@ -62,27 +57,27 @@ export function buildManualScript(
     return hits;
   };
 
-  const body: BodySegment[] = bodySegs.map((seg) => {
-    const texts = textsIn(seg.startSec, seg.endSec);
-    return {
-      seconds: fmtSeconds(seg.startSec, seg.endSec),
-      narration: texts.join(" "),
+  const hookTexts = textsIn(0, hookDur);
+  const bodyTexts = textsIn(bodyStart, bodyEnd);
+  const ctaTexts = textsIn(bodyEnd, total);
+
+  const body: BodySegment[] = [
+    {
+      seconds: fmtSeconds(bodyStart, bodyEnd),
+      narration: bodyTexts.join(" "),
       visual: "",
       image_prompt: "",
-      text_overlay: texts.join("\n"),
+      text_overlay: bodyTexts.join("\n"),
       subtitle_style: DEFAULT_SUBTITLE_STYLE,
       effects: DEFAULT_EFFECTS,
-    };
-  });
-
-  const hookTexts = textsIn(hookSeg.startSec, hookSeg.endSec);
-  const ctaTexts = textsIn(ctaSeg.startSec, ctaSeg.endSec);
+    },
+  ];
 
   return {
     title: commentBundle?.videoTitle?.trim() || template.name || "マニュアル台本",
     theme_vibe: template.themeVibe ?? "",
     hook: {
-      seconds: fmtSeconds(hookSeg.startSec, hookSeg.endSec),
+      seconds: fmtSeconds(0, hookDur),
       text: hookTexts.join(" "),
       visual: "",
       image_prompt: "",
@@ -91,7 +86,7 @@ export function buildManualScript(
     },
     body,
     cta: {
-      seconds: fmtSeconds(ctaSeg.startSec, ctaSeg.endSec),
+      seconds: fmtSeconds(bodyEnd, total),
       text: ctaTexts.join(" "),
       image_prompt: "",
       subtitle_style: DEFAULT_SUBTITLE_STYLE,
@@ -104,9 +99,6 @@ export function buildManualScript(
 
 /**
  * マニュアル割り当てをテンプレにパッチして返す（クローン）。
- * - コメント型レイヤー: 選択されたコメントテキストを layer.text に入れる
- * - image/video 型レイヤー: ユーザーがファイル指定した場合 layer.source に入れる
- * - text 型レイヤー: 上書き入力があれば layer.text に入れる
  */
 export function applyManualAssignments(
   template: VideoTemplate,
@@ -118,50 +110,11 @@ export function applyManualAssignments(
     { x: number; y: number; width: number; height: number }
   > = {},
 ): VideoTemplate {
-  // セグメント未定義のテンプレは、hook/body/cta の既定3分割を自動補完
-  const segments =
-    template.segments.length > 0
-      ? template.segments
-      : (() => {
-          const total = Math.max(3, template.totalDuration);
-          const hookDur = Math.min(3, total * 0.1);
-          const ctaDur = Math.min(3, total * 0.1);
-          return [
-            {
-              id: "auto_hook",
-              type: "hook" as const,
-              startSec: 0,
-              endSec: hookDur,
-              transitionTo: "cut" as const,
-              transitionDuration: 0,
-            },
-            {
-              id: "auto_body",
-              type: "body" as const,
-              startSec: hookDur,
-              endSec: total - ctaDur,
-              bodyIndex: 0,
-              transitionTo: "cut" as const,
-              transitionDuration: 0,
-            },
-            {
-              id: "auto_cta",
-              type: "cta" as const,
-              startSec: total - ctaDur,
-              endSec: total,
-              transitionTo: "cut" as const,
-              transitionDuration: 0,
-            },
-          ];
-        })();
-
   return {
     ...template,
-    segments,
     layers: template.layers.map((l) => {
       const patched = { ...l };
       if (l.type === "comment") {
-        // 編集済みテキスト優先、無ければDDLで選んだコメントの原文、それも無ければテンプレ既定
         const edited = textAssignments[l.id];
         if (edited !== undefined && edited.trim()) {
           patched.text = edited;
@@ -173,7 +126,6 @@ export function applyManualAssignments(
         const src = sourceAssignments[l.id];
         if (src && src.trim()) patched.source = src;
       }
-      // ジオメトリ上書き（現状は image/video のみ UI で設定されるが、どの型でも適用）
       const g = geometryAssignments[l.id];
       if (g) {
         patched.x = g.x;

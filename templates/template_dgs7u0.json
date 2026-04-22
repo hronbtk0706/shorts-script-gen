@@ -1094,67 +1094,6 @@
       "generatedNarrationLayerId": "ly_mo8pe5aj_pylasc"
     }
   ],
-  "segments": [
-    {
-      "id": "sg_mo8ih806_945f",
-      "type": "hook",
-      "startSec": 0,
-      "endSec": 3,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8ih806_v078",
-      "type": "body",
-      "bodyIndex": 0,
-      "startSec": 3,
-      "endSec": 17,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8ih806_a293",
-      "type": "body",
-      "bodyIndex": 1,
-      "startSec": 17,
-      "endSec": 27,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8ih806_7jbg",
-      "type": "body",
-      "bodyIndex": 2,
-      "startSec": 27,
-      "endSec": 38,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8ih806_30c3",
-      "type": "body",
-      "bodyIndex": 3,
-      "startSec": 38,
-      "endSec": 45,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    },
-    {
-      "id": "sg_mo8ih806_ajdi",
-      "type": "body",
-      "bodyIndex": 4,
-      "startSec": 45,
-      "endSec": 56,
-      "color": "none",
-      "transitionTo": "cut",
-      "transitionDuration": 0
-    }
-  ],
   "overallPacing": "非常に速いペースで、次々と驚きの絵画と視聴者の反応が切り替わる。短いテロップとAI音声でテンポ良く進行する。",
   "narrationStyle": "AI読み上げ風・短文テロップ多い",
   "themeVibe": "驚愕と感動の芸術作品紹介",
