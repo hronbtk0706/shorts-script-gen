@@ -50,7 +50,7 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
         ...base,
         height: 6,
         text: "テキストを入力",
-        fontSize: 48,
+        fontSize: 16,
         fontColor: "#FFFFFF",
         // fillColor は既定で未設定（= 背景なし）。PropertyPanel でトグル可能
       };

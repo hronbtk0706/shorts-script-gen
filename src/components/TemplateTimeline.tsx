@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Layer, LayerKeyframes } from "../types";
 import { applyTrackAction, hasTimeConflictOnTrack } from "../lib/layerUtils";
+import { WaveformCanvas } from "./WaveformCanvas";
 
 const KEYFRAME_PROPS = ["x", "y", "scale", "opacity", "rotation"] as const;
 
@@ -861,6 +862,23 @@ export function TemplateTimeline({
                               layer.hidden ? " [非表示]" : ""
                             }${layer.locked ? " [ロック]" : ""}`}
                           >
+                            {/* 音声レイヤーは波形を薄く重ねる */}
+                            {layer.type === "audio" &&
+                              layer.source &&
+                              layer.source !== "auto" &&
+                              layer.source !== "user" &&
+                              barWidth >= 20 && (
+                                <WaveformCanvas
+                                  source={layer.source}
+                                  widthPx={barWidth}
+                                  heightPx={ROW_HEIGHT - 8}
+                                  color={
+                                    isSelected
+                                      ? "rgba(255,255,255,0.85)"
+                                      : "rgba(255,255,255,0.55)"
+                                  }
+                                />
+                              )}
                             <div
                               onMouseDown={(e) =>
                                 startDrag(e, layer, "resize-left")

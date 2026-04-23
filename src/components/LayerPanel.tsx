@@ -29,6 +29,77 @@ function probeAudioDuration(path: string): Promise<number> {
   });
 }
 
+/** 画像の自然サイズを取得 */
+function probeImageSize(
+  path: string,
+): Promise<{ w: number; h: number }> {
+  const url = path.startsWith("http") || path.startsWith("data:")
+    ? path
+    : convertFileSrc(path);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () =>
+      resolve({
+        w: img.naturalWidth || img.width,
+        h: img.naturalHeight || img.height,
+      });
+    img.onerror = () => reject(new Error("image load failed"));
+    img.src = url;
+  });
+}
+
+/** 動画のメタ情報（尺 + ピクセルサイズ）を取得 */
+function probeVideoMeta(
+  path: string,
+): Promise<{ dur: number; w: number; h: number }> {
+  const url = path.startsWith("http") || path.startsWith("data:")
+    ? path
+    : convertFileSrc(path);
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.muted = true;
+    v.onloadedmetadata = () => {
+      const dur = isFinite(v.duration) && v.duration > 0 ? v.duration : 3;
+      const w = v.videoWidth || 1080;
+      const h = v.videoHeight || 1920;
+      resolve({ dur, w, h });
+    };
+    v.onerror = () => reject(new Error("video load failed"));
+    v.src = url;
+  });
+}
+
+/**
+ * 画像/動画のピクセルサイズをキャンバス (1080x1920) 上の % サイズ/位置に変換する。
+ * - 大きさは目安で最大 80% にフィット
+ * - アスペクト比を保って中央配置
+ */
+function fitToCanvasPct(
+  srcW: number,
+  srcH: number,
+): { x: number; y: number; width: number; height: number } {
+  const imgRatio = srcW / srcH;
+  const canvasRatio = 1080 / 1920; // ≈ 0.5625（縦長）
+  let widthPct: number;
+  let heightPct: number;
+  if (imgRatio >= canvasRatio) {
+    // 素材のほうが横長 → 幅基準で埋める
+    widthPct = 80;
+    heightPct = widthPct * (canvasRatio / imgRatio);
+  } else {
+    // 素材のほうが縦長 → 高さ基準
+    heightPct = 80;
+    widthPct = heightPct * (imgRatio / canvasRatio);
+  }
+  return {
+    x: (100 - widthPct) / 2,
+    y: (100 - heightPct) / 2,
+    width: widthPct,
+    height: heightPct,
+  };
+}
+
 interface Props {
   layers: Layer[];
   selectedLayerId: string | null;
@@ -71,10 +142,18 @@ export function LayerPanel({
   );
   const addLayer = async (type: LayerType) => {
     if (type === "audio") {
-      // 音声はファイル選択から入って、尺を自動セット
       await addAudioFromFile();
       return;
     }
+    if (type === "image") {
+      await addImageFromFile();
+      return;
+    }
+    if (type === "video") {
+      await addVideoFromFile();
+      return;
+    }
+    // color / shape / comment は即レイヤー作成（素材ファイル不要）
     const startSec = newLayerDefaults?.startSec ?? 0;
     const endSec =
       newLayerDefaults?.endSec ?? Math.max(startSec + 1, startSec + 3);
@@ -89,6 +168,114 @@ export function LayerPanel({
     );
     onLayersChange([...layers, newLayer]);
     onLayerSelect(newLayer.id);
+  };
+
+  /** 「図形」カテゴリの一種としての吹き出しを追加（中身は bubble 付き comment レイヤー） */
+  const addBubbleLayer = () => {
+    const startSec = newLayerDefaults?.startSec ?? 0;
+    const endSec =
+      newLayerDefaults?.endSec ?? Math.max(startSec + 1, startSec + 3);
+    const nextZ = findFreeTrackZIndex(layers, startSec, endSec);
+    const base = makeLayer(
+      {
+        type: "comment",
+        startSec: newLayerDefaults?.startSec,
+        endSec: newLayerDefaults?.endSec,
+      },
+      nextZ,
+    );
+    const newLayer: Layer = {
+      ...base,
+      // 吹き出しは図形感を出すため高さを広めに
+      height: 20,
+      // 吹き出し用のデフォルト塗り（半透明白）
+      fillColor: "rgba(255,255,255,0.95)",
+      fontColor: "#111111",
+      bubble: {
+        shape: "rounded",
+        tail: { tipX: 50, tipY: 130, baseWidth: 15 },
+      },
+    };
+    onLayersChange([...layers, newLayer]);
+    onLayerSelect(newLayer.id);
+  };
+
+  const addImageFromFile = async () => {
+    try {
+      const path = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: [
+          {
+            name: "画像",
+            extensions: ["png", "jpg", "jpeg", "webp", "bmp", "gif"],
+          },
+        ],
+      });
+      if (typeof path !== "string") return;
+      const startSec = newLayerDefaults?.startSec ?? 0;
+      const endSec =
+        newLayerDefaults?.endSec ?? Math.max(startSec + 1, startSec + 3);
+      const nextZ = findFreeTrackZIndex(layers, startSec, endSec);
+      const base = makeLayer({ type: "image", startSec, endSec }, nextZ);
+      // 画像サイズを取得してアスペクト比に合わせて配置
+      let fit: { x: number; y: number; width: number; height: number } = {
+        x: base.x,
+        y: base.y,
+        width: base.width,
+        height: base.height,
+      };
+      try {
+        const { w, h } = await probeImageSize(path);
+        fit = fitToCanvasPct(w, h);
+      } catch (e) {
+        console.warn("[LayerPanel] image size probe failed:", e);
+      }
+      const layer: Layer = { ...base, ...fit, source: path };
+      onLayersChange([...layers, layer]);
+      onLayerSelect(layer.id);
+    } catch (e) {
+      console.warn("[LayerPanel] addImageFromFile failed:", e);
+    }
+  };
+
+  const addVideoFromFile = async () => {
+    try {
+      const path = await openDialog({
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: "動画", extensions: ["mp4", "mov", "webm", "m4v"] },
+        ],
+      });
+      if (typeof path !== "string") return;
+      const startSec = newLayerDefaults?.startSec ?? 0;
+      let dur = 3;
+      let fit: { x: number; y: number; width: number; height: number } | null =
+        null;
+      try {
+        const meta = await probeVideoMeta(path);
+        dur = meta.dur;
+        fit = fitToCanvasPct(meta.w, meta.h);
+      } catch (e) {
+        console.warn("[LayerPanel] video meta probe failed:", e);
+      }
+      const endSec =
+        newLayerDefaults?.endSec ??
+        Math.max(startSec + 0.5, startSec + dur);
+      const nextZ = findFreeTrackZIndex(layers, startSec, endSec);
+      const base = makeLayer({ type: "video", startSec, endSec }, nextZ);
+      const layer: Layer = {
+        ...base,
+        ...(fit ?? {}),
+        source: path,
+        sourceDurationSec: dur,
+      };
+      onLayersChange([...layers, layer]);
+      onLayerSelect(layer.id);
+    } catch (e) {
+      console.warn("[LayerPanel] addVideoFromFile failed:", e);
+    }
   };
 
   const addAudioFromFile = async () => {
@@ -235,6 +422,15 @@ export function LayerPanel({
             <span>{LAYER_TYPE_LABELS[t].label}</span>
           </button>
         ))}
+        <button
+          type="button"
+          onClick={addBubbleLayer}
+          className="flex flex-col items-center gap-0.5 px-1 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-[10px]"
+          title="吹き出しレイヤーを追加（テキスト入力可）"
+        >
+          <span className="text-base">💬</span>
+          <span>吹き出し</span>
+        </button>
         <SeBrowser onSelect={addAudioFromSe} seDir={seFolderPath} />
       </div>
 

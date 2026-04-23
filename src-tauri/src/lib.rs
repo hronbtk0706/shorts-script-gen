@@ -581,9 +581,24 @@ pub struct TemplateLayerInput {
     /// video 用: 素材が短いときにループするか
     #[serde(default = "default_video_loop")]
     pub video_loop: bool,
+    /// video 用: 再生速度倍率。1.0 = 等速、0.5 = 半分、2.0 = 倍速
+    #[serde(default = "default_playback_rate")]
+    pub playback_rate: f64,
+    /// クロップ（素材に対する % 値）。x+width/y+height が 100 を超えない範囲
+    #[serde(default)]
+    pub crop: Option<CropInput>,
     /// キーフレームアニメーション（任意）。トラック単位で x/y/scale/opacity/rotation を時刻依存に補間。
     #[serde(default)]
     pub keyframes: LayerKeyframesInput,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CropInput {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -1627,6 +1642,9 @@ async fn compose_template_video(
     audio_layers: Vec<TemplateAudioInput>,
     bgm_path: Option<String>,
     output_filename: String,
+    // 画質設定（省略時は標準 crf=23 / medium）
+    video_crf: Option<i32>,
+    video_preset: Option<String>,
 ) -> Result<String, String> {
     state.begin(session_id.clone());
     let result = compose_template_video_inner(
@@ -1638,6 +1656,8 @@ async fn compose_template_video(
         audio_layers,
         bgm_path,
         output_filename,
+        video_crf.unwrap_or(23).clamp(0, 51),
+        video_preset.unwrap_or_else(|| "medium".to_string()),
     );
     state.end();
     result
@@ -1652,6 +1672,8 @@ fn compose_template_video_inner(
     audio_layers: Vec<TemplateAudioInput>,
     bgm_path: Option<String>,
     output_filename: String,
+    video_crf: i32,
+    video_preset: String,
 ) -> Result<String, String> {
     let base_dir = output_base_dir(&app)?;
     let asset_dir = base_dir.join(&session_id);
@@ -1739,6 +1761,28 @@ fn compose_template_video_inner(
         // video は指定サイズに cover fit + 出力 fps へ揃える（素材が 24/60fps でも 30fps CFR に）
         // static は既にサイズ確定済みなので scale 不要、framerate も入力側で 30 指定済み
         if layer.kind == "video" {
+            // クロップ（素材に対する % → iw/ih 式）。scale より前に実行して表示範囲を切り抜く
+            if let Some(c) = &layer.crop {
+                let is_default =
+                    c.x.abs() < 0.01
+                        && c.y.abs() < 0.01
+                        && (c.width - 100.0).abs() < 0.01
+                        && (c.height - 100.0).abs() < 0.01;
+                if !is_default {
+                    chain.push_str(&format!(
+                        "crop=iw*{:.4}:ih*{:.4}:iw*{:.4}:ih*{:.4},",
+                        c.width / 100.0,
+                        c.height / 100.0,
+                        c.x / 100.0,
+                        c.y / 100.0,
+                    ));
+                }
+            }
+            // 再生速度（1.0 以外なら setpts で PTS をスケール）。
+            let rate = layer.playback_rate.max(0.25).min(4.0);
+            if (rate - 1.0).abs() > 0.01 {
+                chain.push_str(&format!("setpts=PTS/{:.4},", rate));
+            }
             chain.push_str(&format!(
                 "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},fps={},",
                 layer.w_px, layer.h_px, layer.w_px, layer.h_px, FPS
@@ -2011,7 +2055,9 @@ fn compose_template_video_inner(
         "-c:v",
         "libx264",
         "-preset",
-        "medium",
+        video_preset.as_str(),
+        "-crf",
+        &video_crf.to_string(),
         "-c:a",
         "aac",
         "-b:a",

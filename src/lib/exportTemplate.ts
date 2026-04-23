@@ -1,10 +1,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { VideoTemplate } from "../types";
-import { generateVideoFromTemplate, type ProgressUpdate } from "./video";
+import {
+  generateVideoFromTemplate,
+  type ProgressUpdate,
+  type VideoQualityPreset,
+} from "./video";
 
 export interface ExportOptions {
   template: VideoTemplate;
   onProgress: (p: ProgressUpdate) => void;
+  /** 画質プリセット。省略時は "standard" */
+  quality?: VideoQualityPreset;
 }
 
 export interface ExportResult {
@@ -21,8 +27,8 @@ export interface ExportResult {
 export async function exportTemplateToVideo(
   opts: ExportOptions,
 ): Promise<ExportResult> {
-  const { template, onProgress } = opts;
-  return generateVideoFromTemplate(template, onProgress);
+  const { template, onProgress, quality } = opts;
+  return generateVideoFromTemplate(template, onProgress, { quality });
 }
 
 export async function cancelTemplateExport(): Promise<void> {

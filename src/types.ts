@@ -103,6 +103,22 @@ export interface LayerV1 {
   motion?: Motion;
 }
 
+/** 吹き出し（comment レイヤーに紐づく）の形状・しっぽ指定 */
+export type BubbleShape = "rect" | "rounded" | "ellipse" | "cloud";
+
+export interface BubbleTail {
+  /** しっぽ先端のレイヤー枠内 % 座標（0〜100） */
+  tipX: number;
+  tipY: number;
+  /** 根元の幅（レイヤー短辺に対する %、0〜40 程度） */
+  baseWidth: number;
+}
+
+export interface BubbleStyle {
+  shape: BubbleShape;
+  tail?: BubbleTail;
+}
+
 /** キーフレーム補間の 1 点（グローバル時刻 / 値） */
 export interface Keyframe {
   /** グローバル時刻 (秒) */
@@ -153,6 +169,8 @@ export interface Layer {
   textOutlineWidth?: number;
   /** テキストの縁取り色 */
   textOutlineColor?: string;
+  /** テキストのフォントファミリ（CSS font-family 文字列。未指定 = システム既定スタック） */
+  fontFamily?: string;
   motion?: Motion;
   /** タイムライン上の開始秒（動画全体の何秒目に表示開始） */
   startSec: number;
@@ -200,6 +218,21 @@ export interface Layer {
   keywordColor?: string;
   /** キーフレームアニメーション（最小版: x / y / scale / opacity / rotation、linear 補間） */
   keyframes?: LayerKeyframes;
+  /**
+   * 画像/動画の表示範囲（クロップ）。値は素材ピクセルに対する 0〜100 の % 値。
+   * 未指定 = 全体表示。{x:10, y:10, width:80, height:80} なら周囲 10% を切り落とす。
+   */
+  crop?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  /**
+   * comment レイヤー用の吹き出しスタイル（バルーン形状 + しっぽ）。
+   * 未指定 = 既存の shape/borderRadius 挙動（通常の矩形テキストボックス）。
+   */
+  bubble?: BubbleStyle;
 }
 
 export interface VideoTemplate {

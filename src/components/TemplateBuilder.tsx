@@ -95,6 +95,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const [exportOpen, setExportOpen] = useState(false);
   const [importCommentsOpen, setImportCommentsOpen] = useState(false);
   const [presetOpen, setPresetOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [presetList, setPresetList] = useState<LayerPreset[]>([]);
   const [newPresetName, setNewPresetName] = useState("");
   const clipboardRef = useRef<Layer[]>([]);
@@ -773,6 +774,13 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
       }
       if (key === "escape") {
         setSelectedLayerId(null);
+        setShortcutsOpen(false);
+        return;
+      }
+      // ? キー（多くの配列で Shift+/）でショートカット一覧を開閉
+      if (key === "?" || (e.shiftKey && key === "/")) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
         return;
       }
       if (key === "home") {
@@ -867,6 +875,14 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         title="選択レイヤーの見た目・アニメをプリセットに保存／プリセットから挿入"
       >
         🎁 プリセット
+      </button>
+      <button
+        type="button"
+        onClick={() => setShortcutsOpen(true)}
+        className="px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-xs text-gray-600 dark:text-gray-300"
+        title="キーボードショートカット一覧（? キー）"
+      >
+        ⌨ ?
       </button>
       <button
         type="button"
@@ -1090,6 +1106,112 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         }}
         onClose={() => setImportCommentsOpen(false)}
       />
+
+      {shortcutsOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShortcutsOpen(false)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-lg shadow-xl w-[560px] max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between sticky top-0 bg-white dark:bg-gray-900">
+              <h3 className="font-semibold text-sm">⌨ キーボードショートカット</h3>
+              <button
+                type="button"
+                onClick={() => setShortcutsOpen(false)}
+                className="text-gray-500 hover:text-gray-700 text-xs"
+              >
+                ✕
+              </button>
+            </div>
+            {(() => {
+              const sections: Array<{
+                title: string;
+                items: Array<{ keys: string; desc: string }>;
+              }> = [
+                {
+                  title: "編集",
+                  items: [
+                    { keys: "Ctrl + Z", desc: "元に戻す" },
+                    { keys: "Ctrl + Y / Ctrl + Shift + Z", desc: "やり直し" },
+                    { keys: "Ctrl + D", desc: "選択レイヤーを複製" },
+                    { keys: "Ctrl + C", desc: "選択レイヤーをコピー" },
+                    { keys: "Ctrl + V", desc: "プレイヘッド位置にペースト" },
+                    { keys: "Delete / Backspace", desc: "選択レイヤーを削除" },
+                    { keys: "Ctrl + A", desc: "全レイヤーを選択" },
+                    { keys: "Esc", desc: "選択解除 / モーダルを閉じる" },
+                  ],
+                },
+                {
+                  title: "タイムライン / プレイヘッド",
+                  items: [
+                    {
+                      keys: "← / →",
+                      desc: "選択ありならレイヤー微調整 (0.1s) / なければプレイヘッド移動",
+                    },
+                    { keys: "Shift + ← / →", desc: "大きく 1.0s 動かす" },
+                    { keys: "Alt + ← / →", desc: "細かく 0.01s 動かす" },
+                    { keys: "Home / End", desc: "プレイヘッドを先頭/末尾へ" },
+                    { keys: "Ctrl + ホイール", desc: "タイムライン横ズーム" },
+                    { keys: "Ctrl + = / -", desc: "タイムライン横ズーム（中央基準）" },
+                    { keys: "Ctrl + 0", desc: "タイムラインズームを元に戻す" },
+                  ],
+                },
+                {
+                  title: "プロパティ編集",
+                  items: [
+                    {
+                      keys: "ラベル左右ドラッグ",
+                      desc: "数値プロパティを連続的に変更",
+                    },
+                    {
+                      keys: "マウスホイール",
+                      desc: "ラベル / スライダー上でホイール = 値変更",
+                    },
+                    { keys: "Shift (押しながら)", desc: "×10 で粗く" },
+                    { keys: "Alt (押しながら)", desc: "×0.1 で精密" },
+                  ],
+                },
+                {
+                  title: "保存 / その他",
+                  items: [
+                    { keys: "Ctrl + S", desc: "テンプレを保存" },
+                    { keys: "?", desc: "このショートカット一覧を開閉" },
+                  ],
+                },
+              ];
+              return (
+                <div className="p-3 space-y-4 text-[11px]">
+                  {sections.map((s) => (
+                    <div key={s.title}>
+                      <h4 className="font-semibold text-[11px] text-gray-700 dark:text-gray-300 mb-1">
+                        {s.title}
+                      </h4>
+                      <ul className="space-y-0.5">
+                        {s.items.map((it, i) => (
+                          <li
+                            key={i}
+                            className="grid grid-cols-[160px_1fr] gap-2 py-0.5"
+                          >
+                            <code className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-mono">
+                              {it.keys}
+                            </code>
+                            <span className="text-gray-600 dark:text-gray-400">
+                              {it.desc}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {presetOpen && (
         <div

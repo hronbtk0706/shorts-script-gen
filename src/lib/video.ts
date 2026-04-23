@@ -45,6 +45,13 @@ interface RustLayerKeyframes {
   rotation?: RustKeyframeTrack;
 }
 
+interface RustCrop {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface RustTemplateLayerInput {
   kind: "static" | "video";
   path: string;
@@ -62,6 +69,8 @@ interface RustTemplateLayerInput {
   exitAnimation: string;
   exitDuration: number;
   videoLoop: boolean;
+  playbackRate: number;
+  crop?: RustCrop;
   keyframes: RustLayerKeyframes;
 }
 
@@ -82,10 +91,25 @@ interface RustTemplateAudioInput {
  * - 総尺 = 最後に終わるレイヤーの endSec
  * - motion / color / xfade は一切使わない（レイヤー単位のアニメのみ）
  */
+export type VideoQualityPreset = "low" | "standard" | "high";
+
+const QUALITY_PRESET_MAP: Record<
+  VideoQualityPreset,
+  { crf: number; preset: string }
+> = {
+  low: { crf: 28, preset: "faster" },
+  standard: { crf: 23, preset: "medium" },
+  high: { crf: 18, preset: "slow" },
+};
+
 export async function generateVideoFromTemplate(
   template: VideoTemplate,
   onProgress: ProgressCallback,
+  options?: { quality?: VideoQualityPreset },
 ): Promise<VideoResult> {
+  const qualityKey = options?.quality ?? "standard";
+  const { crf: videoCrf, preset: videoPreset } =
+    QUALITY_PRESET_MAP[qualityKey];
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const sessionId = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
@@ -162,21 +186,63 @@ export async function generateVideoFromTemplate(
         kind: "video",
         path: layer.source,
         videoLoop: layer.videoLoop ?? true,
+        playbackRate: layer.playbackRate ?? 1,
+        crop: layer.crop,
       });
     } else {
       // static なレイヤーは PNG に焼き込む
       // （image / comment / text / color / shape。未指定 image は透過）
-      const pngPath = await composeLayerContentPng(
-        layer,
-        resolveLayerSrc,
-        sessionId,
-        `layer_${layer.id}`,
-      );
+      const { path: pngPath, padL, padT, padR, padB } =
+        await composeLayerContentPng(
+          layer,
+          resolveLayerSrc,
+          sessionId,
+          `layer_${layer.id}`,
+        );
+      // 吹き出しのしっぽで PNG を枠外に拡張したぶん overlay 位置とサイズを補正
+      const hasPad = padL || padT || padR || padB;
+      const adjXPx = hasPad ? x_px - padL : x_px;
+      const adjYPx = hasPad ? y_px - padT : y_px;
+      const adjWPx = hasPad ? w_px + padL + padR : w_px;
+      const adjHPx = hasPad ? h_px + padT + padB : h_px;
+      // キーフレームの x/y は % 値。PNG 拡張した場合は padL/padT のぶんだけシフトする。
+      let adjKeyframes = common.keyframes;
+      if (hasPad && (common.keyframes.x || common.keyframes.y)) {
+        const dxPct = (padL / 1080) * 100;
+        const dyPct = (padT / 1920) * 100;
+        adjKeyframes = {
+          ...common.keyframes,
+          x: common.keyframes.x
+            ? {
+                ...common.keyframes.x,
+                frames: common.keyframes.x.frames.map((f) => ({
+                  ...f,
+                  value: f.value - dxPct,
+                })),
+              }
+            : undefined,
+          y: common.keyframes.y
+            ? {
+                ...common.keyframes.y,
+                frames: common.keyframes.y.frames.map((f) => ({
+                  ...f,
+                  value: f.value - dyPct,
+                })),
+              }
+            : undefined,
+        };
+      }
       rustLayers.push({
         ...common,
+        xPx: adjXPx,
+        yPx: adjYPx,
+        wPx: adjWPx,
+        hPx: adjHPx,
+        keyframes: adjKeyframes,
         kind: "static",
         path: pngPath,
         videoLoop: true,
+        playbackRate: 1,
       });
     }
   }
@@ -216,6 +282,8 @@ export async function generateVideoFromTemplate(
     audioLayers: rustAudio,
     bgmPath,
     outputFilename: `video_${sessionId}.mp4`,
+    videoCrf,
+    videoPreset,
   });
 
   onProgress({

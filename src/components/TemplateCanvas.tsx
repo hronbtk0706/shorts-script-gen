@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
+import { bubbleFullPath } from "../lib/bubble";
 
 function resolveSrcForWebview(src: string | undefined): string | null {
   if (!src) return null;
@@ -76,6 +77,22 @@ export function TemplateCanvas({
     w: initW,
     h: Math.round((initW * 16) / 9),
   });
+  // Shift を押している間はアスペクト比固定を一時解除して自由変形できる
+  const [shiftHeld, setShiftHeld] = useState(false);
+  useEffect(() => {
+    const onDown = (e: KeyboardEvent) => {
+      if (e.key === "Shift") setShiftHeld(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key === "Shift") setShiftHeld(false);
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, []);
 
   // 親要素の実サイズ（flex レイアウトで決定）に合わせて 9:16 を維持して拡縮
   useEffect(() => {
@@ -184,6 +201,7 @@ export function TemplateCanvas({
             isPlaying={isPlaying}
             cssFilter=""
             onSelect={(modifier) => onLayerSelect(layer.id, modifier)}
+            onUpdate={(patch) => onLayerUpdate(layer.id, patch)}
             onRefReady={(el) => {
               if (layer.id === selectedLayerId) {
                 targetRef.current = el;
@@ -214,7 +232,8 @@ export function TemplateCanvas({
           resizable
           rotatable
           origin={false}
-          keepRatio={false}
+          // デフォルトはアスペクト比固定（CapCut 風）。Shift で一時解除して自由変形。
+          keepRatio={!shiftHeld}
           throttleDrag={0}
           throttleResize={0}
           throttleRotate={0}
@@ -319,6 +338,7 @@ interface LayerViewProps {
   isPlaying: boolean;
   cssFilter?: string;
   onSelect: (modifier?: "shift" | "ctrl" | null) => void;
+  onUpdate: (patch: Partial<Layer>) => void;
   onRefReady: (el: HTMLDivElement | null) => void;
 }
 
@@ -333,6 +353,7 @@ function LayerView({
   isPlaying,
   cssFilter,
   onSelect,
+  onUpdate,
   onRefReady,
 }: LayerViewProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -398,6 +419,8 @@ function LayerView({
     ? `rotate(${layer.rotation}deg)`
     : undefined;
 
+  // 吹き出し（comment + bubble）はしっぽが枠外に出られるよう overflow を visible にする
+  const isBubbleLayer = layer.type === "comment" && !!layer.bubble;
   const style: React.CSSProperties = {
     position: "absolute",
     left: leftPx,
@@ -408,7 +431,7 @@ function LayerView({
     filter: cssFilter || undefined,
     cursor: "pointer",
     userSelect: "none",
-    overflow: "hidden",
+    overflow: isBubbleLayer ? "visible" : "hidden",
     zIndex: layer.zIndex,
     ...outerStyle,
   };
@@ -471,6 +494,25 @@ function LayerView({
       }}
     >
       <div style={innerStyle}>{inner}</div>
+      {/* 吹き出しのしっぽ先端ドラッグハンドル（選択中 & bubble.tail あり時のみ） */}
+      {isSelected &&
+        layer.type === "comment" &&
+        layer.bubble?.tail && (
+          <TailHandle
+            tipX={layer.bubble.tail.tipX}
+            tipY={layer.bubble.tail.tipY}
+            onChange={(x, y) => {
+              const bubble = layer.bubble;
+              if (!bubble?.tail) return;
+              onUpdate({
+                bubble: {
+                  ...bubble,
+                  tail: { ...bubble.tail, tipX: x, tipY: y },
+                },
+              });
+            }}
+          />
+        )}
     </div>
   );
 }
@@ -504,23 +546,55 @@ function renderLayerContent(
       );
     case "image": {
       const resolved = resolveSrcForWebview(layer.source);
+      if (!resolved) {
+        return (
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              background: `repeating-linear-gradient(45deg, #444, #444 8px, #555 8px, #555 16px)`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#999",
+              fontSize: 10,
+            }}
+          >
+            {layer.source === "auto" ? "🖼 画像(自動生成)" : "🖼 画像(未設定)"}
+          </div>
+        );
+      }
+      // crop 対応: 枠を overflow:hidden にして、内部の img を crop 分だけ拡大＋ネガオフセットで
+      // 「クロップ矩形だけが枠に見える」ように配置する。
+      const crop = layer.crop;
+      const cw = crop ? Math.max(1, crop.width) : 100;
+      const ch = crop ? Math.max(1, crop.height) : 100;
+      const cx = crop ? crop.x : 0;
+      const cy = crop ? crop.y : 0;
       return (
         <div
           style={{
             width: "100%",
             height: "100%",
-            background: resolved
-              ? `url("${resolved}") center/cover no-repeat`
-              : `repeating-linear-gradient(45deg, #444, #444 8px, #555 8px, #555 16px)`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#999",
-            fontSize: 10,
+            position: "relative",
+            overflow: "hidden",
           }}
         >
-          {!resolved && layer.source === "auto" && "🖼 画像(自動生成)"}
-          {!resolved && (!layer.source || layer.source === "user") && "🖼 画像(未設定)"}
+          <img
+            src={resolved}
+            style={{
+              position: "absolute",
+              width: `${(100 * 100) / cw}%`,
+              height: `${(100 * 100) / ch}%`,
+              top: `${(-cy * 100) / ch}%`,
+              left: `${(-cx * 100) / cw}%`,
+              objectFit: "cover",
+              pointerEvents: "none",
+              userSelect: "none",
+            }}
+            draggable={false}
+            alt=""
+          />
         </div>
       );
     }
@@ -534,10 +608,138 @@ function renderLayerContent(
       );
     }
     case "comment":
+      if (layer.bubble) {
+        // 吹き出しモード: SVG で背景と枠を描画し、その上にテキストを重ねる
+        return (
+          <div
+            style={{ width: "100%", height: "100%", position: "relative" }}
+          >
+            <BubbleSvg layer={layer} />
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 4,
+                pointerEvents: "none",
+              }}
+            >
+              {renderAnimatedText(
+                { ...layer, fillColor: undefined, border: undefined },
+                currentTimeSec,
+                fontScale ?? 0.25,
+              )}
+            </div>
+          </div>
+        );
+      }
       return renderAnimatedText(layer, currentTimeSec, fontScale ?? 0.25);
     case "audio":
       return null;
   }
+}
+
+/** 吹き出し背景の SVG 描画コンポーネント */
+function BubbleSvg({ layer }: { layer: Layer }) {
+  const bubble = layer.bubble;
+  if (!bubble) return null;
+  const d = bubbleFullPath(100, 100, bubble, 12);
+  const stroke = layer.border;
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      width="100%"
+      height="100%"
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        overflow: "visible",
+      }}
+    >
+      <path
+        d={d}
+        fill={layer.fillColor || "rgba(255,255,255,0.95)"}
+        stroke={stroke?.color || "transparent"}
+        strokeWidth={stroke && stroke.width > 0 ? stroke.width * 0.5 : 0}
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
+/**
+ * 吹き出しのしっぽ先端ドラッグハンドル。
+ * レイヤー枠内の (tipX%, tipY%) に丸点を表示し、ドラッグで tipX/tipY を更新する。
+ */
+function TailHandle({
+  tipX,
+  tipY,
+  onChange,
+}: {
+  tipX: number;
+  tipY: number;
+  onChange: (x: number, y: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setDragging(true);
+    try {
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    const parent = ref.current?.parentElement;
+    if (!parent) return;
+    const rect = parent.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    // 可動域は制限なし（キャンバス端までどこへでも伸ばせる）
+    onChange(x, y);
+  };
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    setDragging(false);
+    try {
+      (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* noop */
+    }
+  };
+  return (
+    <div
+      ref={ref}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      style={{
+        position: "absolute",
+        left: `${tipX}%`,
+        top: `${tipY}%`,
+        width: 14,
+        height: 14,
+        marginLeft: -7,
+        marginTop: -7,
+        borderRadius: "50%",
+        background: dragging ? "#2563EB" : "#3B82F6",
+        border: "2px solid white",
+        cursor: "move",
+        zIndex: 100,
+        boxShadow: "0 0 4px rgba(0,0,0,0.5)",
+      }}
+      title="しっぽの先端位置（ドラッグで移動）"
+    />
+  );
 }
 
 /**
@@ -578,6 +780,7 @@ export function renderAnimatedText(
     overflow: "hidden",
     position: "relative",
     boxShadow: borderBoxShadow,
+    fontFamily: layer.fontFamily || undefined,
   };
 
   // 装飾：ネオン / アウトライン / 影ドロップ は text-shadow / -webkit-text-stroke で表現
@@ -1053,7 +1256,6 @@ function AudioLayerPlayer({
     if (!a) return;
     let target = currentTimeSec - layer.startSec;
     const dur = a.duration;
-    // ループ対応: 素材尺より長いレンジなら module で位置を算出
     if (layer.audioLoop && dur && isFinite(dur) && target > dur) {
       target = target % dur;
     }
@@ -1067,7 +1269,7 @@ function AudioLayerPlayer({
     }
   }, [currentTimeSec, layer.startSec, layer.audioLoop]);
 
-  // 音量を制御（音量 + フェードイン/アウトの簡易線形補間）
+  // 音量（HTMLAudioElement の 0〜1 制約内でフェードも考慮して反映）
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
@@ -1092,6 +1294,14 @@ function AudioLayerPlayer({
     layer.startSec,
     layer.endSec,
   ]);
+
+  // 再生速度
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const rate = layer.playbackRate ?? 1;
+    a.playbackRate = Math.max(0.25, Math.min(4, rate));
+  }, [layer.playbackRate]);
 
   // play/pause
   useEffect(() => {
@@ -1159,6 +1369,14 @@ function VideoLayerContent({
     }
   }, [isPlaying]);
 
+  // 再生速度（video レイヤーでも音声と同じく playbackRate を反映）
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const rate = layer.playbackRate ?? 1;
+    v.playbackRate = Math.max(0.25, Math.min(4, rate));
+  }, [layer.playbackRate]);
+
   // src 変更時にメタデータロード後 seek を即反映
   const handleLoadedMetadata = () => {
     const v = videoRef.current;
@@ -1193,21 +1411,40 @@ function VideoLayerContent({
     );
   }
 
+  // crop 対応（image と同じ「overflow:hidden + 子要素を拡大＆ネガオフセット」方式）
+  const crop = layer.crop;
+  const cw = crop ? Math.max(1, crop.width) : 100;
+  const ch = crop ? Math.max(1, crop.height) : 100;
+  const cx = crop ? crop.x : 0;
+  const cy = crop ? crop.y : 0;
+
   return (
-    <video
-      ref={videoRef}
-      src={resolved}
-      muted
-      playsInline
-      preload="auto"
-      loop={(layer.videoLoop ?? true) === true}
-      onLoadedMetadata={handleLoadedMetadata}
+    <div
       style={{
         width: "100%",
         height: "100%",
-        objectFit: "cover",
-        pointerEvents: "none",
+        position: "relative",
+        overflow: "hidden",
       }}
-    />
+    >
+      <video
+        ref={videoRef}
+        src={resolved}
+        muted
+        playsInline
+        preload="auto"
+        loop={(layer.videoLoop ?? true) === true}
+        onLoadedMetadata={handleLoadedMetadata}
+        style={{
+          position: "absolute",
+          width: `${(100 * 100) / cw}%`,
+          height: `${(100 * 100) / ch}%`,
+          top: `${(-cy * 100) / ch}%`,
+          left: `${(-cx * 100) / cw}%`,
+          objectFit: "cover",
+          pointerEvents: "none",
+        }}
+      />
+    </div>
   );
 }

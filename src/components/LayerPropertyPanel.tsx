@@ -12,6 +12,7 @@ import type {
   TextDecoration,
   KeyframeTrack,
   LayerKeyframes,
+  BubbleShape,
 } from "../types";
 import {
   VOICEVOX_SPEAKERS,
@@ -162,6 +163,51 @@ const KINETIC_ANIMATIONS: { id: KineticAnimation; label: string }[] = [
   { id: "keyword-color", label: "キーワード強調色" },
   { id: "slide-stack", label: "スライドスタック" },
   { id: "zoom-talk", label: "ズームトーク" },
+];
+
+/**
+ * フォントファミリ選択肢。value に入る文字列は CSS font-family そのもの。
+ * 空文字は「システム既定（ハードコード済みスタック）」を意味する。
+ */
+const FONT_FAMILY_PRESETS: { id: string; label: string; value: string }[] = [
+  { id: "default", label: "システム既定", value: "" },
+  {
+    id: "yu-gothic",
+    label: "游ゴシック",
+    value: '"Yu Gothic UI", "Yu Gothic", "游ゴシック"',
+  },
+  {
+    id: "meiryo",
+    label: "メイリオ",
+    value: '"Meiryo UI", "Meiryo", "メイリオ"',
+  },
+  {
+    id: "ms-gothic",
+    label: "MS ゴシック",
+    value: '"MS Gothic", "MSゴシック"',
+  },
+  {
+    id: "hiragino-gothic",
+    label: "ヒラギノ角ゴ",
+    value: '"Hiragino Kaku Gothic ProN", "Hiragino Sans"',
+  },
+  {
+    id: "yu-mincho",
+    label: "游明朝",
+    value: '"Yu Mincho", "游明朝", serif',
+  },
+  {
+    id: "ms-mincho",
+    label: "MS 明朝",
+    value: '"MS Mincho", "MS明朝", serif',
+  },
+  {
+    id: "hiragino-mincho",
+    label: "ヒラギノ明朝",
+    value: '"Hiragino Mincho ProN", serif',
+  },
+  { id: "sans-serif", label: "サンセリフ", value: "sans-serif" },
+  { id: "serif", label: "セリフ", value: "serif" },
 ];
 
 const TEXT_DECORATIONS: { id: TextDecoration; label: string }[] = [
@@ -402,6 +448,8 @@ type SectionId =
   | "audio"
   | "animation"
   | "keyframes"
+  | "crop"
+  | "bubble"
   | "decoration";
 
 type PropTab = "basic" | "style" | "motion" | "detail";
@@ -418,6 +466,8 @@ const TAB_OF_SECTION: Record<SectionId, PropTab> = {
   keyframes: "motion",
   source: "detail",
   audio: "detail",
+  crop: "style",
+  bubble: "style",
 };
 
 const TABS: Array<{ id: PropTab; label: string }> = [
@@ -785,6 +835,34 @@ export function LayerPropertyPanel({
             </div>
           )}
         </div>
+        {/* タイミング（全タイプ共通・常時表示） */}
+        {primary && (
+          <div className="pt-1 border-t border-gray-100 dark:border-gray-800 space-y-0.5">
+            {numInput(
+              "開始",
+              common("startSec"),
+              (v) => onChange({ startSec: Math.max(0, v) }),
+              0.1,
+              "s",
+            )}
+            {numInput(
+              "終了",
+              common("endSec"),
+              (v) => onChange({ endSec: Math.max(0.1, v) }),
+              0.1,
+              "s",
+            )}
+          </div>
+        )}
+        {/* 尺表示（単一選択時のみ、シンプルな情報） */}
+        {!multi &&
+          primary &&
+          Number.isFinite(primary.startSec) &&
+          Number.isFinite(primary.endSec) && (
+            <div className="text-[10px] text-gray-500 dark:text-gray-500 text-right">
+              尺: {(primary.endSec - primary.startSec).toFixed(2)}s
+            </div>
+          )}
         {/* レイヤータイプ別の「よく触る項目」を常時表示 */}
         {!multi && primary && primary.type === "comment" && (
           <>
@@ -813,9 +891,9 @@ export function LayerPropertyPanel({
             {sliderInput(
               "音量",
               common("volume") ?? 1,
-              (v) => onChange({ volume: Math.max(0, Math.min(2, v)) }),
+              (v) => onChange({ volume: Math.max(0, Math.min(1, v)) }),
               0,
-              2,
+              1,
               0.05,
             )}
             {sliderInput(
@@ -844,6 +922,31 @@ export function LayerPropertyPanel({
             )}
           </>
         )}
+        {!multi && primary && primary.type === "video" &&
+          sliderInput(
+            "再生速度",
+            common("playbackRate") ?? 1,
+            (v) => {
+              const newRate = Math.max(0.5, Math.min(4, v));
+              const patch: Partial<Layer> = { playbackRate: newRate };
+              // video ループ OFF & 素材尺が既知なら、タイムライン尺を連動
+              if (
+                !multi &&
+                primary &&
+                primary.videoLoop === false &&
+                primary.sourceDurationSec &&
+                primary.sourceDurationSec > 0
+              ) {
+                const newDur = primary.sourceDurationSec / newRate;
+                patch.endSec = primary.startSec + newDur;
+              }
+              onChange(patch);
+            },
+            0.5,
+            4,
+            0.05,
+            "x",
+          )}
       </div>
 
       {/* ==== タブバー ==== */}
@@ -1117,6 +1220,114 @@ export function LayerPropertyPanel({
       </Section>
       )}
 
+      {/* クロップ（image / video 専用） */}
+      {!multi &&
+        primary &&
+        (primary.type === "image" || primary.type === "video") && (
+          <Section
+            id="crop"
+            title="クロップ（切り抜き）"
+            open={isOpen("crop")}
+            onToggle={toggle}
+            currentTab={activeTab}
+          >
+            <div className="text-[10px] text-gray-500 mb-1">
+              素材に対する % 値で、表示する矩形を指定。デフォルトは全体表示。
+            </div>
+            {sliderInput(
+              "X",
+              primary.crop?.x ?? 0,
+              (v) => {
+                const cur = primary.crop ?? {
+                  x: 0,
+                  y: 0,
+                  width: 100,
+                  height: 100,
+                };
+                onChange({
+                  crop: { ...cur, x: Math.max(0, Math.min(100 - cur.width, v)) },
+                });
+              },
+              0,
+              100,
+              1,
+              "%",
+            )}
+            {sliderInput(
+              "Y",
+              primary.crop?.y ?? 0,
+              (v) => {
+                const cur = primary.crop ?? {
+                  x: 0,
+                  y: 0,
+                  width: 100,
+                  height: 100,
+                };
+                onChange({
+                  crop: { ...cur, y: Math.max(0, Math.min(100 - cur.height, v)) },
+                });
+              },
+              0,
+              100,
+              1,
+              "%",
+            )}
+            {sliderInput(
+              "幅",
+              primary.crop?.width ?? 100,
+              (v) => {
+                const cur = primary.crop ?? {
+                  x: 0,
+                  y: 0,
+                  width: 100,
+                  height: 100,
+                };
+                onChange({
+                  crop: {
+                    ...cur,
+                    width: Math.max(1, Math.min(100 - cur.x, v)),
+                  },
+                });
+              },
+              1,
+              100,
+              1,
+              "%",
+            )}
+            {sliderInput(
+              "高さ",
+              primary.crop?.height ?? 100,
+              (v) => {
+                const cur = primary.crop ?? {
+                  x: 0,
+                  y: 0,
+                  width: 100,
+                  height: 100,
+                };
+                onChange({
+                  crop: {
+                    ...cur,
+                    height: Math.max(1, Math.min(100 - cur.y, v)),
+                  },
+                });
+              },
+              1,
+              100,
+              1,
+              "%",
+            )}
+            {primary.crop && (
+              <button
+                type="button"
+                onClick={() => onChange({ crop: undefined })}
+                className="mt-1 text-[10px] text-blue-600 hover:underline"
+              >
+                クロップをリセット
+              </button>
+            )}
+          </Section>
+        )}
+
       {!allAudio && (
       <Section id="shape" title="形状" open={isOpen("shape")} onToggle={toggle} currentTab={activeTab}>
         <div className="flex gap-1">
@@ -1282,6 +1493,41 @@ export function LayerPropertyPanel({
         </Section>
       )}
 
+      {/* 吹き出し（bubble 付き comment レイヤー単独選択時のみ表示） */}
+      {!multi && primary && primary.type === "comment" && primary.bubble && (
+        <Section
+          id="bubble"
+          title="吹き出し"
+          open={isOpen("bubble")}
+          onToggle={toggle}
+          currentTab={activeTab}
+        >
+          <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
+            <label className="text-gray-600 dark:text-gray-400">形状</label>
+            <select
+              value={primary.bubble.shape}
+              onChange={(e) => {
+                onChange({
+                  bubble: {
+                    ...primary.bubble!,
+                    shape: e.target.value as BubbleShape,
+                  },
+                });
+              }}
+              className="px-1.5 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            >
+              <option value="rect">長方形</option>
+              <option value="rounded">角丸</option>
+              <option value="ellipse">楕円</option>
+              <option value="cloud">雲形</option>
+            </select>
+          </div>
+          <div className="text-[10px] text-gray-500 pt-0.5">
+            しっぽの先端はキャンバス上の🔵をドラッグで自由に移動できます。
+          </div>
+        </Section>
+      )}
+
       {showText && (
         <Section id="text" title="テキスト" open={isOpen("text")} onToggle={toggle} currentTab={activeTab}>
           {/* インポート済みコメントから挿入 DDL（comment レイヤー・単独選択時のみ） */}
@@ -1336,6 +1582,22 @@ export function LayerPropertyPanel({
             1,
             "px",
           )}
+          <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
+            <label className="text-gray-600 dark:text-gray-400">フォント</label>
+            <select
+              value={common("fontFamily") ?? ""}
+              onChange={(e) =>
+                onChange({ fontFamily: e.target.value || undefined })
+              }
+              className="px-1.5 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            >
+              {FONT_FAMILY_PRESETS.map((f) => (
+                <option key={f.id} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
             <label className="text-gray-600 dark:text-gray-400">文字色</label>
             <input
@@ -1523,9 +1785,9 @@ export function LayerPropertyPanel({
           {sliderInput(
             "音量",
             common("volume") ?? 1,
-            (v) => onChange({ volume: Math.max(0, Math.min(2, v)) }),
+            (v) => onChange({ volume: Math.max(0, Math.min(1, v)) }),
             0,
-            2,
+            1,
             0.05,
           )}
           {sliderInput(
