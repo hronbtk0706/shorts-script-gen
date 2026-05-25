@@ -4,8 +4,24 @@ import { sortedLayers } from "./layerUtils";
 import { sampleLayerAt } from "./keyframes";
 import { bubbleFullPath } from "./bubble";
 
-const FINAL_W = 1080;
-const FINAL_H = 1920;
+// 出力解像度（テンプレのアスペクトに応じて、composition 開始前に setCompositionCanvasDimensions で切替）。
+// デフォルトは旧テンプレ互換の縦 (1080x1920)。
+let FINAL_W = 1080;
+let FINAL_H = 1920;
+
+/**
+ * 合成コマンドを呼ぶ前に、テンプレの出力解像度をセットする。
+ * 全 compose 関数 / drawText / drawAnimatedTextFrame 等の内部処理がこの値を参照する。
+ * シーケンシャル前提（同時に複数テンプレを合成しない）。
+ */
+export function setCompositionCanvasDimensions(width: number, height: number) {
+  FINAL_W = Math.max(2, Math.floor(width));
+  FINAL_H = Math.max(2, Math.floor(height));
+}
+
+export function getCompositionCanvasDimensions(): { width: number; height: number } {
+  return { width: FINAL_W, height: FINAL_H };
+}
 
 /** 1レイヤーの画像/動画ソースを解決する関数。動画は1フレーム目を静止画として使う想定 */
 export type LayerSourceResolver = (layer: Layer) => Promise<string | null>;
@@ -137,6 +153,22 @@ export async function composeLayerContentPng(
     if (tail.tipX > 100) padR = Math.ceil(((tail.tipX - 100) / 100) * w);
     if (tail.tipY < 0) padT = Math.ceil((-tail.tipY / 100) * h);
     if (tail.tipY > 100) padB = Math.ceil(((tail.tipY - 100) / 100) * h);
+  }
+
+  // 複数行テキストが layer の高さを超える場合、PNG を縦に拡張して全行が描画に収まるようにする
+  // 手動改行 \n だけでなく、layer 幅での自動折り返し後の行数で判定する（プレビューと一致させる）
+  if (layer.type === "comment" && layer.text) {
+    const lines = computeLayerTextLines(layer, w);
+    if (lines.length > 1) {
+      const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
+      const lineHeight = fontSize * 1.2;
+      const totalTextH = lines.length * lineHeight;
+      if (totalTextH > h) {
+        const extra = Math.ceil((totalTextH - h) / 2);
+        padT = Math.max(padT, extra);
+        padB = Math.max(padB, extra);
+      }
+    }
   }
 
   const canvas = document.createElement("canvas");
@@ -408,36 +440,161 @@ function roundRectPath(
   ctx.closePath();
 }
 
+// 日本語フォントを OS 横断で指定（Windows/macOS/Linux いずれでもフォールバック可能に）。
+const TEXT_DEFAULT_FONT_STACK = `"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "游ゴシック", "Meiryo", "メイリオ", "MS Gothic", "MSゴシック", "Noto Sans JP", "Noto Sans CJK JP", sans-serif`;
+
+function buildTextFontString(layer: Layer): string {
+  const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
+  const family = layer.fontFamily
+    ? `${layer.fontFamily}, ${TEXT_DEFAULT_FONT_STACK}`
+    : TEXT_DEFAULT_FONT_STACK;
+  return `bold ${fontSize}px ${family}`;
+}
+
+/**
+ * プレビュー (HTML, white-space:pre-wrap + word-break:break-word) と同じく、
+ * 1) 手動改行 \n を最優先で尊重しつつ、2) 各行が maxWidth を超える場合は
+ * 文字単位で折り返して、最終的な描画行リストを返す。
+ */
+function wrapTextLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const out: string[] = [];
+  const paragraphs = text.split(/\n/);
+  for (const para of paragraphs) {
+    if (para === "") {
+      out.push("");
+      continue;
+    }
+    let current = "";
+    for (const ch of Array.from(para)) {
+      const test = current + ch;
+      if (
+        ctx.measureText(test).width > maxWidth &&
+        current.length > 0
+      ) {
+        out.push(current);
+        current = ch;
+      } else {
+        current = test;
+      }
+    }
+    out.push(current);
+  }
+  return out;
+}
+
+/** 描画用 padding（プレビューの padding:4 を 1080px 基準にスケールしたもの。両端で 2 倍ぶん引く） */
+function textInnerPadding(): number {
+  return 4 * (FINAL_W / 360);
+}
+
+/** layer の本来の描画幅 w に対して、改行込み・折り返し済みの行リストを返す（測定用 ctx を内部生成） */
+function computeLayerTextLines(layer: Layer, w: number): string[] {
+  const text = layer.text ?? "";
+  if (!text) return [""];
+  const c = document.createElement("canvas").getContext("2d");
+  if (!c) return text.split(/\n/);
+  c.font = buildTextFontString(layer);
+  const maxW = Math.max(1, w - textInnerPadding() * 2);
+  return wrapTextLines(c, text, maxW);
+}
+
 function drawText(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
   w: number,
   h: number,
 ): void {
-  const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
-  // 日本語フォントを OS 横断で指定（Windows/macOS/Linux いずれでもフォールバック可能に）。
-  // layer.fontFamily があれば優先し、末尾にデフォルトスタックを付けて fallback を担保する。
-  const DEFAULT_STACK = `"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "游ゴシック", "Meiryo", "メイリオ", "MS Gothic", "MSゴシック", "Noto Sans JP", "Noto Sans CJK JP", sans-serif`;
-  const family = layer.fontFamily
-    ? `${layer.fontFamily}, ${DEFAULT_STACK}`
-    : DEFAULT_STACK;
-  ctx.font = `bold ${fontSize}px ${family}`;
+  const scale = FINAL_W / 360;
+  const fontSize = (layer.fontSize ?? 48) * scale;
+  ctx.font = buildTextFontString(layer);
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  // 縁取り（stroke）を先に描いてから塗り（fill）を重ねる
-  const outlineWidth = layer.textOutlineWidth ?? 0;
-  const outlineColor = layer.textOutlineColor ?? "#000000";
-  const scaledOutline = outlineWidth * (FINAL_W / 360);
+  const decoration = layer.textDecoration ?? "none";
+  const fontColor = layer.fontColor ?? "#fff";
 
-  // 改行を考慮
-  const lines = (layer.text ?? "").split(/\n/);
+  // 手動改行 + 自動折り返し（プレビューの white-space:pre-wrap / word-break:break-word に合わせる）
+  const maxTextW = Math.max(1, w - textInnerPadding() * 2);
+  const lines = wrapTextLines(ctx, layer.text ?? "", maxTextW);
   const lineHeight = fontSize * 1.2;
   const totalHeight = lines.length * lineHeight;
   const startY = h / 2 - totalHeight / 2 + lineHeight / 2;
 
+  // === 装飾 (背景帯系): 文字の手前に描く前のレイヤー ===
+  // PNG 焼き込みなので、プレビューの「entryDuration かけて伸びる」アニメは最終状態（フル表示）で焼く。
+  if (decoration === "highlight-bar") {
+    // プレビュー: top:10% / bottom:10% / left:5% / width: 90% (entry 完了時)
+    ctx.save();
+    ctx.fillStyle = "rgba(255, 220, 0, 0.85)";
+    ctx.fillRect(w * 0.05, h * 0.1, w * 0.9, h * 0.8);
+    ctx.restore();
+  } else if (decoration === "underline-sweep") {
+    // プレビュー: bottom:12% / left:5% / width:90% / height:3px (preview 座標)
+    ctx.save();
+    ctx.fillStyle = fontColor;
+    ctx.fillRect(w * 0.05, h * 0.88, w * 0.9, 3 * scale);
+    ctx.restore();
+  }
+
+  // === 装飾本体: 文字描画 ===
+  if (decoration === "outline-reveal") {
+    // プレビュー: WebkitTextStroke (entry 完了時 3px) + WebkitTextFillColor: transparent
+    // → 中抜き文字
+    ctx.save();
+    ctx.strokeStyle = fontColor;
+    ctx.lineWidth = 3 * scale * 2; // strokeText は内側半分も塗るので倍
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    for (let i = 0; i < lines.length; i++) {
+      ctx.strokeText(lines[i], w / 2, startY + i * lineHeight);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (decoration === "neon") {
+    // プレビュー: text-shadow `0 0 4px ${color}, 0 0 8px ${color}, 0 0 16px ${color}`
+    // Canvas には複数 shadow が無いので、ぼかし量を変えて 3 回重ね塗りで再現する。
+    const color = fontColor === "#fff" ? "#ffe600" : fontColor;
+    for (const blur of [16, 8, 4]) {
+      ctx.save();
+      ctx.shadowColor = color;
+      ctx.shadowBlur = blur * scale;
+      ctx.fillStyle = color;
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], w / 2, startY + i * lineHeight);
+      }
+      ctx.restore();
+    }
+    // 芯のテキスト（影なし）
+    ctx.fillStyle = color;
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], w / 2, startY + i * lineHeight);
+    }
+    return;
+  }
+
+  // shadow-drop: ドロップシャドウを先に描く（最終状態 dx=4, dy=4）
+  if (decoration === "shadow-drop") {
+    const dx = 4 * scale;
+    const dy = 4 * scale;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], w / 2 + dx, startY + i * lineHeight + dy);
+    }
+    ctx.restore();
+  }
+
+  // ユーザー指定の縁取り（プレビューでは neon / outline-reveal の時はスキップされる）
+  const outlineWidth = layer.textOutlineWidth ?? 0;
+  const outlineColor = layer.textOutlineColor ?? "#000000";
+  const scaledOutline = outlineWidth * scale;
   if (scaledOutline > 0) {
-    // 縁取りはライン重ね描きで太さを出す（strokeText は内側も描画される）
     ctx.strokeStyle = outlineColor;
     ctx.lineWidth = scaledOutline * 2;
     ctx.lineJoin = "round";
@@ -447,10 +604,563 @@ function drawText(
     }
   }
 
-  ctx.fillStyle = layer.fontColor ?? "#fff";
+  ctx.fillStyle = fontColor;
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], w / 2, startY + i * lineHeight);
   }
+}
+
+// ============================================================================
+// === 文字単位 / 単語単位アニメ用: フレームごとに再描画する版 ===
+// プレビューの renderAnimatedText / renderCharAnimatedText / renderKineticText
+// (TemplateCanvas.tsx) を Canvas 2D に移植したもの。
+// ============================================================================
+
+interface CharLine {
+  width: number;
+  chars: { ch: string; globalIdx: number; xInLine: number }[];
+}
+
+interface KineticLine {
+  width: number;
+  tokens: { tok: string; idx: number; xInLine: number; isWs: boolean }[];
+}
+
+/** charAnimation 用: 各文字に globalIdx と行内 X を割り振る（手動改行 + 自動折り返し対応） */
+function layoutCharTokens(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): CharLine[] {
+  const result: CharLine[] = [];
+  let line: CharLine = { width: 0, chars: [] };
+  let globalIdx = 0;
+  for (const ch of Array.from(text)) {
+    if (ch === "\n") {
+      result.push(line);
+      line = { width: 0, chars: [] };
+      globalIdx++;
+      continue;
+    }
+    const chW = ctx.measureText(ch).width;
+    if (line.width + chW > maxWidth && line.chars.length > 0) {
+      result.push(line);
+      line = { width: 0, chars: [] };
+    }
+    line.chars.push({ ch, globalIdx, xInLine: line.width });
+    line.width += chW;
+    globalIdx++;
+  }
+  result.push(line);
+  return result;
+}
+
+/** kineticAnimation 用: text.split(/(\s+)/) と同じ index を保ったままトークン配置 */
+function layoutKineticTokens(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): KineticLine[] {
+  const result: KineticLine[] = [];
+  let line: KineticLine = { width: 0, tokens: [] };
+  // preview と完全一致させるため、空文字列も index に数える
+  const tokens = text.split(/(\s+)/);
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok === "") continue;
+    const isWs = /^\s+$/.test(tok);
+    if (isWs && tok.includes("\n")) {
+      // 改行を含む空白トークン: 行を切る（複数 \n は空行を作る）
+      result.push(line);
+      const nlCount = (tok.match(/\n/g) || []).length;
+      for (let nl = 1; nl < nlCount; nl++) {
+        result.push({ width: 0, tokens: [] });
+      }
+      line = { width: 0, tokens: [] };
+      continue;
+    }
+    const tokW = ctx.measureText(tok).width;
+    // 単語が幅を超えるなら次行へ（空白では折り返さない）
+    if (!isWs && line.width + tokW > maxWidth && line.tokens.length > 0) {
+      result.push(line);
+      line = { width: 0, tokens: [] };
+    }
+    line.tokens.push({ tok, idx: i, xInLine: line.width, isWs });
+    line.width += tokW;
+  }
+  result.push(line);
+  return result;
+}
+
+/** charAnimation の 1 文字の見た目（opacity, dy, color）を時刻から計算する */
+function computeCharAnimState(
+  anim: NonNullable<Layer["charAnimation"]>,
+  globalIdx: number,
+  localTime: number,
+  baseColor: string,
+): { opacity: number; dy: number; color: string } {
+  switch (anim) {
+    case "typewriter": {
+      const appearAt = globalIdx * 0.08;
+      return {
+        opacity: localTime >= appearAt ? 1 : 0,
+        dy: 0,
+        color: baseColor,
+      };
+    }
+    case "stagger-fade": {
+      const appearAt = globalIdx * 0.05;
+      const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
+      return { opacity: p, dy: (1 - p) * 6, color: baseColor };
+    }
+    case "wave": {
+      const dy = Math.sin(localTime * Math.PI * 2 + globalIdx * 0.35) * 4;
+      return { opacity: 1, dy, color: baseColor };
+    }
+    case "color-shift": {
+      return {
+        opacity: 1,
+        dy: 0,
+        color: `hsl(${(globalIdx * 30) % 360}, 100%, 60%)`,
+      };
+    }
+    default:
+      return { opacity: 1, dy: 0, color: baseColor };
+  }
+}
+
+/** kineticAnimation の 1 トークンの見た目（opacity, scale, dy, color）を時刻から計算する */
+function computeKineticTokenState(
+  anim: NonNullable<Layer["kineticAnimation"]>,
+  tokenIdx: number,
+  localTime: number,
+  baseColor: string,
+  keywordColor: string | undefined,
+): { opacity: number; scale: number; dy: number; color: string } {
+  const appearAt = tokenIdx * 0.2;
+  const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
+  switch (anim) {
+    case "word-pop": {
+      const c1 = 1.70158;
+      const c3 = c1 + 1;
+      const eb =
+        p === 0 ? 0 : 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+      return {
+        opacity: p > 0 ? 1 : 0,
+        scale: Math.max(0.001, eb),
+        dy: 0,
+        color: baseColor,
+      };
+    }
+    case "keyword-color": {
+      return {
+        opacity: p,
+        scale: 1,
+        dy: (1 - p) * 6,
+        color: tokenIdx % 2 === 1 ? keywordColor ?? "#ffe600" : baseColor,
+      };
+    }
+    case "slide-stack": {
+      return { opacity: p, scale: 1, dy: (1 - p) * -16, color: baseColor };
+    }
+    case "zoom-talk": {
+      const zoom = p < 0.5 ? 1 + p * 0.6 : 1 + (1 - p) * 0.6;
+      return {
+        opacity: p > 0 ? 1 : 0,
+        scale: zoom,
+        dy: 0,
+        color: baseColor,
+      };
+    }
+    default:
+      return { opacity: 1, scale: 1, dy: 0, color: baseColor };
+  }
+}
+
+/** 1 トークン（文字または単語）を、時刻状態と装飾を反映して描画 */
+function drawAnimatedToken(
+  ctx: CanvasRenderingContext2D,
+  tok: string,
+  x: number, // トークン左端
+  y: number, // 行の中心（textBaseline = "middle"）
+  opacity: number,
+  scale: number,
+  dy: number,
+  color: string,
+  decoration: string,
+  fontColor: string,
+  scalePx: number,
+  userOutlineWidth: number,
+  userOutlineColor: string,
+  localTime: number,
+  entryDur: number,
+): void {
+  if (opacity <= 0) return;
+  const tokW = ctx.measureText(tok).width;
+  ctx.save();
+  ctx.globalAlpha *= opacity;
+
+  // scale はトークンの中心を原点に
+  if (scale !== 1 || dy !== 0) {
+    ctx.translate(x + tokW / 2, y + dy);
+    if (scale !== 1) ctx.scale(scale, scale);
+    ctx.translate(-tokW / 2, 0);
+  } else {
+    ctx.translate(x, y);
+  }
+
+  // shadow-drop（時刻補間: -6,-6 → 4,4）
+  if (decoration === "shadow-drop") {
+    const p = Math.min(1, Math.max(0, localTime / entryDur));
+    const dxS = ((1 - p) * -6 + p * 4) * scalePx;
+    const dyS = ((1 - p) * -6 + p * 4) * scalePx;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillText(tok, dxS, dyS);
+    ctx.restore();
+  }
+
+  // outline-reveal（時刻でストローク幅 0→3 に成長、塗りなし）
+  if (decoration === "outline-reveal") {
+    const strokeP = Math.min(1, localTime / entryDur);
+    ctx.strokeStyle = fontColor;
+    ctx.lineWidth = strokeP * 3 * scalePx * 2;
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    ctx.strokeText(tok, 0, 0);
+    ctx.restore();
+    return;
+  }
+
+  // neon（多重 shadowBlur）
+  if (decoration === "neon") {
+    const c = color === fontColor ? (fontColor === "#fff" ? "#ffe600" : color) : color;
+    for (const blur of [16, 8, 4]) {
+      ctx.save();
+      ctx.shadowColor = c;
+      ctx.shadowBlur = blur * scalePx;
+      ctx.fillStyle = c;
+      ctx.fillText(tok, 0, 0);
+      ctx.restore();
+    }
+    ctx.fillStyle = c;
+    ctx.fillText(tok, 0, 0);
+    ctx.restore();
+    return;
+  }
+
+  // ユーザー縁取り（neon / outline-reveal の時はプレビュー仕様で無効）
+  if (userOutlineWidth > 0) {
+    ctx.strokeStyle = userOutlineColor;
+    ctx.lineWidth = userOutlineWidth * scalePx * 2;
+    ctx.lineJoin = "round";
+    ctx.miterLimit = 2;
+    ctx.strokeText(tok, 0, 0);
+  }
+
+  ctx.fillStyle = color;
+  ctx.fillText(tok, 0, 0);
+  ctx.restore();
+}
+
+/**
+ * テキスト/コメントレイヤーを 1 フレーム分（指定時刻 timeSec）描画する。
+ * 静的な fillColor / bubble / border は呼び出し側で既に描いておくこと。
+ * このメソッドは「テキストと装飾」だけを描画する。
+ */
+function drawAnimatedTextFrame(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  timeSec: number,
+): void {
+  const text = layer.text ?? "";
+  if (!text && !layer.textDecoration) return;
+
+  const scalePx = FINAL_W / 360;
+  const fontSize = (layer.fontSize ?? 48) * scalePx;
+  ctx.font = buildTextFontString(layer);
+  ctx.textBaseline = "middle";
+
+  const localTime = Math.max(0, timeSec - layer.startSec);
+  const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
+  const decoration = layer.textDecoration ?? "none";
+  const fontColor = layer.fontColor ?? "#fff";
+  const charAnim = layer.charAnimation ?? "none";
+  const kineticAnim = layer.kineticAnimation ?? "none";
+
+  const padding = textInnerPadding();
+  const maxTextW = Math.max(1, w - padding * 2);
+  const lineHeight = fontSize * 1.2;
+
+  // === 装飾の背景帯（時刻補間版） ===
+  if (decoration === "highlight-bar") {
+    const p = Math.min(1, localTime / entryDur);
+    ctx.save();
+    ctx.fillStyle = "rgba(255, 220, 0, 0.85)";
+    ctx.fillRect(w * 0.05, h * 0.1, w * 0.9 * p, h * 0.8);
+    ctx.restore();
+  } else if (decoration === "underline-sweep") {
+    const p = Math.min(1, localTime / entryDur);
+    ctx.save();
+    ctx.fillStyle = fontColor;
+    ctx.fillRect(w * 0.05, h * 0.88, w * 0.9 * p, 3 * scalePx);
+    ctx.restore();
+  }
+
+  // ユーザー指定縁取り（neon / outline-reveal は本体側で吸収）
+  const userOutlineW = layer.textOutlineWidth ?? 0;
+  const userOutlineColor = layer.textOutlineColor ?? "#000000";
+  const userOutlineEffective =
+    decoration === "neon" || decoration === "outline-reveal" ? 0 : userOutlineW;
+
+  // テキスト本体の描画（ctx.textAlign は left を使ってトークンを手で並べる）
+  ctx.textAlign = "left";
+
+  if (kineticAnim !== "none") {
+    const lines = layoutKineticTokens(ctx, text, maxTextW);
+    const totalH = lines.length * lineHeight;
+    const startY = h / 2 - totalH / 2 + lineHeight / 2;
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      const startX = (w - line.width) / 2;
+      const lineY = startY + li * lineHeight;
+      for (const t of line.tokens) {
+        if (t.isWs) continue;
+        const st = computeKineticTokenState(
+          kineticAnim,
+          t.idx,
+          localTime,
+          fontColor,
+          layer.keywordColor,
+        );
+        drawAnimatedToken(
+          ctx,
+          t.tok,
+          startX + t.xInLine,
+          lineY,
+          st.opacity,
+          st.scale,
+          st.dy,
+          st.color,
+          decoration,
+          fontColor,
+          scalePx,
+          userOutlineEffective,
+          userOutlineColor,
+          localTime,
+          entryDur,
+        );
+      }
+    }
+    return;
+  }
+
+  if (charAnim !== "none") {
+    const lines = layoutCharTokens(ctx, text, maxTextW);
+    const totalH = lines.length * lineHeight;
+    const startY = h / 2 - totalH / 2 + lineHeight / 2;
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      const startX = (w - line.width) / 2;
+      const lineY = startY + li * lineHeight;
+      for (const c of line.chars) {
+        const st = computeCharAnimState(charAnim, c.globalIdx, localTime, fontColor);
+        drawAnimatedToken(
+          ctx,
+          c.ch,
+          startX + c.xInLine,
+          lineY,
+          st.opacity,
+          1,
+          st.dy,
+          st.color,
+          decoration,
+          fontColor,
+          scalePx,
+          userOutlineEffective,
+          userOutlineColor,
+          localTime,
+          entryDur,
+        );
+      }
+    }
+    return;
+  }
+
+  // char/kinetic アニメ無し: 行ごとに 1 トークンとして時刻補間装飾を反映して描く
+  const charLines = layoutCharTokens(ctx, text, maxTextW);
+  // 文字単位で再構成して line ごとの string を作る
+  const linesAsStrings = charLines.map((l) => l.chars.map((c) => c.ch).join(""));
+  const totalH = linesAsStrings.length * lineHeight;
+  const startY = h / 2 - totalH / 2 + lineHeight / 2;
+  ctx.textAlign = "center";
+  for (let li = 0; li < linesAsStrings.length; li++) {
+    const lineText = linesAsStrings[li];
+    const lineY = startY + li * lineHeight;
+    drawAnimatedToken(
+      ctx,
+      lineText,
+      // textAlign center だが drawAnimatedToken は left 前提で translate するので元に戻す
+      w / 2 - ctx.measureText(lineText).width / 2,
+      lineY,
+      1,
+      1,
+      0,
+      fontColor,
+      decoration,
+      fontColor,
+      scalePx,
+      userOutlineEffective,
+      userOutlineColor,
+      localTime,
+      entryDur,
+    );
+  }
+}
+
+/** 静的レイヤー中身（fillColor / bubble shape / border）を 1 フレーム分描く */
+function drawAnimatedLayerStaticParts(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+): void {
+  ctx.save();
+  if (!(layer.type === "comment" && layer.bubble)) {
+    applyShapeClip(ctx, layer, w, h);
+  }
+  if (layer.type === "comment" && layer.bubble) {
+    const path2d = new Path2D(
+      bubbleFullPath(
+        w,
+        h,
+        layer.bubble,
+        (layer.borderRadius ?? 12) * (FINAL_W / 360),
+      ),
+    );
+    ctx.fillStyle = layer.fillColor
+      ? parseRgba(layer.fillColor)
+      : "rgba(255,255,255,0.95)";
+    ctx.fill(path2d);
+    if (layer.border && layer.border.width > 0) {
+      ctx.save();
+      ctx.strokeStyle = layer.border.color;
+      ctx.lineWidth = layer.border.width * (FINAL_W / 360);
+      ctx.stroke(path2d);
+      ctx.restore();
+    }
+  } else if (layer.fillColor) {
+    ctx.fillStyle = parseRgba(layer.fillColor);
+    ctx.fillRect(0, 0, w, h);
+  }
+  ctx.restore();
+
+  if (!layer.bubble && layer.border && layer.border.width > 0) {
+    ctx.save();
+    ctx.strokeStyle = layer.border.color;
+    ctx.lineWidth = layer.border.width * (FINAL_W / 360);
+    if (layer.shape === "circle") {
+      ctx.beginPath();
+      ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (layer.shape === "rounded") {
+      const r = (layer.borderRadius ?? 12) * (FINAL_W / 360);
+      roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(0, 0, w, h);
+    }
+    ctx.restore();
+  }
+}
+
+/** comment/text 系で charAnimation または kineticAnimation を持つレイヤーかを判定 */
+export function layerNeedsAnimatedTextVideo(layer: Layer): boolean {
+  if (layer.type !== "comment") return false;
+  const ca = layer.charAnimation;
+  const ka = layer.kineticAnimation;
+  return (
+    (typeof ca === "string" && ca !== "none") ||
+    (typeof ka === "string" && ka !== "none")
+  );
+}
+
+const ANIMATED_VIDEO_FPS = 30;
+
+/**
+ * テキスト/コメントレイヤーを「フレームごとに描画 → qtrle 透過 .mov」に焼く。
+ * Rust 側の encode_layer_animation_video コマンドを呼んで mov のパスを返す。
+ * 戻り値は composeLayerContentPng と同じシェイプ（path + 拡張量）。
+ */
+export async function composeAnimatedTextLayerVideo(
+  layer: Layer,
+  sessionId: string,
+  filename: string,
+): Promise<LayerPngResult> {
+  const w = Math.max(2, Math.round((layer.width / 100) * FINAL_W));
+  const h = Math.max(2, Math.round((layer.height / 100) * FINAL_H));
+
+  // 吹き出しのしっぽで枠外に出る場合の拡張（PNG 焼きと同じ計算）
+  const tail = layer.type === "comment" ? layer.bubble?.tail : undefined;
+  let padL = 0;
+  let padT = 0;
+  let padR = 0;
+  let padB = 0;
+  if (tail) {
+    if (tail.tipX < 0) padL = Math.ceil((-tail.tipX / 100) * w);
+    if (tail.tipX > 100) padR = Math.ceil(((tail.tipX - 100) / 100) * w);
+    if (tail.tipY < 0) padT = Math.ceil((-tail.tipY / 100) * h);
+    if (tail.tipY > 100) padB = Math.ceil(((tail.tipY - 100) / 100) * h);
+  }
+  // 折り返し後の行数で縦拡張（プレビュー一致）
+  if (layer.type === "comment" && layer.text) {
+    const lines = computeLayerTextLines(layer, w);
+    if (lines.length > 1) {
+      const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
+      const lineHeight = fontSize * 1.2;
+      const totalTextH = lines.length * lineHeight;
+      if (totalTextH > h) {
+        const extra = Math.ceil((totalTextH - h) / 2);
+        padT = Math.max(padT, extra);
+        padB = Math.max(padB, extra);
+      }
+    }
+  }
+
+  const canvasW = w + padL + padR;
+  const canvasH = h + padT + padB;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas 2D context を取得できませんでした");
+
+  const layerDur = Math.max(1 / ANIMATED_VIDEO_FPS, layer.endSec - layer.startSec);
+  const frameCount = Math.max(1, Math.round(layerDur * ANIMATED_VIDEO_FPS));
+
+  const frames: string[] = [];
+  for (let i = 0; i < frameCount; i++) {
+    ctx.clearRect(0, 0, canvasW, canvasH);
+    ctx.save();
+    if (padL || padT) ctx.translate(padL, padT);
+    drawAnimatedLayerStaticParts(ctx, layer, w, h);
+    const tSec = layer.startSec + i / ANIMATED_VIDEO_FPS;
+    drawAnimatedTextFrame(ctx, layer, w, h, tSec);
+    ctx.restore();
+    const dataUrl = canvas.toDataURL("image/png");
+    frames.push(dataUrl.split(",", 2)[1]);
+  }
+
+  const path = await invoke<string>("encode_layer_animation_video", {
+    sessionId,
+    filename,
+    base64Frames: frames,
+    fps: ANIMATED_VIDEO_FPS,
+  });
+
+  return { path, padL, padT, padR, padB };
 }
 
 function parseRgba(v: string): string {

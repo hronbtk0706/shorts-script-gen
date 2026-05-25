@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { Layer, LayerType } from "../types";
@@ -7,6 +8,9 @@ import {
   moveLayerZ,
   findFreeTrackZIndex,
 } from "../lib/layerUtils";
+import { importAsset } from "../lib/assetImport";
+import type { Live2DModelMeta } from "../lib/live2dLibrary";
+import { Live2DPickerModal } from "./Live2DPickerModal";
 import { SeBrowser } from "./SeBrowser";
 
 /** 音声ファイルのメタ情報から再生時間(秒)を取得 */
@@ -71,16 +75,17 @@ function probeVideoMeta(
 }
 
 /**
- * 画像/動画のピクセルサイズをキャンバス (1080x1920) 上の % サイズ/位置に変換する。
+ * 画像/動画のピクセルサイズをキャンバス上の % サイズ/位置に変換する。
  * - 大きさは目安で最大 80% にフィット
  * - アスペクト比を保って中央配置
+ * - canvasRatio: テンプレ width/height（縦 ≈ 0.5625、横 ≈ 1.778）
  */
 function fitToCanvasPct(
   srcW: number,
   srcH: number,
+  canvasRatio: number,
 ): { x: number; y: number; width: number; height: number } {
   const imgRatio = srcW / srcH;
-  const canvasRatio = 1080 / 1920; // ≈ 0.5625（縦長）
   let widthPct: number;
   let heightPct: number;
   if (imgRatio >= canvasRatio) {
@@ -116,6 +121,10 @@ interface Props {
   currentTimeSec?: number;
   /** SEブラウザで使うフォルダパス（未指定なら Documents\SE） */
   seFolderPath?: string;
+  /** 素材取り込み先のテンプレート ID（未指定なら取り込みせず元パスのまま） */
+  templateId?: string;
+  /** キャンバスのアスペクト比（width/height、画像配置のフィットに使う）。デフォルト 9:16 */
+  canvasRatio?: number;
 }
 
 const LAYER_TYPE_LABELS: Record<LayerType, { icon: string; label: string }> = {
@@ -125,6 +134,7 @@ const LAYER_TYPE_LABELS: Record<LayerType, { icon: string; label: string }> = {
   shape: { icon: "🟡", label: "図形" },
   comment: { icon: "📝", label: "テキスト" },
   audio: { icon: "🎵", label: "音声" },
+  character: { icon: "🎭", label: "キャラ" },
 };
 
 export function LayerPanel({
@@ -136,10 +146,15 @@ export function LayerPanel({
   newLayerDefaults,
   currentTimeSec,
   seFolderPath,
+  templateId,
+  canvasRatio = 1080 / 1920,
 }: Props) {
   const selectedSet = new Set<string>(
     selectedLayerIds ?? (selectedLayerId ? [selectedLayerId] : []),
   );
+  // Live2D グローバルライブラリピッカー
+  const [showLive2DPicker, setShowLive2DPicker] = useState(false);
+
   const addLayer = async (type: LayerType) => {
     if (type === "audio") {
       await addAudioFromFile();
@@ -151,6 +166,11 @@ export function LayerPanel({
     }
     if (type === "video") {
       await addVideoFromFile();
+      return;
+    }
+    if (type === "character") {
+      // グローバル Live2D ライブラリのピッカーを開く
+      setShowLive2DPicker(true);
       return;
     }
     // color / shape / comment は即レイヤー作成（素材ファイル不要）
@@ -213,12 +233,20 @@ export function LayerPanel({
         ],
       });
       if (typeof path !== "string") return;
+      // テンプレートIDがあればアプリ管理下にコピー
+      let storedPath = path;
+      if (templateId) {
+        try {
+          storedPath = await importAsset(templateId, path, "images");
+        } catch (e) {
+          console.warn("[LayerPanel] importAsset failed (image):", e);
+        }
+      }
       const startSec = newLayerDefaults?.startSec ?? 0;
       const endSec =
         newLayerDefaults?.endSec ?? Math.max(startSec + 1, startSec + 3);
       const nextZ = findFreeTrackZIndex(layers, startSec, endSec);
       const base = makeLayer({ type: "image", startSec, endSec }, nextZ);
-      // 画像サイズを取得してアスペクト比に合わせて配置
       let fit: { x: number; y: number; width: number; height: number } = {
         x: base.x,
         y: base.y,
@@ -226,12 +254,12 @@ export function LayerPanel({
         height: base.height,
       };
       try {
-        const { w, h } = await probeImageSize(path);
-        fit = fitToCanvasPct(w, h);
+        const { w, h } = await probeImageSize(storedPath);
+        fit = fitToCanvasPct(w, h, canvasRatio);
       } catch (e) {
         console.warn("[LayerPanel] image size probe failed:", e);
       }
-      const layer: Layer = { ...base, ...fit, source: path };
+      const layer: Layer = { ...base, ...fit, source: storedPath };
       onLayersChange([...layers, layer]);
       onLayerSelect(layer.id);
     } catch (e) {
@@ -249,14 +277,22 @@ export function LayerPanel({
         ],
       });
       if (typeof path !== "string") return;
+      let storedPath = path;
+      if (templateId) {
+        try {
+          storedPath = await importAsset(templateId, path, "videos");
+        } catch (e) {
+          console.warn("[LayerPanel] importAsset failed (video):", e);
+        }
+      }
       const startSec = newLayerDefaults?.startSec ?? 0;
       let dur = 3;
       let fit: { x: number; y: number; width: number; height: number } | null =
         null;
       try {
-        const meta = await probeVideoMeta(path);
+        const meta = await probeVideoMeta(storedPath);
         dur = meta.dur;
-        fit = fitToCanvasPct(meta.w, meta.h);
+        fit = fitToCanvasPct(meta.w, meta.h, canvasRatio);
       } catch (e) {
         console.warn("[LayerPanel] video meta probe failed:", e);
       }
@@ -268,7 +304,7 @@ export function LayerPanel({
       const layer: Layer = {
         ...base,
         ...(fit ?? {}),
-        source: path,
+        source: storedPath,
         sourceDurationSec: dur,
       };
       onLayersChange([...layers, layer]);
@@ -291,9 +327,17 @@ export function LayerPanel({
         ],
       });
       if (typeof path !== "string") return;
+      let storedPath = path;
+      if (templateId) {
+        try {
+          storedPath = await importAsset(templateId, path, "audio");
+        } catch (e) {
+          console.warn("[LayerPanel] importAsset failed (audio):", e);
+        }
+      }
       let dur = 3;
       try {
-        dur = await probeAudioDuration(path);
+        dur = await probeAudioDuration(storedPath);
       } catch (e) {
         console.warn("[LayerPanel] audio duration probe failed:", e);
       }
@@ -301,12 +345,36 @@ export function LayerPanel({
       const endSec = startSec + dur;
       const nextZ = findFreeTrackZIndex(layers, startSec, endSec, "audio");
       const base = makeLayer({ type: "audio", startSec, endSec }, nextZ);
-      const layer: Layer = { ...base, source: path };
+      const layer: Layer = { ...base, source: storedPath };
       onLayersChange([...layers, layer]);
       onLayerSelect(layer.id);
     } catch (e) {
       console.warn("[LayerPanel] addAudioFromFile failed:", e);
     }
+  };
+
+  /**
+   * Live2D ピッカーで「使用」を押されたときの追加ハンドラ。
+   * モデル本体はグローバルライブラリ (templates/live2d/) に既にコピー済みなので、
+   * パスとクレジット情報をレイヤーに乗せるだけで良い。
+   */
+  const addCharacterFromLibrary = (meta: Live2DModelMeta) => {
+    const startSec = newLayerDefaults?.startSec ?? 0;
+    const endSec =
+      newLayerDefaults?.endSec ?? Math.max(startSec + 1, startSec + 5);
+    const nextZ = findFreeTrackZIndex(layers, startSec, endSec);
+    const base = makeLayer({ type: "character", startSec, endSec }, nextZ);
+    const layer: Layer = {
+      ...base,
+      modelPath: meta.modelPath,
+      credit: {
+        author: meta.author,
+        sourceUrl: meta.sourceUrl,
+        requiredCreditText: meta.requiredCreditText,
+      },
+    };
+    onLayersChange([...layers, layer]);
+    onLayerSelect(layer.id);
   };
 
   const addAudioFromSe = (path: string, _name: string, dur: number) => {
@@ -352,6 +420,9 @@ export function LayerPanel({
         x: Math.min(src.x + 3, 90),
         y: Math.min(src.y + 3, 90),
         zIndex: nextZ,
+        // 紐付け系の id はコピー時にリセット。残すと「複製先でナレーション再生成」時に
+        // 元レイヤーの音声を消してしまう（cloneLayer と同じ挙動に揃える）
+        generatedNarrationLayerId: undefined,
       };
       working.push(copy);
       copies.push(copy);
@@ -399,6 +470,7 @@ export function LayerPanel({
     );
 
   return (
+    <>
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -538,5 +610,11 @@ export function LayerPanel({
         })}
       </div>
     </div>
+    <Live2DPickerModal
+      open={showLive2DPicker}
+      onClose={() => setShowLive2DPicker(false)}
+      onPick={addCharacterFromLibrary}
+    />
+    </>
   );
 }

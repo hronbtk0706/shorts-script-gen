@@ -8,6 +8,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tauri::Manager;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 /// ffmpeg / ffprobe / curl 等の外部バイナリの絶対パスを解決する。
 /// macOS の .app から起動すると shell の PATH を継承しないため、
@@ -546,6 +548,10 @@ fn default_anim_duration() -> f64 {
     0.3
 }
 
+fn default_ambient_intensity() -> f64 {
+    1.0
+}
+
 /// ==== 新方式（レイヤーのみ 1 本合成）の入力型 ====
 /// テンプレートの各レイヤーを、シーン分割を経由せずに直接 overlay で積むための入力。
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -578,6 +584,10 @@ pub struct TemplateLayerInput {
     pub exit_animation: String,
     #[serde(default = "default_anim_duration")]
     pub exit_duration: f64,
+    #[serde(default)]
+    pub ambient_animation: String,
+    #[serde(default = "default_ambient_intensity")]
+    pub ambient_intensity: f64,
     /// video 用: 素材が短いときにループするか
     #[serde(default = "default_video_loop")]
     pub video_loop: bool,
@@ -735,20 +745,28 @@ fn build_fade_filter(
     let min_fade = 1.0 / FPS as f64;
     let mut parts: Vec<String> = Vec::new();
 
-    // ユーザーが pop / zoom-in / slide-* 等の「動いて現れる」アニメを選んでいる場合は、
-    // そのアニメ自体が登場の視覚的連続性を担っているので、追加の alpha fade は不要。
-    // fade を重ねると「動きつつ透明度も変化」する二重アニメに見えてしまう。
-    // → fade 強制は "none" / 未指定のときに限る。
+    // プレビュー側で `opacity *= e` を適用しているアニメは、エクスポートでも fade を重ねる。
+    // それ以外（pop / zoom-in / zoom-out / slide-* 等）は動きで登場/退場するので
+    // 追加の alpha fade は不要（重ねると動きながら透明度が変わる二重アニメに見える）。
+    // blur-in / blur-out は ffmpeg で時間依存の gblur が出来ないため、fade で代替する。
+    let entry_has_fade_component = matches!(
+        entry_anim,
+        "fade" | "blur-in" | "elastic-pop" | "flip-in" | "stretch-in" | "roll-in"
+    );
+    let exit_has_fade_component = matches!(
+        exit_anim,
+        "fade" | "blur-out" | "flip-out" | "stretch-out" | "roll-out"
+    );
     let entry_is_non_fade_anim = !entry_anim.is_empty()
         && entry_anim != "none"
-        && entry_anim != "fade";
+        && !entry_has_fade_component;
     let exit_is_non_fade_anim = !exit_anim.is_empty()
         && exit_anim != "none"
-        && exit_anim != "fade";
+        && !exit_has_fade_component;
 
     let entry_effective_dur = if skip_entry_fade {
         0.0
-    } else if entry_anim == "fade" && entry_dur > 0.0 {
+    } else if entry_has_fade_component && entry_dur > 0.0 {
         entry_dur
     } else if entry_is_non_fade_anim {
         0.0
@@ -764,7 +782,7 @@ fn build_fade_filter(
 
     let exit_effective_dur = if skip_exit_fade {
         0.0
-    } else if exit_anim == "fade" && exit_dur > 0.0 {
+    } else if exit_has_fade_component && exit_dur > 0.0 {
         exit_dur
     } else if exit_is_non_fade_anim {
         0.0
@@ -785,8 +803,17 @@ fn build_fade_filter(
     }
 }
 
-/// 入退場 zoom-in / zoom-out / pop のスケール係数 S(t) を ffmpeg 式で生成
-/// 戻り値は None（該当アニメなし）または S(t) 式（例: "if(..,.., 1)" ）
+/// あるアニメ名がスケールアニメとして扱われるかを判定
+fn anim_uses_scale(entry_anim: &str, exit_anim: &str) -> bool {
+    matches!(
+        entry_anim,
+        "zoom-in" | "pop" | "elastic-pop" | "stretch-in" | "flip-in"
+    ) || matches!(exit_anim, "zoom-out" | "stretch-out" | "flip-out")
+}
+
+/// 入退場のスケールアニメを ffmpeg 式 (sx, sy) で生成。
+/// stretch-in / stretch-out / flip-in / flip-out は X 軸のみアニメ（Y は 1.0 固定）。
+/// 該当アニメが無ければ None。
 fn build_scale_anim_expr(
     entry_anim: &str,
     entry_start: f64,
@@ -794,54 +821,99 @@ fn build_scale_anim_expr(
     exit_anim: &str,
     exit_start: f64,
     exit_dur: f64,
-) -> Option<String> {
-    let entry_expr: Option<String> = match entry_anim {
+) -> Option<(String, String)> {
+    // entry: 各アニメの (sx_expr, sy_expr) を返す。スケールしない軸は None（後で 1.0 にする）
+    let (entry_sx, entry_sy): (Option<String>, Option<String>) = match entry_anim {
         "zoom-in" => {
             let s = entry_start;
             let e = entry_start + entry_dur;
             let d = entry_dur.max(0.001);
-            Some(format!(
+            let expr = format!(
                 "if(lt(t,{s:.3}),0.01,if(gt(t,{e:.3}),1,max(0.01,(t-{s:.3})/{d:.3})))",
-                s = s,
-                e = e,
-                d = d,
-            ))
+                s = s, e = e, d = d,
+            );
+            (Some(expr.clone()), Some(expr))
         }
         "pop" => {
             // easeOutBack: 1 + c3*(p-1)^3 + c1*(p-1)^2, c1=1.70158, c3=2.70158
             let s = entry_start;
             let e = entry_start + entry_dur;
             let d = entry_dur.max(0.001);
-            Some(format!(
+            let expr = format!(
                 "if(lt(t,{s:.3}),0.01,if(gt(t,{e:.3}),1,max(0.01,1+2.70158*pow((t-{s:.3})/{d:.3}-1,3)+1.70158*pow((t-{s:.3})/{d:.3}-1,2))))",
-                s = s,
-                e = e,
-                d = d,
-            ))
+                s = s, e = e, d = d,
+            );
+            (Some(expr.clone()), Some(expr))
         }
-        _ => None,
+        "elastic-pop" => {
+            // easeOutElastic: 2^(-10p) * sin((p*10 - 0.75) * 2π/3) + 1
+            let s = entry_start;
+            let e = entry_start + entry_dur;
+            let d = entry_dur.max(0.001);
+            let expr = format!(
+                "if(lt(t,{s:.3}),0.01,if(gt(t,{e:.3}),1,max(0.01,1+pow(2,-10*(t-{s:.3})/{d:.3})*sin(((t-{s:.3})/{d:.3}*10-0.75)*2.0944))))",
+                s = s, e = e, d = d,
+            );
+            (Some(expr.clone()), Some(expr))
+        }
+        "stretch-in" | "flip-in" => {
+            // scaleX 0→1 (ease-out: e = 1-(1-p)^2)。flip-in は 3D を 2D scaleX で近似。
+            let s = entry_start;
+            let e = entry_start + entry_dur;
+            let d = entry_dur.max(0.001);
+            let expr = format!(
+                "if(lt(t,{s:.3}),0.01,if(gt(t,{e:.3}),1,max(0.01,1-pow(1-(t-{s:.3})/{d:.3},2))))",
+                s = s, e = e, d = d,
+            );
+            (Some(expr), None)
+        }
+        _ => (None, None),
     };
 
-    let exit_expr: Option<String> = match exit_anim {
+    let (exit_sx, exit_sy): (Option<String>, Option<String>) = match exit_anim {
         "zoom-out" => {
             let s = exit_start;
             let e = exit_start + exit_dur;
             let d = exit_dur.max(0.001);
-            Some(format!(
+            let expr = format!(
                 "if(lt(t,{s:.3}),1,if(gt(t,{e:.3}),0.01,max(0.01,1-(t-{s:.3})/{d:.3})))",
-                s = s,
-                e = e,
-                d = d,
-            ))
+                s = s, e = e, d = d,
+            );
+            (Some(expr.clone()), Some(expr))
         }
-        _ => None,
+        "stretch-out" | "flip-out" => {
+            // scaleX 1→0 (ease-in: e = p^2)
+            let s = exit_start;
+            let e = exit_start + exit_dur;
+            let d = exit_dur.max(0.001);
+            let expr = format!(
+                "if(lt(t,{s:.3}),1,if(gt(t,{e:.3}),0.01,max(0.01,1-pow((t-{s:.3})/{d:.3},2))))",
+                s = s, e = e, d = d,
+            );
+            (Some(expr), None)
+        }
+        _ => (None, None),
     };
 
-    match (entry_expr, exit_expr) {
-        (None, None) => None,
-        (Some(e), None) => Some(e),
-        (None, Some(x)) => Some(x),
-        (Some(e), Some(x)) => Some(format!("({})*({})", e, x)),
+    fn combine(entry: Option<String>, exit: Option<String>) -> Option<String> {
+        match (entry, exit) {
+            (None, None) => None,
+            (Some(e), None) => Some(e),
+            (None, Some(x)) => Some(x),
+            (Some(e), Some(x)) => Some(format!("({})*({})", e, x)),
+        }
+    }
+
+    let sx = combine(entry_sx, exit_sx);
+    let sy = combine(entry_sy, exit_sy);
+
+    if sx.is_none() && sy.is_none() {
+        None
+    } else {
+        Some((
+            sx.unwrap_or_else(|| "1".to_string()),
+            sy.unwrap_or_else(|| "1".to_string()),
+        ))
     }
 }
 
@@ -857,9 +929,11 @@ fn build_slide_offset_expr(
     main_w: i32,
     main_h: i32,
 ) -> (String, String) {
+    // roll-in は左から登場 (preview の translateX(-100%) → 0 と同じ向き)。
+    // roll-out は右へ退場 (preview の translateX(0) → 100% と同じ向き)。
     let entry_x_off = match entry_anim {
         "slide-left" => main_w as f64,
-        "slide-right" => -(main_w as f64),
+        "slide-right" | "roll-in" => -(main_w as f64),
         _ => 0.0,
     };
     let entry_y_off = match entry_anim {
@@ -870,7 +944,7 @@ fn build_slide_offset_expr(
     // 2x canvas width/height で exit: 要素が画面端付近にあっても確実に画外へ出す
     let exit_x_off = match exit_anim {
         "slide-left" => -(2 * main_w) as f64,
-        "slide-right" => (2 * main_w) as f64,
+        "slide-right" | "roll-out" => (2 * main_w) as f64,
         _ => 0.0,
     };
     let exit_y_off = match exit_anim {
@@ -913,6 +987,82 @@ fn build_slide_offset_expr(
     };
 
     (build_axis(entry_x_off, exit_x_off), build_axis(entry_y_off, exit_y_off))
+}
+
+// ===== Ambient（表示中ずっと続くアニメ）helpers =====
+// preview の computeLayerAmbientStyle (TemplateCanvas.tsx) と同じ式を ffmpeg 側で再現する。
+// k は ambientIntensity (0..2)。
+
+fn ambient_k(intensity: f64) -> f64 {
+    intensity.max(0.0).min(2.0)
+}
+
+/// shake / bounce / float の overlay xy 加算量。preview の px は 360 幅基準なので canvas 幅で換算。
+fn build_ambient_translate(
+    ambient: &str,
+    intensity: f64,
+    canvas_width: i32,
+) -> (String, String) {
+    let k = ambient_k(intensity);
+    if k.abs() < 0.001 {
+        return ("0".to_string(), "0".to_string());
+    }
+    let px_scale = canvas_width as f64 / 360.0; // 縦 1080 → 3.0、横 1920 → 5.33
+    match ambient {
+        "shake" => (
+            format!("(sin(t*30)*{:.4})", 2.0 * k * px_scale),
+            format!("(cos(t*33)*{:.4})", 1.5 * k * px_scale),
+        ),
+        "bounce" => (
+            "0".to_string(),
+            format!("(-abs(sin(t*2*PI))*{:.4})", 4.0 * k * px_scale),
+        ),
+        "float" => (
+            "0".to_string(),
+            format!("(sin(t*PI)*{:.4})", 3.0 * k * px_scale),
+        ),
+        _ => ("0".to_string(), "0".to_string()),
+    }
+}
+
+/// pulse の scale 倍率式（既存 scale 式に乗算する）。
+fn build_ambient_scale_factor(ambient: &str, intensity: f64) -> Option<String> {
+    let k = ambient_k(intensity);
+    if k.abs() < 0.001 || ambient != "pulse" {
+        return None;
+    }
+    Some(format!("(1+0.05*{:.4}*sin(t*2*PI))", k))
+}
+
+/// wiggle の rotation 度数式（既存 rotation 度数に加算する）。
+fn build_ambient_rotation_deg(ambient: &str, intensity: f64) -> Option<String> {
+    let k = ambient_k(intensity);
+    if k.abs() < 0.001 || ambient != "wiggle" {
+        return None;
+    }
+    Some(format!("(sin(t*2*PI)*{:.4})", 2.0 * k))
+}
+
+/// rainbow の hue フィルタ。preview の hue-rotate(t*60deg) を `hue=h='60*t'` で再現。
+fn build_ambient_color_filter(ambient: &str) -> Option<String> {
+    if ambient != "rainbow" {
+        return None;
+    }
+    Some("hue=h='60*t':eval=frame".to_string())
+}
+
+/// blink の alpha 切替フィルタ（geq）。preview: sin(t*PI*4) > 0 ? 1 : 0.3+0.7*(1-k)
+/// 入力は format=yuva420p の YUV+alpha なので lum/cb/cr は素通し、a だけ切替える。
+fn build_ambient_alpha_filter(ambient: &str, intensity: f64) -> Option<String> {
+    if ambient != "blink" {
+        return None;
+    }
+    let k = ambient_k(intensity);
+    let low = (0.3 + 0.7 * (1.0 - k)).max(0.0).min(1.0);
+    Some(format!(
+        "geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='if(gt(sin(T*PI*4),0),alpha(X,Y),alpha(X,Y)*{:.4})'",
+        low
+    ))
 }
 
 
@@ -975,106 +1125,60 @@ async fn save_overlay_png(
     Ok(png_path.to_string_lossy().into_owned())
 }
 
+/// レイヤー単位でアニメーションを 30fps の透過動画 (.mov / qtrle alpha) に焼く。
+/// JS 側で frame_NNNNN.png を全部 base64 で渡してきたら、Rust 側で保存して
+/// `ffmpeg -framerate 30 -i frame_%05d.png -c:v qtrle out.mov` で合成する。
+/// qtrle は ffmpeg 標準ビルドに必ず含まれるロスレス透過コーデック。
 #[tauri::command]
-async fn download_image(
+async fn encode_layer_animation_video(
     app: tauri::AppHandle,
     session_id: String,
-    url: String,
     filename: String,
+    base64_frames: Vec<String>,
+    fps: u32,
 ) -> Result<String, String> {
-    let dir = session_asset_dir(&app, &session_id)?;
-    let img_path = dir.join(format!("{}.jpg", filename));
-
-    let status = hidden_cmd("curl")
-        .args(["-L", "-f", "-s", "-o"])
-        .arg(&img_path)
-        .arg(&url)
-        .status()
-        .map_err(|e| format!("curl failed: {}", e))?;
-
-    if !status.success() {
-        return Err(format!("Failed to download image from {}", url));
+    if base64_frames.is_empty() {
+        return Err("encode_layer_animation_video: no frames".into());
     }
-    Ok(img_path.to_string_lossy().into_owned())
-}
-
-#[tauri::command]
-async fn cloudflare_generate_image(
-    app: tauri::AppHandle,
-    session_id: String,
-    account_id: String,
-    api_key: String,
-    model: String,
-    body_json: String,
-    filename: String,
-) -> Result<String, String> {
     let dir = session_asset_dir(&app, &session_id)?;
-    let tmp_path = dir.join(format!("{}_cf.bin", filename));
-    let out_path = dir.join(format!("{}.png", filename));
+    let frames_dir = dir.join(format!("{}_frames", filename));
+    // 既存のフレームディレクトリは消してやり直す（前回の残骸対策）
+    let _ = std::fs::remove_dir_all(&frames_dir);
+    std::fs::create_dir_all(&frames_dir).map_err(|e| e.to_string())?;
 
-    let url = format!(
-        "https://api.cloudflare.com/client/v4/accounts/{}/ai/run/{}",
-        account_id, model
-    );
-    let auth_header = format!("Authorization: Bearer {}", api_key);
+    for (i, b64) in base64_frames.iter().enumerate() {
+        let p = frames_dir.join(format!("frame_{:05}.png", i));
+        let bytes = general_purpose::STANDARD
+            .decode(b64.as_bytes())
+            .map_err(|e| format!("base64 decode frame {}: {}", i, e))?;
+        std::fs::write(&p, bytes).map_err(|e| format!("write frame {}: {}", i, e))?;
+    }
 
-    let output = hidden_cmd("curl")
-        .args(["-s", "-S", "-L", "-X", "POST"])
-        .args(["-H", &auth_header])
-        .args(["-H", "Content-Type: application/json"])
-        .args(["-d", &body_json])
-        .arg("-o")
-        .arg(&tmp_path)
-        .args(["-w", "%{http_code}"])
-        .arg(&url)
+    let output_path = dir.join(format!("{}.mov", filename));
+    let _ = std::fs::remove_file(&output_path);
+    let frame_pattern = frames_dir.join("frame_%05d.png");
+
+    // qtrle = QuickTime Animation。RGB+alpha ロスレス、ffmpeg 標準。VP9 alpha より互換性が高い。
+    let output = hidden_cmd("ffmpeg")
+        .args(["-y"])
+        .args(["-framerate", &fps.to_string()])
+        .arg("-i")
+        .arg(&frame_pattern)
+        .args(["-c:v", "qtrle"])
+        .args(["-pix_fmt", "argb"])
+        .arg(&output_path)
         .output()
-        .map_err(|e| format!("curl failed: {}", e))?;
+        .map_err(|e| format!("ffmpeg encode failed: {}", e))?;
 
     if !output.status.success() {
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(format!(
-            "curl exited with error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("ffmpeg encode_layer_animation failed: {}", stderr));
     }
 
-    let status_code = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let body = std::fs::read(&tmp_path).map_err(|e| format!("read tmp: {}", e))?;
-    let _ = std::fs::remove_file(&tmp_path);
+    // フレームディレクトリは消す（合成後は不要）
+    let _ = std::fs::remove_dir_all(&frames_dir);
 
-    if status_code != "200" {
-        let snippet: String = String::from_utf8_lossy(&body).chars().take(400).collect();
-        return Err(format!("Cloudflare HTTP {}: {}", status_code, snippet));
-    }
-
-    let is_binary_image = body.len() > 4
-        && (body.starts_with(&[0xFF, 0xD8, 0xFF])
-            || body.starts_with(&[0x89, 0x50, 0x4E, 0x47]));
-
-    let bytes: Vec<u8> = if is_binary_image {
-        body
-    } else {
-        let text = std::str::from_utf8(&body)
-            .map_err(|e| format!("utf8 decode: {}", e))?;
-        let v: serde_json::Value = serde_json::from_str(text).map_err(|e| {
-            let snippet: String = text.chars().take(300).collect();
-            format!("json parse error: {} / body: {}", e, snippet)
-        })?;
-        let img_b64 = v
-            .get("result")
-            .and_then(|r| r.get("image"))
-            .and_then(|i| i.as_str())
-            .ok_or_else(|| {
-                let snippet: String = text.chars().take(300).collect();
-                format!("no result.image in response: {}", snippet)
-            })?;
-        general_purpose::STANDARD
-            .decode(img_b64)
-            .map_err(|e| format!("base64 decode: {}", e))?
-    };
-
-    std::fs::write(&out_path, bytes).map_err(|e| format!("write png: {}", e))?;
-    Ok(out_path.to_string_lossy().into_owned())
+    Ok(output_path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -1103,6 +1207,13 @@ async fn voicevox_tts(
     let dir = session_asset_dir(&app, &session_id)?;
     let wav_path = dir.join(format!("{}.wav", filename));
     std::fs::write(&wav_path, wav_bytes).map_err(|e| e.to_string())?;
+
+    // Live2D リップシンク用に audio_query JSON を sidecar 保存。
+    // accent_phrases[].moras[].vowel と vowel_length / consonant_length を持つので、
+    // 後段で「時刻 t にどの母音が鳴っているか」を引ける。
+    let query_path = dir.join(format!("{}.query.json", filename));
+    let _ = std::fs::write(&query_path, query_res.as_bytes());
+
     Ok(wav_path.to_string_lossy().into_owned())
 }
 
@@ -1595,6 +1706,36 @@ async fn download_bgm(
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// フロントエンドが WebCodecs 等でレンダリングしたバイト列をセッションのアセットディレクトリに保存する。
+/// Live2D キャラレイヤーをエクスポート前に WebM (VP9 + alpha) として焼き出すのに使う。
+#[tauri::command]
+async fn save_render_chunk(
+    app: tauri::AppHandle,
+    session_id: String,
+    filename: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let dir = session_asset_dir(&app, &session_id)?;
+    let out_path = dir.join(&filename);
+    std::fs::write(&out_path, &bytes)
+        .map_err(|e| format!("save_render_chunk write: {}", e))?;
+    Ok(out_path.to_string_lossy().into_owned())
+}
+
+/// 任意パス (絶対) のテキストファイルを UTF-8 で読み込む。
+/// 主に VOICEVOX query JSON sidecar のような「絶対パスで指された小さなテキスト」を
+/// フロントエンドが読みたい場合に使う。
+/// 見つからない場合は Ok(None) を返す (リップシンクのフォールバック判定用)。
+#[tauri::command]
+async fn read_voicevox_query(path: String) -> Result<Option<String>, String> {
+    if !std::path::Path::new(&path).exists() {
+        return Ok(None);
+    }
+    std::fs::read_to_string(&path)
+        .map(Some)
+        .map_err(|e| format!("read_voicevox_query: {}", e))
+}
+
 #[tauri::command]
 async fn get_audio_duration(audio_path: String) -> Result<f64, String> {
     let output = hidden_cmd("ffprobe")
@@ -1645,6 +1786,11 @@ async fn compose_template_video(
     // 画質設定（省略時は標準 crf=23 / medium）
     video_crf: Option<i32>,
     video_preset: Option<String>,
+    // エンコーダ選択（省略時は libx264）。"libx264" | "h264_nvenc" | "h264_qsv"
+    video_encoder: Option<String>,
+    // 出力解像度（省略時は縦 1080x1920・旧テンプレ互換）
+    canvas_width: Option<i32>,
+    canvas_height: Option<i32>,
 ) -> Result<String, String> {
     state.begin(session_id.clone());
     let result = compose_template_video_inner(
@@ -1658,6 +1804,9 @@ async fn compose_template_video(
         output_filename,
         video_crf.unwrap_or(23).clamp(0, 51),
         video_preset.unwrap_or_else(|| "medium".to_string()),
+        video_encoder.unwrap_or_else(|| "libx264".to_string()),
+        canvas_width.unwrap_or(1080).max(2),
+        canvas_height.unwrap_or(1920).max(2),
     );
     state.end();
     result
@@ -1674,6 +1823,9 @@ fn compose_template_video_inner(
     output_filename: String,
     video_crf: i32,
     video_preset: String,
+    video_encoder: String,
+    canvas_width: i32,
+    canvas_height: i32,
 ) -> Result<String, String> {
     let base_dir = output_base_dir(&app)?;
     let asset_dir = base_dir.join(&session_id);
@@ -1693,8 +1845,8 @@ fn compose_template_video_inner(
         "lavfi",
         "-i",
         &format!(
-            "color=c=black:s=1080x1920:r={}:d={:.3}",
-            FPS, total_duration
+            "color=c=black:s={}x{}:r={}:d={:.3}",
+            canvas_width, canvas_height, FPS, total_duration
         ),
     ]);
 
@@ -1761,6 +1913,9 @@ fn compose_template_video_inner(
         // video は指定サイズに cover fit + 出力 fps へ揃える（素材が 24/60fps でも 30fps CFR に）
         // static は既にサイズ確定済みなので scale 不要、framerate も入力側で 30 指定済み
         if layer.kind == "video" {
+            // 入力動画の PTS を 0 基準に正規化する。
+            // VFR 入力や非ゼロ開始 PTS が fps=30 フィルタのフレーム生成を乱してカクつく問題を防ぐ
+            chain.push_str("setpts=PTS-STARTPTS,");
             // クロップ（素材に対する % → iw/ih 式）。scale より前に実行して表示範囲を切り抜く
             if let Some(c) = &layer.crop {
                 let is_default =
@@ -1790,21 +1945,80 @@ fn compose_template_video_inner(
         }
         chain.push_str("format=yuva420p");
 
+        // ambient（表示中ずっと続くアニメ）の事前評価。
+        // rainbow（hue）と blink（geq alpha）は format 直後にチェーンに挿入する。
+        // pulse（scale）/ wiggle（rotation）/ shake/bounce/float（overlay xy）は後段で合算。
+        if let Some(rainbow) = build_ambient_color_filter(&layer.ambient_animation) {
+            chain.push_str(",");
+            chain.push_str(&rainbow);
+        }
+        if let Some(blink) =
+            build_ambient_alpha_filter(&layer.ambient_animation, layer.ambient_intensity)
+        {
+            chain.push_str(",");
+            chain.push_str(&blink);
+        }
+        let amb_rot_deg =
+            build_ambient_rotation_deg(&layer.ambient_animation, layer.ambient_intensity);
+        let amb_scale_factor =
+            build_ambient_scale_factor(&layer.ambient_animation, layer.ambient_intensity);
+        let (amb_x_off, amb_y_off) =
+            build_ambient_translate(&layer.ambient_animation, layer.ambient_intensity, canvas_width);
+        let has_ambient_translate = amb_x_off != "0" || amb_y_off != "0";
+
         // キーフレーム: どのプロパティが実際にアニメしているか
         let kf_x_anim = keyframe_is_animating(&layer.keyframes.x);
         let kf_y_anim = keyframe_is_animating(&layer.keyframes.y);
         let kf_scale_anim = keyframe_is_animating(&layer.keyframes.scale);
         let kf_rotation_anim = keyframe_is_animating(&layer.keyframes.rotation);
 
-        // rotation: キーフレーム優先。なければ従来の静的回転。
+        let exit_start =
+            (layer.end_sec - layer.exit_duration).max(layer.start_sec);
+
+        // rotation: キーフレーム + roll-in/out + wiggle ambient + 静的 layer.rotation を合算する。
         let has_rotation_static = layer.rotation.abs() > 0.01;
-        if kf_rotation_anim {
-            // キーフレームで時刻依存に回転（度 → ラジアン変換）。
-            // 回転後に見切れないよう ow/oh は対角線長で確保。
-            let r_expr = keyframe_expr(&layer.keyframes.rotation, layer.rotation);
+        let has_roll_in = layer.entry_animation == "roll-in";
+        let has_roll_out = layer.exit_animation == "roll-out";
+        let has_ambient_rot = amb_rot_deg.is_some();
+        let has_dynamic_rotation =
+            kf_rotation_anim || has_roll_in || has_roll_out || has_ambient_rot;
+        if has_dynamic_rotation {
+            // 度数の expression を組み立て、最後に PI/180 を掛ける。
+            let base_deg = if kf_rotation_anim {
+                keyframe_expr(&layer.keyframes.rotation, layer.rotation)
+            } else {
+                format!("{:.6}", layer.rotation)
+            };
+            let mut deg_parts: Vec<String> = vec![format!("({})", base_deg)];
+            if has_roll_in {
+                // preview: rotate((1-e)*-180), e = 1-(1-p)^2 → rot = -180 * (1-p)^2
+                let s = layer.start_sec;
+                let e = layer.start_sec + layer.entry_duration;
+                let d = layer.entry_duration.max(0.001);
+                deg_parts.push(format!(
+                    "if(lt(t,{s:.3}),-180,if(gt(t,{e:.3}),0,-180*pow(1-(t-{s:.3})/{d:.3},2)))",
+                    s = s, e = e, d = d
+                ));
+            }
+            if has_roll_out {
+                // preview: rotate(e*180), e = p^2 → rot = 180 * p^2
+                let s = exit_start;
+                let e = layer.end_sec;
+                let d = layer.exit_duration.max(0.001);
+                deg_parts.push(format!(
+                    "if(lt(t,{s:.3}),0,if(gt(t,{e:.3}),180,180*pow((t-{s:.3})/{d:.3},2)))",
+                    s = s, e = e, d = d
+                ));
+            }
+            if let Some(wiggle) = amb_rot_deg.as_ref() {
+                deg_parts.push(wiggle.clone());
+            }
+            let total_deg = deg_parts.join("+");
             chain.push_str(&format!(
-                ",rotate=a='({expr})*PI/180':c=0x00000000:ow='hypot(iw,ih)':oh='hypot(iw,ih)':eval=frame",
-                expr = r_expr,
+                // rotate フィルタには `eval` option は無い（ffmpeg 8.x で reject される）。
+                // 角度式が `t` を使えば自動的に毎フレーム評価される。
+                ",rotate=a='({expr})*PI/180':c=0x00000000:ow='hypot(iw,ih)':oh='hypot(iw,ih)'",
+                expr = total_deg,
             ));
         } else if has_rotation_static {
             let rad = layer.rotation * std::f64::consts::PI / 180.0;
@@ -1814,39 +2028,57 @@ fn compose_template_video_inner(
             ));
         }
 
-        let has_scale_anim = matches!(
-            layer.entry_animation.as_str(),
-            "zoom-in" | "pop"
-        ) || layer.exit_animation == "zoom-out";
-        let exit_start =
-            (layer.end_sec - layer.exit_duration).max(layer.start_sec);
+        let has_entry_exit_scale_anim = anim_uses_scale(
+            &layer.entry_animation,
+            &layer.exit_animation,
+        );
+        let has_ambient_scale = amb_scale_factor.is_some();
+        let has_scale_anim = has_entry_exit_scale_anim || has_ambient_scale;
 
-        // scale: キーフレーム優先。なければ従来のアニメ。
+        // scale: キーフレーム優先。なければ entry/exit + ambient pulse を合算。
         if kf_scale_anim {
-            let s_expr = keyframe_expr(&layer.keyframes.scale, 1.0);
+            let mut s_expr = keyframe_expr(&layer.keyframes.scale, 1.0);
+            if let Some(p) = amb_scale_factor.as_ref() {
+                s_expr = format!("({})*{}", s_expr, p);
+            }
             chain.push_str(&format!(
                 ",scale=w='iw*({s})':h='ih*({s})':eval=frame:flags=bilinear",
                 s = s_expr,
             ));
         } else if has_scale_anim {
-            if let Some(s_expr) = build_scale_anim_expr(
+            // entry/exit scale 式（無ければ (1, 1)）に pulse を乗算する。
+            let (mut sx, mut sy) = build_scale_anim_expr(
                 &layer.entry_animation,
                 layer.start_sec,
                 layer.entry_duration,
                 &layer.exit_animation,
                 exit_start,
                 layer.exit_duration,
-            ) {
-                chain.push_str(&format!(
-                    ",scale=w='iw*({s})':h='ih*({s})':eval=frame:flags=bilinear",
-                    s = s_expr,
-                ));
+            ).unwrap_or_else(|| ("1".to_string(), "1".to_string()));
+            if let Some(p) = amb_scale_factor.as_ref() {
+                sx = format!("({})*{}", sx, p);
+                sy = format!("({})*{}", sy, p);
             }
+            chain.push_str(&format!(
+                ",scale=w='iw*({sx})':h='ih*({sy})':eval=frame:flags=bilinear",
+                sx = sx, sy = sy,
+            ));
         }
 
         // fade（境界ピッタリ接触側はスキップで明滅防止）
-        let skip_entry_fade = layer.start_sec <= 0.02;
-        let skip_exit_fade = layer.end_sec >= total_duration - 0.02;
+        // - タイムラインの先頭/末尾 (黒背景に接触する側) はスキップ
+        // - **隣のレイヤーがピッタリ接続している側もスキップ** (両方が 1 frame fade すると
+        //   その境界で alpha 0 同士になり「一瞬何もない」コマが発生するため)
+        const ADJ_TOL: f64 = 0.04;
+        let has_neighbor_at_start = layers_sorted.iter().enumerate().any(|(j, other)| {
+            j != i && (other.end_sec - layer.start_sec).abs() <= ADJ_TOL
+        });
+        let has_neighbor_at_end = layers_sorted.iter().enumerate().any(|(j, other)| {
+            j != i && (other.start_sec - layer.end_sec).abs() <= ADJ_TOL
+        });
+        let skip_entry_fade = layer.start_sec <= 0.02 || has_neighbor_at_start;
+        let skip_exit_fade =
+            layer.end_sec >= total_duration - 0.02 || has_neighbor_at_end;
         if let Some(fade) = build_fade_filter(
             &layer.entry_animation,
             layer.start_sec,
@@ -1873,8 +2105,10 @@ fn compose_template_video_inner(
 
         // overlay 位置
         let has_slide = layer.entry_animation.starts_with("slide-")
-            || layer.exit_animation.starts_with("slide-");
-        let has_rotation_effective = kf_rotation_anim || has_rotation_static;
+            || layer.exit_animation.starts_with("slide-")
+            || has_roll_in
+            || has_roll_out;
+        let has_rotation_effective = has_dynamic_rotation || has_rotation_static;
         let dynamic_size = kf_scale_anim || has_scale_anim || has_rotation_effective;
         let has_kf_position = kf_x_anim || kf_y_anim;
         let entry_end =
@@ -1883,16 +2117,16 @@ fn compose_template_video_inner(
         // キーフレーム x/y が動くときは、そっちを基本位置として使う（% → px 変換）。
         // 動かない軸は layer.x_px / layer.y_px を使う。
         let kf_x_px_expr: String = if kf_x_anim {
-            let pct_static = layer.x_px as f64 * 100.0 / 1080.0;
+            let pct_static = layer.x_px as f64 * 100.0 / canvas_width as f64;
             let pct_expr = keyframe_expr(&layer.keyframes.x, pct_static);
-            format!("({})*{:.4}", pct_expr, 1080.0 / 100.0)
+            format!("({})*{:.4}", pct_expr, canvas_width as f64 / 100.0)
         } else {
             format!("{}", layer.x_px)
         };
         let kf_y_px_expr: String = if kf_y_anim {
-            let pct_static = layer.y_px as f64 * 100.0 / 1920.0;
+            let pct_static = layer.y_px as f64 * 100.0 / canvas_height as f64;
             let pct_expr = keyframe_expr(&layer.keyframes.y, pct_static);
-            format!("({})*{:.4}", pct_expr, 1920.0 / 100.0)
+            format!("({})*{:.4}", pct_expr, canvas_height as f64 / 100.0)
         } else {
             format!("{}", layer.y_px)
         };
@@ -1903,11 +2137,21 @@ fn compose_template_video_inner(
                 let half_w = layer.w_px / 2;
                 let half_h = layer.h_px / 2;
                 format!(
-                    "x='({xc})+{hw}-overlay_w/2':y='({yc})+{hh}-overlay_h/2':eval=frame",
+                    "x='({xc})+{hw}-overlay_w/2+{ax}':y='({yc})+{hh}-overlay_h/2+{ay}':eval=frame",
                     xc = kf_x_px_expr,
                     yc = kf_y_px_expr,
                     hw = half_w,
                     hh = half_h,
+                    ax = amb_x_off,
+                    ay = amb_y_off,
+                )
+            } else if has_ambient_translate {
+                format!(
+                    "x='({xc})+{ax}':y='({yc})+{ay}':eval=frame",
+                    xc = kf_x_px_expr,
+                    yc = kf_y_px_expr,
+                    ax = amb_x_off,
+                    ay = amb_y_off,
                 )
             } else {
                 format!(
@@ -1926,33 +2170,39 @@ fn compose_template_video_inner(
                     &layer.exit_animation,
                     exit_start,
                     layer.end_sec,
-                    1080,
-                    1920,
+                    canvas_width,
+                    canvas_height,
                 )
             } else {
                 ("0".to_string(), "0".to_string())
             };
             format!(
-                "x='({cx})-overlay_w/2+{sx}':y='({cy})-overlay_h/2+{sy}':eval=frame",
+                "x='({cx})-overlay_w/2+{sx}+{ax}':y='({cy})-overlay_h/2+{sy}+{ay}':eval=frame",
                 cx = cx,
                 cy = cy,
                 sx = sx,
                 sy = sy,
+                ax = amb_x_off,
+                ay = amb_y_off,
             )
-        } else if has_slide {
-            let (sx, sy) = build_slide_offset_expr(
-                &layer.entry_animation,
-                layer.start_sec,
-                entry_end,
-                &layer.exit_animation,
-                exit_start,
-                layer.end_sec,
-                1080,
-                1920,
-            );
+        } else if has_slide || has_ambient_translate {
+            let (sx, sy) = if has_slide {
+                build_slide_offset_expr(
+                    &layer.entry_animation,
+                    layer.start_sec,
+                    entry_end,
+                    &layer.exit_animation,
+                    exit_start,
+                    layer.end_sec,
+                    canvas_width,
+                    canvas_height,
+                )
+            } else {
+                ("0".to_string(), "0".to_string())
+            };
             format!(
-                "x='{}+{}':y='{}+{}':eval=frame",
-                layer.x_px, sx, layer.y_px, sy,
+                "x='{}+{}+{}':y='{}+{}+{}':eval=frame",
+                layer.x_px, sx, amb_x_off, layer.y_px, sy, amb_y_off,
             )
         } else {
             format!("{}:{}", layer.x_px, layer.y_px)
@@ -2051,13 +2301,57 @@ fn compose_template_video_inner(
 
     cmd.args(["-filter_complex", &filter]);
     cmd.args(["-map", "[vout]", "-map", audio_map.as_str()]);
+
+    // エンコーダごとに最適なパラメータを設定する。
+    // libx264: 品質最高、CPU 処理で遅い
+    // h264_nvenc: NVIDIA GPU、5〜10倍速い、品質ロスは小さい
+    // h264_qsv: Intel 内蔵 GPU、3〜5倍速い、品質ロスは少しある
+    match video_encoder.as_str() {
+        "h264_nvenc" => {
+            // NVENC は CRF と等価な指定として -cq を使う。preset は p1〜p7（p7 が最高品質）。
+            // CRF 0..51 の値域を p7..p1 にマップせず、シンプルに p6 = 高品質寄りの固定にする。
+            cmd.args([
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p6",
+                "-tune",
+                "hq",
+                "-rc",
+                "vbr",
+                "-cq",
+                &video_crf.to_string(),
+                "-b:v",
+                "0",
+            ]);
+        }
+        "h264_qsv" => {
+            // QSV は -global_quality を CRF と同じ値域で使える。
+            cmd.args([
+                "-c:v",
+                "h264_qsv",
+                "-preset",
+                "slower",
+                "-global_quality",
+                &video_crf.to_string(),
+                "-look_ahead",
+                "1",
+            ]);
+        }
+        _ => {
+            // libx264 (CPU)
+            cmd.args([
+                "-c:v",
+                "libx264",
+                "-preset",
+                video_preset.as_str(),
+                "-crf",
+                &video_crf.to_string(),
+            ]);
+        }
+    }
+
     cmd.args([
-        "-c:v",
-        "libx264",
-        "-preset",
-        video_preset.as_str(),
-        "-crf",
-        &video_crf.to_string(),
         "-c:a",
         "aac",
         "-b:a",
@@ -2099,6 +2393,790 @@ fn compose_template_video_inner(
     Ok(output_path.to_string_lossy().into_owned())
 }
 
+// ========================================================================
+// 素材取り込み（templates/assets/{template_id}/ 配下にコピー）
+// ========================================================================
+
+fn sanitize_basename(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect();
+    if cleaned.len() > 60 {
+        cleaned.chars().take(60).collect()
+    } else {
+        cleaned
+    }
+}
+
+/// 素材ファイルを templates/assets/{template_id}/{kind}/ にコピーして取り込む。
+/// 同じ内容のファイルが既に存在する場合は再コピーせず、そのパスを返す。
+/// 戻り値はコピー先の絶対パス（layer.source にそのまま入れる）。
+#[tauri::command]
+fn import_asset(
+    template_id: String,
+    source_path: String,
+    kind: String,
+) -> Result<String, String> {
+    if template_id.is_empty()
+        || template_id.contains('/')
+        || template_id.contains('\\')
+        || template_id.contains("..")
+    {
+        return Err("invalid template_id".into());
+    }
+    let allowed = ["images", "videos", "audio"];
+    if !allowed.contains(&kind.as_str()) {
+        return Err(format!(
+            "invalid kind: {} (許可: {})",
+            kind,
+            allowed.join("/")
+        ));
+    }
+    let src = PathBuf::from(&source_path);
+    if !src.exists() {
+        return Err(format!("元ファイルが存在しません: {}", source_path));
+    }
+
+    // SHA256（先頭 8 文字）でハッシュ化
+    let bytes = std::fs::read(&src).map_err(|e| format!("読み取り失敗: {}", e))?;
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let digest = hasher.finalize();
+    let hash8: String = digest
+        .iter()
+        .take(4)
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    let original_stem = src
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("asset");
+    let ext = src
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("bin")
+        .to_lowercase();
+    let safe_stem = sanitize_basename(original_stem);
+    let filename = format!("{}_{}.{}", hash8, safe_stem, ext);
+
+    let dest_dir = templates_dir()
+        .join("assets")
+        .join(&template_id)
+        .join(&kind);
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("ディレクトリ作成失敗: {}", e))?;
+    let dest_path = dest_dir.join(&filename);
+
+    // 既存ファイルがあれば内容比較して同一ならスキップ
+    if dest_path.exists() {
+        if let Ok(existing) = std::fs::read(&dest_path) {
+            if existing == bytes {
+                return Ok(dest_path.to_string_lossy().into_owned());
+            }
+        }
+    }
+    std::fs::write(&dest_path, &bytes).map_err(|e| format!("書き込み失敗: {}", e))?;
+    Ok(dest_path.to_string_lossy().into_owned())
+}
+
+/// ディレクトリを再帰コピー (シンプル実装)。
+/// 既存の同名ファイルは上書きする。シンボリックリンクは追従しない。
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if !dst.exists() {
+        std::fs::create_dir_all(dst)?;
+    }
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+        // symlink 等は無視
+    }
+    Ok(())
+}
+
+/// グローバル Live2D ライブラリのルート: `templates/live2d/`
+/// テンプレ非依存で、一度登録したモデルは全テンプレから使える。
+fn live2d_library_dir() -> PathBuf {
+    templates_dir().join("live2d")
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Live2DModelMeta {
+    /// モデルの登録名 (フォルダ名と同じ)
+    pub name: String,
+    /// 主 .model3.json への絶対パス
+    pub model_path: String,
+    /// 制作者名
+    #[serde(default)]
+    pub author: Option<String>,
+    /// 配布元 URL
+    #[serde(default)]
+    pub source_url: Option<String>,
+    /// 動画概要欄に貼る指定クレジット文
+    #[serde(default)]
+    pub required_credit_text: Option<String>,
+    /// 登録日時 (UNIX エポック秒)
+    #[serde(default)]
+    pub registered_at: i64,
+}
+
+/// 1 モデル分のメタを {model_dir}/_meta.json に書き出す
+fn write_model_meta(model_dir: &std::path::Path, meta: &Live2DModelMeta) -> std::io::Result<()> {
+    let meta_path = model_dir.join("_meta.json");
+    let json = serde_json::to_string_pretty(meta).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("serialize meta: {}", e))
+    })?;
+    std::fs::write(meta_path, json)
+}
+
+/// 1 モデル分のメタを {model_dir}/_meta.json から読む。失敗時は最小限の meta を返す
+fn read_model_meta(model_dir: &std::path::Path, fallback_name: &str) -> Live2DModelMeta {
+    let meta_path = model_dir.join("_meta.json");
+    if let Ok(text) = std::fs::read_to_string(&meta_path) {
+        if let Ok(parsed) = serde_json::from_str::<Live2DModelMeta>(&text) {
+            return parsed;
+        }
+    }
+    // model3.json を探してそのパスを model_path にする
+    let model_path = std::fs::read_dir(model_dir)
+        .ok()
+        .and_then(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .find(|p| {
+                    p.to_str()
+                        .map(|s| s.to_lowercase().ends_with(".model3.json"))
+                        .unwrap_or(false)
+                })
+        })
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Live2DModelMeta {
+        name: fallback_name.to_string(),
+        model_path,
+        author: None,
+        source_url: None,
+        required_credit_text: None,
+        registered_at: 0,
+    }
+}
+
+/// グローバルライブラリにモデルを追加する。
+/// `templates/live2d/{model_name}/` に sister files 含めて再帰コピー。
+/// 既に同名モデルがあれば上書き (内容差し替え) する。
+#[tauri::command]
+fn import_live2d_global(
+    source_model3_json_path: String,
+    author: Option<String>,
+    source_url: Option<String>,
+    required_credit_text: Option<String>,
+) -> Result<Live2DModelMeta, String> {
+    let src_json = PathBuf::from(&source_model3_json_path);
+    if !src_json.exists() {
+        return Err(format!("元ファイルが存在しません: {}", source_model3_json_path));
+    }
+    let src_dir = src_json
+        .parent()
+        .ok_or_else(|| "model3.json の親ディレクトリが取れません".to_string())?
+        .to_path_buf();
+    let model_name_raw = src_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("live2d_model");
+    let model_name = sanitize_basename(model_name_raw);
+
+    let dest_dir = live2d_library_dir().join(&model_name);
+    copy_dir_recursive(&src_dir, &dest_dir)
+        .map_err(|e| format!("Live2D モデルのコピー失敗: {}", e))?;
+
+    let json_filename = src_json
+        .file_name()
+        .ok_or_else(|| "model3.json のファイル名が取れません".to_string())?;
+    let dest_json = dest_dir.join(json_filename);
+    if !dest_json.exists() {
+        return Err(format!(
+            "コピーは成功したが {} が見つかりません",
+            dest_json.display()
+        ));
+    }
+
+    let meta = Live2DModelMeta {
+        name: model_name.clone(),
+        model_path: dest_json.to_string_lossy().into_owned(),
+        author,
+        source_url,
+        required_credit_text,
+        registered_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    };
+    write_model_meta(&dest_dir, &meta).map_err(|e| format!("meta 保存失敗: {}", e))?;
+    Ok(meta)
+}
+
+/// グローバルライブラリに登録されたモデル一覧を取得 (登録日時降順)
+#[tauri::command]
+fn list_live2d_models() -> Result<Vec<Live2DModelMeta>, String> {
+    let lib = live2d_library_dir();
+    if !lib.exists() {
+        return Ok(Vec::new());
+    }
+    let mut metas: Vec<Live2DModelMeta> = Vec::new();
+    let entries = std::fs::read_dir(&lib).map_err(|e| format!("read_dir: {}", e))?;
+    for ent in entries.flatten() {
+        let path = ent.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let meta = read_model_meta(&path, &name);
+        // model_path が指す .model3.json が存在しないモデルは除外 (壊れたエントリ)
+        if !std::path::Path::new(&meta.model_path).exists() {
+            continue;
+        }
+        metas.push(meta);
+    }
+    // 登録日時降順 (新しい順)
+    metas.sort_by(|a, b| b.registered_at.cmp(&a.registered_at));
+    Ok(metas)
+}
+
+/// グローバルライブラリから 1 モデルを削除する (フォルダごと)
+#[tauri::command]
+fn delete_live2d_model(name: String) -> Result<(), String> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return Err("invalid name".into());
+    }
+    let dir = live2d_library_dir().join(&name);
+    if !dir.exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(&dir).map_err(|e| format!("削除失敗: {}", e))?;
+    Ok(())
+}
+
+/// 既存モデルのメタ情報 (クレジット等) を更新する。フォルダ内容には触れない。
+#[tauri::command]
+fn update_live2d_model_meta(
+    name: String,
+    author: Option<String>,
+    source_url: Option<String>,
+    required_credit_text: Option<String>,
+) -> Result<Live2DModelMeta, String> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+    {
+        return Err("invalid name".into());
+    }
+    let dir = live2d_library_dir().join(&name);
+    if !dir.exists() {
+        return Err(format!("モデルが見つかりません: {}", name));
+    }
+    let mut meta = read_model_meta(&dir, &name);
+    meta.author = author;
+    meta.source_url = source_url;
+    meta.required_credit_text = required_credit_text;
+    write_model_meta(&dir, &meta).map_err(|e| format!("meta 保存失敗: {}", e))?;
+    Ok(meta)
+}
+
+/// Live2D モデルのフォルダ全体を templates/assets/{template_id}/live2d/{model_name}/ に
+/// 再帰コピーする。.model3.json から見える sister files 一式を丸ごと持っていくので
+/// 別 PC へテンプレを移しても動く (モデルがアプリ管理下に入る)。
+#[tauri::command]
+fn import_live2d_model(
+    template_id: String,
+    source_model3_json_path: String,
+) -> Result<String, String> {
+    if template_id.is_empty()
+        || template_id.contains('/')
+        || template_id.contains('\\')
+        || template_id.contains("..")
+    {
+        return Err("invalid template_id".into());
+    }
+    let src_json = PathBuf::from(&source_model3_json_path);
+    if !src_json.exists() {
+        return Err(format!("元ファイルが存在しません: {}", source_model3_json_path));
+    }
+    let src_dir = src_json
+        .parent()
+        .ok_or_else(|| "model3.json の親ディレクトリが取れません".to_string())?
+        .to_path_buf();
+    let model_name_raw = src_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("live2d_model");
+    let model_name = sanitize_basename(model_name_raw);
+
+    let dest_dir = templates_dir()
+        .join("assets")
+        .join(&template_id)
+        .join("live2d")
+        .join(&model_name);
+
+    // 既に同名フォルダがあれば中身を上書きするが、削除はしない (副作用最小)
+    copy_dir_recursive(&src_dir, &dest_dir)
+        .map_err(|e| format!("Live2D モデルのコピー失敗: {}", e))?;
+
+    // コピー後の .model3.json パスを返す
+    let json_filename = src_json
+        .file_name()
+        .ok_or_else(|| "model3.json のファイル名が取れません".to_string())?;
+    let dest_json = dest_dir.join(json_filename);
+    if !dest_json.exists() {
+        return Err(format!(
+            "コピーは成功したが {} が見つかりません",
+            dest_json.display()
+        ));
+    }
+    Ok(dest_json.to_string_lossy().into_owned())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetInfo {
+    pub kind: String,
+    pub path: String,
+    pub filename: String,
+    pub size: u64,
+    /// ファイルの最終更新時刻 (UNIX epoch 秒)
+    pub modified_unix: i64,
+}
+
+/// テンプレートに紐づく素材一覧を返す
+#[tauri::command]
+fn list_template_assets(template_id: String) -> Result<Vec<AssetInfo>, String> {
+    if template_id.is_empty()
+        || template_id.contains('/')
+        || template_id.contains('\\')
+        || template_id.contains("..")
+    {
+        return Err("invalid template_id".into());
+    }
+    let root = templates_dir().join("assets").join(&template_id);
+    if !root.exists() {
+        return Ok(vec![]);
+    }
+    let mut out: Vec<AssetInfo> = Vec::new();
+    for kind in ["images", "videos", "audio"] {
+        let dir = root.join(kind);
+        if !dir.exists() {
+            continue;
+        }
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?")
+                .to_string();
+            let meta = std::fs::metadata(&path);
+            let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+            let modified_unix = meta
+                .as_ref()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            out.push(AssetInfo {
+                kind: kind.to_string(),
+                path: path.to_string_lossy().into_owned(),
+                filename,
+                size,
+                modified_unix,
+            });
+        }
+    }
+    // 新しい順
+    out.sort_by(|a, b| b.modified_unix.cmp(&a.modified_unix));
+    Ok(out)
+}
+
+/// 指定の素材ファイルを削除する
+#[tauri::command]
+fn delete_template_asset(
+    template_id: String,
+    kind: String,
+    filename: String,
+) -> Result<(), String> {
+    if template_id.is_empty()
+        || template_id.contains('/')
+        || template_id.contains('\\')
+        || template_id.contains("..")
+    {
+        return Err("invalid template_id".into());
+    }
+    if !["images", "videos", "audio"].contains(&kind.as_str()) {
+        return Err("invalid kind".into());
+    }
+    if filename.is_empty() || filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return Err("invalid filename".into());
+    }
+    let path = templates_dir()
+        .join("assets")
+        .join(&template_id)
+        .join(&kind)
+        .join(&filename);
+    if path.exists() {
+        std::fs::remove_file(&path).map_err(|e| format!("削除失敗: {}", e))?;
+    }
+    Ok(())
+}
+
+/// base64 エンコードされたバイナリ素材をテンプレ管理下に保存する
+/// （Canvas で生成したパターン背景の webm 等を保存するのに使う）
+#[tauri::command]
+fn save_template_asset_base64(
+    template_id: String,
+    kind: String,
+    filename: String,
+    base64_data: String,
+) -> Result<String, String> {
+    if template_id.is_empty()
+        || template_id.contains('/')
+        || template_id.contains('\\')
+        || template_id.contains("..")
+    {
+        return Err("invalid template_id".into());
+    }
+    if !["images", "videos", "audio"].contains(&kind.as_str()) {
+        return Err("invalid kind".into());
+    }
+    if filename.is_empty() || filename.contains('/') || filename.contains('\\') {
+        return Err("invalid filename".into());
+    }
+    let bytes = general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| format!("base64 decode 失敗: {}", e))?;
+
+    let dest_dir = templates_dir()
+        .join("assets")
+        .join(&template_id)
+        .join(&kind);
+    std::fs::create_dir_all(&dest_dir)
+        .map_err(|e| format!("ディレクトリ作成失敗: {}", e))?;
+    let dest_path = dest_dir.join(&filename);
+    std::fs::write(&dest_path, &bytes).map_err(|e| format!("書き込み失敗: {}", e))?;
+    Ok(dest_path.to_string_lossy().into_owned())
+}
+
+/// テンプレID 変更時（仮 ID → 確定 ID）に、assets フォルダをリネームする。
+/// 既存の `templates/assets/{old_id}/` を `templates/assets/{new_id}/` に移動する。
+/// `old_id` 側のフォルダが存在しないか、`new_id` 側が既にあるなら no-op（エラーにしない）。
+#[tauri::command]
+fn rename_template_assets(old_id: String, new_id: String) -> Result<(), String> {
+    for id in [&old_id, &new_id] {
+        if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
+            return Err(format!("invalid template id: {}", id));
+        }
+    }
+    if old_id == new_id {
+        return Ok(());
+    }
+    let from = templates_dir().join("assets").join(&old_id);
+    if !from.exists() {
+        return Ok(());
+    }
+    let to = templates_dir().join("assets").join(&new_id);
+    if to.exists() {
+        // 既に存在するなら、安全のためにマージしない（呼び出し側で対処）
+        return Err(format!(
+            "destination already exists: {}",
+            to.to_string_lossy()
+        ));
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
+    }
+    std::fs::rename(&from, &to).map_err(|e| format!("rename failed: {}", e))?;
+    Ok(())
+}
+
+/// 旧バージョンの `templates/audio/{tid}/` 配下のファイルを
+/// `templates/assets/{tid}/audio/` に移動する。
+/// 同時に `templates/template_*.json` 内のパス文字列も書き換える。
+/// 完了後 `templates/audio/` ディレクトリは削除される。
+/// 戻り値: 移動できた tid の数。
+#[tauri::command]
+fn migrate_legacy_audio_dirs() -> Result<u32, String> {
+    let templates_root = templates_dir();
+    let legacy_audio_root = templates_root.join("audio");
+    if !legacy_audio_root.exists() {
+        return Ok(0);
+    }
+
+    // 1. ファイル移動
+    let entries = std::fs::read_dir(&legacy_audio_root)
+        .map_err(|e| format!("read legacy audio: {}", e))?;
+    let mut migrated_tids: Vec<String> = vec![];
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let tid = match p.file_name().and_then(|n| n.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if tid.is_empty() || tid.contains('/') || tid.contains('\\') || tid.contains("..") {
+            continue;
+        }
+        let new_dir = templates_root.join("assets").join(&tid).join("audio");
+        std::fs::create_dir_all(&new_dir)
+            .map_err(|e| format!("create new dir for {}: {}", tid, e))?;
+
+        let inner = match std::fs::read_dir(&p) {
+            Ok(it) => it,
+            Err(_) => continue,
+        };
+        let mut moved_any = false;
+        for f in inner.flatten() {
+            let from = f.path();
+            if !from.is_file() {
+                continue;
+            }
+            let to = new_dir.join(f.file_name());
+            if to.exists() {
+                // 既に同名ファイルが移行先にある（再実行 or 別経路で移動済み）→ 元を削除して進む
+                let _ = std::fs::remove_file(&from);
+                continue;
+            }
+            // try rename, fall back to copy + remove
+            let mv = std::fs::rename(&from, &to);
+            if mv.is_err() {
+                if let Err(e) = std::fs::copy(&from, &to) {
+                    return Err(format!("copy {} → {}: {}", from.display(), to.display(), e));
+                }
+                let _ = std::fs::remove_file(&from);
+            }
+            moved_any = true;
+        }
+        if moved_any {
+            migrated_tids.push(tid);
+        }
+        let _ = std::fs::remove_dir(&p);
+    }
+    let _ = std::fs::remove_dir(&legacy_audio_root);
+
+    if migrated_tids.is_empty() {
+        return Ok(0);
+    }
+
+    // 2. テンプレ JSON 内のパス文字列を書き換える。
+    //    JSON ファイルなので Windows 路径は `\\` でエスケープされている。
+    //    `\\templates\\audio\\{tid}\\` → `\\templates\\assets\\{tid}\\audio\\`
+    //    Unix 系 `/templates/audio/{tid}/` → `/templates/assets/{tid}/audio/` にも対応。
+    let json_entries = std::fs::read_dir(&templates_root)
+        .map_err(|e| format!("read templates dir: {}", e))?;
+    for entry in json_entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let mut new_content = content.clone();
+        for tid in &migrated_tids {
+            // Windows 形式（JSON エスケープで \\ になっている）
+            let win_from = format!(r"\\templates\\audio\\{}\\", tid);
+            let win_to = format!(r"\\templates\\assets\\{}\\audio\\", tid);
+            new_content = new_content.replace(&win_from, &win_to);
+            // Unix 形式
+            let unix_from = format!("/templates/audio/{}/", tid);
+            let unix_to = format!("/templates/assets/{}/audio/", tid);
+            new_content = new_content.replace(&unix_from, &unix_to);
+        }
+        if new_content != content {
+            std::fs::write(&path, new_content)
+                .map_err(|e| format!("write {}: {}", path.display(), e))?;
+        }
+    }
+
+    Ok(migrated_tids.len() as u32)
+}
+
+/// 指定テンプレ ID の素材フォルダを丸ごと削除する（テンプレ削除時に呼ぶ）
+#[tauri::command]
+fn delete_template_assets(template_id: String) -> Result<(), String> {
+    if template_id.is_empty()
+        || template_id.contains('/')
+        || template_id.contains('\\')
+        || template_id.contains("..")
+    {
+        return Err("invalid template_id".into());
+    }
+    let dir = templates_dir().join("assets").join(&template_id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("削除失敗: {}", e))?;
+    }
+    Ok(())
+}
+
+/// URL パーセントエンコード（OAuth 用の最小実装）
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push_str(&format!("%{:02X}", b));
+            }
+        }
+    }
+    out
+}
+
+/// OAuth コールバック待ちの結果
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthCallbackResult {
+    pub code: String,
+    pub redirect_uri: String,
+}
+
+/// Google OAuth 認可フローを開始する。
+/// - ローカルで空きポートを取得し、ブラウザを Google 認可画面に飛ばす
+/// - ユーザが許可すると `http://127.0.0.1:{port}/callback?code=...` にリダイレクトされるので、
+///   それをローカルサーバで受け取り認可コードを返す
+/// - 得た code と使った redirect_uri は TS 側でトークン交換に使われる
+#[tauri::command]
+async fn youtube_oauth_flow(
+    app: tauri::AppHandle,
+    client_id: String,
+) -> Result<OAuthCallbackResult, String> {
+    // 1. 空きポートを確保
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|e| format!("bind: {}", e))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("addr: {}", e))?
+        .port();
+    let redirect_uri = format!("http://127.0.0.1:{}/callback", port);
+
+    // 2. Google 認可エンドポイント URL を組み立て
+    let scope = "https://www.googleapis.com/auth/yt-analytics.readonly https://www.googleapis.com/auth/youtube.readonly";
+    let auth_url = format!(
+        "https://accounts.google.com/o/oauth2/v2/auth?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
+        url_encode(&client_id),
+        url_encode(&redirect_uri),
+        url_encode(scope),
+    );
+
+    // 3. ブラウザを開く
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(&auth_url, None::<&str>)
+        .map_err(|e| format!("open browser: {}", e))?;
+
+    // 4. コールバック待ち（最大 5 分）
+    let code = tokio::time::timeout(Duration::from_secs(300), wait_for_oauth_callback(listener))
+        .await
+        .map_err(|_| "認証がタイムアウトしました（5分以内にブラウザで許可してください）".to_string())?
+        .map_err(|e| format!("callback: {}", e))?;
+
+    Ok(OAuthCallbackResult { code, redirect_uri })
+}
+
+/// 1 回の HTTP GET を読んで code= パラメータを取り出す。ブラウザには完了画面を返す
+async fn wait_for_oauth_callback(listener: TcpListener) -> Result<String, String> {
+    let (mut stream, _) = listener.accept().await.map_err(|e| format!("accept: {}", e))?;
+    let mut buf = [0u8; 4096];
+    let n = stream.read(&mut buf).await.map_err(|e| format!("read: {}", e))?;
+    let request = String::from_utf8_lossy(&buf[..n]);
+
+    // 最初の行: "GET /callback?code=XXX&scope=... HTTP/1.1"
+    let first_line = request.lines().next().unwrap_or("");
+    let parts: Vec<&str> = first_line.split_whitespace().collect();
+    if parts.len() < 2 {
+        return Err("invalid HTTP request".to_string());
+    }
+    let url_path = parts[1];
+    let query = url_path.split('?').nth(1).unwrap_or("");
+
+    // ?error=... で戻ってきたら失敗
+    if let Some(err) = query
+        .split('&')
+        .find(|kv| kv.starts_with("error="))
+        .and_then(|kv| kv.split('=').nth(1))
+    {
+        let body = "<html><body><h2>認証がキャンセルされました</h2><p>アプリに戻ってください。</p></body></html>";
+        let response = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).await.ok();
+        stream.shutdown().await.ok();
+        return Err(format!("OAuth error: {}", err));
+    }
+
+    let code = query
+        .split('&')
+        .find(|kv| kv.starts_with("code="))
+        .and_then(|kv| kv.split('=').nth(1))
+        .ok_or_else(|| "no code in callback URL".to_string())?
+        .to_string();
+
+    let body = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>認証完了</title></head><body style=\"font-family:sans-serif;text-align:center;padding:3em;background:#f6f9fc;\"><h2 style=\"color:#0c8\">✓ YouTube 認証が完了しました</h2><p>このウィンドウを閉じて、アプリに戻ってください。</p></body></html>";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    stream.write_all(response.as_bytes()).await.ok();
+    stream.shutdown().await.ok();
+
+    Ok(code)
+}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -2134,10 +3212,9 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             get_media_dir,
-            download_image,
             download_bgm,
-            cloudflare_generate_image,
             save_overlay_png,
+            encode_layer_animation_video,
             save_audio_base64,
             generate_tts,
             edge_tts,
@@ -2145,6 +3222,13 @@ pub fn run() {
             openai_tts,
             softalk_tts,
             get_audio_duration,
+            read_voicevox_query,
+            save_render_chunk,
+            import_live2d_model,
+            import_live2d_global,
+            list_live2d_models,
+            delete_live2d_model,
+            update_live2d_model_meta,
             compose_template_video,
             list_se_files,
             list_templates,
@@ -2157,6 +3241,14 @@ pub fn run() {
             pack_template_to_zip,
             unpack_template_zip,
             cancel_export,
+            youtube_oauth_flow,
+            import_asset,
+            save_template_asset_base64,
+            delete_template_assets,
+            rename_template_assets,
+            migrate_legacy_audio_dirs,
+            list_template_assets,
+            delete_template_asset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

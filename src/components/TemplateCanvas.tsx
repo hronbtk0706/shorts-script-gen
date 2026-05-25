@@ -5,6 +5,8 @@ import type { Layer } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
 import { bubbleFullPath } from "../lib/bubble";
+import { CharacterLayerContent } from "./CharacterLayerContent";
+import { LayerErrorBoundary } from "./LayerErrorBoundary";
 
 function resolveSrcForWebview(src: string | undefined): string | null {
   if (!src) return null;
@@ -43,10 +45,15 @@ interface Props {
   currentTimeSec?: number;
   /** タイムライン再生中かどうか（動画レイヤー再生同期用） */
   isPlaying?: boolean;
+  /** 出力アスペクト比。未指定なら 9:16 (旧テンプレ互換) */
+  aspect?: "vertical" | "horizontal";
 }
 
-/** 9:16 仮想キャンバスの最大サイズ。親幅／ビューポート高さに応じて拡縮 */
-const CANVAS_MAX_W_PX = 720;
+/** 仮想キャンバスの最大サイズ。親幅／ビューポート高さに応じて拡縮 */
+// 縦動画 (9:16) は横幅 720px 程度で十分 (高さで親コンテナを埋める)。
+// 横動画 (16:9) は幅優先で大きく表示したいので最大値を 1280 まで許す。
+// 実際の幅は親コンテナの実サイズで決まるので、ここはあくまで上限。
+const CANVAS_MAX_W_PX = 1280;
 const CANVAS_MIN_W_PX = 120;
 /** キャンバスが占有してよいビューポート高さの割合 */
 const CANVAS_HEIGHT_RATIO = 0.82;
@@ -61,7 +68,10 @@ export function TemplateCanvas({
   showGrid = false,
   currentTimeSec,
   isPlaying = false,
+  aspect = "vertical",
 }: Props) {
+  // 縦 9:16, 横 16:9 のいずれか。CANVAS の縦横比をここから決める。
+  const aspectRatioWH = aspect === "horizontal" ? 16 / 9 : 9 / 16;
   const selectedSet = new Set<string>(
     selectedLayerIds ?? (selectedLayerId ? [selectedLayerId] : []),
   );
@@ -75,10 +85,12 @@ export function TemplateCanvas({
   const initW = Math.round(Math.min(CANVAS_MAX_W_PX, 360));
   const [canvasSize, setCanvasSize] = useState({
     w: initW,
-    h: Math.round((initW * 16) / 9),
+    h: Math.round(initW / aspectRatioWH),
   });
-  // Shift を押している間はアスペクト比固定を一時解除して自由変形できる
+  // Shift 押下中のみアスペクト比を固定する（通常ドラッグは自由変形）
   const [shiftHeld, setShiftHeld] = useState(false);
+  // キャンバス上のテキスト編集中のレイヤー id (ダブルクリックで開始)
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       if (e.key === "Shift") setShiftHeld(true);
@@ -94,7 +106,7 @@ export function TemplateCanvas({
     };
   }, []);
 
-  // 親要素の実サイズ（flex レイアウトで決定）に合わせて 9:16 を維持して拡縮
+  // 親要素の実サイズ（flex レイアウトで決定）に合わせてアスペクト比を維持して拡縮
   useEffect(() => {
     if (!wrapperRef.current) return;
     const measure = () => {
@@ -105,12 +117,13 @@ export function TemplateCanvas({
       const availH =
         parentH > 0 ? parentH : window.innerHeight * CANVAS_HEIGHT_RATIO;
       const wByWidth = availW;
-      const wByHeight = (availH * 9) / 16;
+      // height に収まる幅 = availH × (W/H)
+      const wByHeight = availH * aspectRatioWH;
       const w = Math.max(
         CANVAS_MIN_W_PX,
         Math.min(CANVAS_MAX_W_PX, wByWidth, wByHeight),
       );
-      const h = Math.round((w * 16) / 9);
+      const h = Math.round(w / aspectRatioWH);
       setCanvasSize({ w: Math.round(w), h });
     };
     measure();
@@ -121,7 +134,7 @@ export function TemplateCanvas({
       ro.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, []);
+  }, [aspectRatioWH]);
 
   const CANVAS_W_PX = canvasSize.w;
   const CANVAS_H_PX = canvasSize.h;
@@ -200,6 +213,8 @@ export function TemplateCanvas({
             currentTimeSec={currentTimeSec ?? 0}
             isPlaying={isPlaying}
             cssFilter=""
+            allLayers={layers}
+            editingLayerId={editingLayerId}
             onSelect={(modifier) => onLayerSelect(layer.id, modifier)}
             onUpdate={(patch) => onLayerUpdate(layer.id, patch)}
             onRefReady={(el) => {
@@ -208,6 +223,8 @@ export function TemplateCanvas({
                 forceRerender((n) => n + 1);
               }
             }}
+            onEditStart={(id) => setEditingLayerId(id)}
+            onEditEnd={() => setEditingLayerId(null)}
           />
         ))}
 
@@ -232,8 +249,8 @@ export function TemplateCanvas({
           resizable
           rotatable
           origin={false}
-          // デフォルトはアスペクト比固定（CapCut 風）。Shift で一時解除して自由変形。
-          keepRatio={!shiftHeld}
+          // デフォルトは自由変形。Shift 押下中のみアスペクト比固定。
+          keepRatio={shiftHeld}
           throttleDrag={0}
           throttleResize={0}
           throttleRotate={0}
@@ -337,9 +354,16 @@ interface LayerViewProps {
   currentTimeSec: number;
   isPlaying: boolean;
   cssFilter?: string;
+  /** リップシンク等で他レイヤー (音声等) を参照するためのテンプレ全レイヤー */
+  allLayers?: Layer[];
+  /** インライン編集中のレイヤー id (キャンバス上テキスト編集) */
+  editingLayerId?: string | null;
   onSelect: (modifier?: "shift" | "ctrl" | null) => void;
   onUpdate: (patch: Partial<Layer>) => void;
   onRefReady: (el: HTMLDivElement | null) => void;
+  /** インライン編集の開始 / 終了 */
+  onEditStart?: (id: string) => void;
+  onEditEnd?: () => void;
 }
 
 function LayerView({
@@ -352,9 +376,13 @@ function LayerView({
   currentTimeSec,
   isPlaying,
   cssFilter,
+  allLayers,
+  editingLayerId,
   onSelect,
   onUpdate,
   onRefReady,
+  onEditStart,
+  onEditEnd,
 }: LayerViewProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -439,7 +467,7 @@ function LayerView({
   // エクスポート側（layerComposer.drawText）が fontSize * (FINAL_W/360) = fontSize * 3 で
   // 1080×1920 に描画するため、プレビューも同じ係数 (canvasWPx / 360) を掛けないと見た目が一致しない。
   const fontScale = canvasWPx / 360;
-  const inner = renderLayerContent(layer, currentTimeSec, isPlaying, fontScale);
+  const inner = renderLayerContent(layer, currentTimeSec, isPlaying, fontScale, allLayers);
   const motionTransform = computeLayerMotionTransform(layer, currentTimeSec);
   // 入退場 / motion / ambient の transform / filter を合成した内側 style
   const innerTransformParts: string[] = [];
@@ -478,6 +506,9 @@ function LayerView({
     ? { ...style, outline: multiSelectOutline, outlineOffset: "-2px" }
     : style;
 
+  const isEditingThis =
+    editingLayerId === layer.id && layer.type === "comment";
+
   return (
     <div
       ref={ref}
@@ -492,8 +523,28 @@ function LayerView({
             : null;
         onSelect(modifier);
       }}
+      onDoubleClick={(e) => {
+        if (layer.type === "comment" && onEditStart) {
+          e.stopPropagation();
+          onEditStart(layer.id);
+        }
+      }}
     >
-      <div style={innerStyle}>{inner}</div>
+      <div style={innerStyle}>
+        {isEditingThis ? (
+          <CanvasTextEditor
+            layer={layer}
+            fontScale={fontScale}
+            onCommit={(text) => {
+              onUpdate({ text });
+              onEditEnd?.();
+            }}
+            onCancel={() => onEditEnd?.()}
+          />
+        ) : (
+          inner
+        )}
+      </div>
       {/* 吹き出しのしっぽ先端ドラッグハンドル（選択中 & bubble.tail あり時のみ） */}
       {isSelected &&
         layer.type === "comment" &&
@@ -517,11 +568,80 @@ function LayerView({
   );
 }
 
+/**
+ * comment レイヤーをキャンバス上で直接編集するための textarea。
+ * - フォントは layer.fontFamily / layer.fontSize で揃える
+ * - Esc でキャンセル / Enter (Shift なし) で確定 / blur で確定
+ */
+function CanvasTextEditor({
+  layer,
+  fontScale,
+  onCommit,
+  onCancel,
+}: {
+  layer: Layer;
+  fontScale: number;
+  onCommit: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const [draft, setDraft] = useState(layer.text ?? "");
+
+  useEffect(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    // テキスト全選択 (上書き入力しやすく)
+    el.select();
+  }, []);
+
+  return (
+    <textarea
+      ref={taRef}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // Enter は通常通り改行 (preventDefault しない)
+        // Esc キャンセル / Ctrl+Enter で確定
+        e.stopPropagation();
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          onCommit(draft);
+        }
+      }}
+      onBlur={() => onCommit(draft)}
+      style={{
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        background: "rgba(0, 0, 0, 0.15)",
+        color: layer.fontColor ?? "#ffffff",
+        // renderAnimatedText と同じ式: fontSize * (canvasWPx / 360)
+        // 編集中も確定後と同じサイズで表示するために fontScale をそのまま掛ける
+        fontSize: `${(layer.fontSize ?? 48) * fontScale}px`,
+        fontFamily: layer.fontFamily ?? "inherit",
+        textAlign: "center",
+        border: "2px solid #3b82f6",
+        outline: "none",
+        resize: "none",
+        padding: 4,
+        boxSizing: "border-box",
+      }}
+    />
+  );
+}
+
 function renderLayerContent(
   layer: Layer,
   currentTimeSec: number,
   isPlaying: boolean,
   fontScale?: number,
+  allLayers?: Layer[],
 ): React.ReactNode {
   switch (layer.type) {
     case "color":
@@ -560,7 +680,7 @@ function renderLayerContent(
               fontSize: 10,
             }}
           >
-            {layer.source === "auto" ? "🖼 画像(自動生成)" : "🖼 画像(未設定)"}
+            🖼 画像(未設定)
           </div>
         );
       }
@@ -638,6 +758,41 @@ function renderLayerContent(
       return renderAnimatedText(layer, currentTimeSec, fontScale ?? 0.25);
     case "audio":
       return null;
+    case "character": {
+      // リップシンク候補を決定:
+      // - linkedAudioLayerIds 1 件以上 → その音声群だけ
+      // - 0 件 (自動)             → テンプレ内の全音声
+      // - 旧 linkedAudioLayerId    → [その 1 本] とみなす (後方互換)
+      const explicitIds: string[] =
+        layer.linkedAudioLayerIds && layer.linkedAudioLayerIds.length > 0
+          ? layer.linkedAudioLayerIds
+          : layer.linkedAudioLayerId
+          ? [layer.linkedAudioLayerId]
+          : [];
+      let audiosForLipsync: Layer[] = [];
+      if (allLayers) {
+        if (explicitIds.length > 0) {
+          const idSet = new Set(explicitIds);
+          audiosForLipsync = allLayers.filter(
+            (l) => l.type === "audio" && !l.hidden && idSet.has(l.id),
+          );
+        } else {
+          audiosForLipsync = allLayers.filter(
+            (l) => l.type === "audio" && !l.hidden,
+          );
+        }
+      }
+      return (
+        <LayerErrorBoundary label={`character: ${layer.id}`}>
+          <CharacterLayerContent
+            layer={layer}
+            currentTimeSec={currentTimeSec}
+            isPlaying={isPlaying}
+            audiosForLipsync={audiosForLipsync}
+          />
+        </LayerErrorBoundary>
+      );
+    }
   }
 }
 
@@ -1254,7 +1409,8 @@ function AudioLayerPlayer({
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    let target = currentTimeSec - layer.startSec;
+    const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+    let target = (currentTimeSec - layer.startSec) * rate;
     const dur = a.duration;
     if (layer.audioLoop && dur && isFinite(dur) && target > dur) {
       target = target % dur;
@@ -1267,7 +1423,7 @@ function AudioLayerPlayer({
         /* noop */
       }
     }
-  }, [currentTimeSec, layer.startSec, layer.audioLoop]);
+  }, [currentTimeSec, layer.startSec, layer.audioLoop, layer.playbackRate]);
 
   // 音量（HTMLAudioElement の 0〜1 制約内でフェードも考慮して反映）
   useEffect(() => {
@@ -1285,7 +1441,12 @@ function AudioLayerPlayer({
     if (fadeOut > 0 && toEnd < fadeOut) {
       gain *= Math.max(0, Math.min(1, toEnd / fadeOut));
     }
-    a.volume = Math.max(0, Math.min(1, gain));
+    const volumeFinal = Math.max(0, Math.min(1, gain));
+    a.volume = volumeFinal;
+    a.muted = volumeFinal === 0; // muted も明示
+    console.log(
+      `[AudioLayer ${layer.id.slice(-6)}] volume=${volumeFinal.toFixed(2)} (base=${base}, fade=${gain !== base})`,
+    );
   }, [
     currentTimeSec,
     layer.volume,
@@ -1293,28 +1454,41 @@ function AudioLayerPlayer({
     layer.audioFadeOut,
     layer.startSec,
     layer.endSec,
+    layer.id,
   ]);
 
   // 再生速度
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    const rate = layer.playbackRate ?? 1;
-    a.playbackRate = Math.max(0.25, Math.min(4, rate));
-  }, [layer.playbackRate]);
+    const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+    a.playbackRate = rate;
+    a.defaultPlaybackRate = rate;
+    console.log(
+      `[AudioLayer ${layer.id.slice(-6)}] set playbackRate=${rate} (actual=${a.playbackRate})`,
+    );
+  }, [layer.playbackRate, layer.id]);
 
-  // play/pause
+  // play/pause（再生開始時に再生速度も再適用 — メタデータ読み込み前に設定したものが
+  // ロード完了で 1.0 にリセットされるブラウザ実装の対策）
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
     if (isPlaying) {
-      a.play().catch(() => {
-        /* autoplay 制約で失敗する可能性 */
-      });
+      const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+      a.playbackRate = rate;
+      a.play()
+        .then(() => {
+          // play() 後にも再度設定（一部ブラウザは play で rate を 1 にリセットする）
+          a.playbackRate = rate;
+        })
+        .catch(() => {
+          /* autoplay 制約で失敗する可能性 */
+        });
     } else {
       a.pause();
     }
-  }, [isPlaying]);
+  }, [isPlaying, layer.playbackRate]);
 
   if (!resolved) return null;
 
@@ -1324,6 +1498,12 @@ function AudioLayerPlayer({
       src={resolved}
       preload="auto"
       loop={!!layer.audioLoop}
+      onLoadedMetadata={() => {
+        const a = audioRef.current;
+        if (!a) return;
+        const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+        a.playbackRate = rate;
+      }}
       style={{ display: "none" }}
     />
   );
@@ -1346,7 +1526,14 @@ function VideoLayerContent({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const target = Math.max(0, currentTimeSec - layer.startSec);
+    const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+    let target = Math.max(0, (currentTimeSec - layer.startSec) * rate);
+    // ループ ON で素材尺を超えたら、剰余を取って素材内に折り返す
+    const loop = (layer.videoLoop ?? true) === true;
+    const dur = v.duration;
+    if (loop && dur && isFinite(dur) && dur > 0 && target > dur) {
+      target = target % dur;
+    }
     if (isFinite(target) && Math.abs(v.currentTime - target) > 0.15) {
       try {
         v.currentTime = target;
@@ -1354,7 +1541,7 @@ function VideoLayerContent({
         // seek 前に metadata 未ロードの場合があるが、loadedmetadata で再設定される
       }
     }
-  }, [currentTimeSec, layer.startSec]);
+  }, [currentTimeSec, layer.startSec, layer.playbackRate, layer.videoLoop]);
 
   // isPlaying に応じて play/pause
   useEffect(() => {

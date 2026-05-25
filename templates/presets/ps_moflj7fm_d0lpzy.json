@@ -1,0 +1,33 @@
+{
+  "id": "ps_moflj7fm_d0lpzy",
+  "name": "緑枠",
+  "createdAt": "2026-04-26T09:59:06.850Z",
+  "layers": [
+    {
+      "id": "ly_mofjvs4m_d32vk4",
+      "type": "comment",
+      "x": 0,
+      "y": 61.625,
+      "width": 80,
+      "height": 7.375,
+      "zIndex": 3,
+      "shape": "rect",
+      "opacity": 1,
+      "rotation": 0,
+      "startSec": 5.964667000000002,
+      "endSec": 9.850499999999291,
+      "text": "天才",
+      "fontSize": 20,
+      "fontColor": "#FFFFFF",
+      "textOutlineWidth": 3,
+      "textOutlineColor": "#000000",
+      "fillColor": "#ffffff",
+      "border": {
+        "width": 4,
+        "color": "#2eff1f"
+      },
+      "generatedNarrationLayerId": "ly_mofkgo2l_ltu4rf",
+      "entryAnimation": "pop"
+    }
+  ]
+}

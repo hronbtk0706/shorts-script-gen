@@ -7,7 +7,6 @@ import {
   type AppSettings,
   type TtsProviderId,
   type LlmProviderId,
-  type PollinationsModel,
 } from "../lib/storage";
 import {
   EDGE_VOICES,
@@ -16,11 +15,8 @@ import {
   OPENAI_TTS_VOICES,
 } from "../lib/providers/tts";
 import { OPENAI_MODELS } from "../lib/providers/llm";
-import {
-  CLOUDFLARE_MODELS,
-  STYLE_PRESET_OPTIONS,
-} from "../lib/providers/image";
 import { isMacOS } from "../lib/platform";
+import { ColorSwatches, recordColorUsed } from "./ColorSwatches";
 
 interface Props {
   open: boolean;
@@ -47,7 +43,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   groqApiKey: "",
   openaiApiKey: "",
   openaiModel: "gpt-5-mini",
-  ttsProvider: "edge",
+  ttsProvider: "voicevox",
   sayVoice: "Kyoko",
   edgeVoice: "ja-JP-NanamiNeural",
   voicevoxSpeaker: 3,
@@ -55,12 +51,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   openaiTtsModel: "tts-1",
   softalkPath: "",
   softalkVoice: 0,
-  imageProvider: "pollinations",
-  pollinationsModel: "flux",
-  cloudflareAccountId: "",
-  cloudflareApiKey: "",
-  cloudflareModel: "@cf/black-forest-labs/flux-1-schnell",
-  imageStylePreset: "",
   bgmFilePath: "",
   pixabayApiKey: "",
   youtubeApiKey: "",
@@ -70,6 +60,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   referenceVideoCount: 5,
   defaultTemplateId: "",
   seFolderPath: "",
+  youtubeOAuthClientId: "",
+  youtubeOAuthClientSecret: "",
+  videoEncoder: "libx264",
+  autoTeropFontSize: 48,
+  autoTeropFontColor: "#FFFFFF",
+  autoTeropOutlineWidth: 3,
+  autoTeropOutlineColor: "#000000",
+  autoTeropY: 75,
+  autoTeropFillColor: "",
+  autoTeropFontFamily: "",
 };
 
 export function SettingsModal({ open, onClose, onSaved }: Props) {
@@ -78,7 +78,6 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
   const [showGemini, setShowGemini] = useState(false);
   const [showGroq, setShowGroq] = useState(false);
   const [showOpenAi, setShowOpenAi] = useState(false);
-  const [showCf, setShowCf] = useState(false);
   const [showPixabay, setShowPixabay] = useState(false);
   const [showYoutube, setShowYoutube] = useState(false);
 
@@ -479,129 +478,6 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
           )}
         </section>
 
-        <section className="space-y-3 py-5">
-          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
-            画像生成
-          </h3>
-          <label className="block text-sm">プロバイダ</label>
-          <select
-            value={s.imageProvider}
-            onChange={(e) =>
-              update(
-                "imageProvider",
-                e.target.value as AppSettings["imageProvider"],
-              )
-            }
-            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-          >
-            <option value="pollinations">Pollinations.ai（無料・無制限）</option>
-            <option value="cloudflare">
-              Cloudflare Workers AI（10,000/日・無料・高速）
-            </option>
-          </select>
-
-          {s.imageProvider === "pollinations" && (
-            <>
-              <label className="block text-sm">モデル</label>
-              <select
-                value={s.pollinationsModel}
-                onChange={(e) =>
-                  update(
-                    "pollinationsModel",
-                    e.target.value as PollinationsModel,
-                  )
-                }
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-              >
-                <option value="flux">Flux（高品質・少し遅い）</option>
-                <option value="turbo">Turbo（高速・品質ふつう）</option>
-                <option value="flux-anime">
-                  Flux Anime（可愛いアニメ・イラスト）
-                </option>
-                <option value="flux-realism">
-                  Flux Realism（写真風リアル）
-                </option>
-              </select>
-            </>
-          )}
-
-          {s.imageProvider === "cloudflare" && (
-            <>
-              <label className="block text-sm">アカウントID</label>
-              <input
-                type="text"
-                value={s.cloudflareAccountId}
-                onChange={(e) => update("cloudflareAccountId", e.target.value)}
-                placeholder="Cloudflareダッシュボード右サイドバーに表示"
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 font-mono text-xs"
-              />
-
-              <label className="block text-sm mt-2">API トークン</label>
-              <div className="relative">
-                <input
-                  type={showCf ? "text" : "password"}
-                  value={s.cloudflareApiKey}
-                  onChange={(e) => update("cloudflareApiKey", e.target.value)}
-                  placeholder="Workers AI 権限付きトークン"
-                  className="w-full px-3 py-2 pr-20 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowCf(!showCf)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-500"
-                >
-                  {showCf ? "隠す" : "表示"}
-                </button>
-              </div>
-              <button
-                type="button"
-                onClick={() =>
-                  openUrl("https://dash.cloudflare.com/profile/api-tokens")
-                }
-                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-              >
-                → Cloudflareダッシュボードで取得（クレカ不要）
-              </button>
-
-              <label className="block text-sm mt-2">モデル</label>
-              <select
-                value={s.cloudflareModel}
-                onChange={(e) => update("cloudflareModel", e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-              >
-                {CLOUDFLARE_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-
-          <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-800">
-            <label className="block text-sm">スタイルプリセット</label>
-            <select
-              value={s.imageStylePreset}
-              onChange={(e) =>
-                update(
-                  "imageStylePreset",
-                  e.target.value as AppSettings["imageStylePreset"],
-                )
-              }
-              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-            >
-              {STYLE_PRESET_OPTIONS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              全プロバイダ共通。プロンプトの先頭に画風の指示が自動で付与されます。
-            </p>
-          </div>
-        </section>
-
         <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
           <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
             BGM
@@ -667,6 +543,130 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
           >
             → Pixabayでアカウント登録・APIキー取得（無料）
           </button>
+        </section>
+
+        <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
+          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
+            動画エクスポート
+          </h3>
+          <label className="block text-sm">エンコーダ</label>
+          <select
+            value={s.videoEncoder}
+            onChange={(e) =>
+              update("videoEncoder", e.target.value as AppSettings["videoEncoder"])
+            }
+            className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm"
+          >
+            <option value="libx264">libx264（CPU・最高品質、遅い）</option>
+            <option value="h264_nvenc">h264_nvenc（NVIDIA GPU・高速、品質95%）</option>
+            <option value="h264_qsv">h264_qsv（Intel iGPU・高速、品質90%）</option>
+          </select>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            NVENC は NVIDIA GPU、QSV は Intel 内蔵 GPU が必要。SNS 用途ならハードウェアエンコードで十分です（5〜10倍速い）。
+          </p>
+        </section>
+
+        <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
+          <h3 className="font-semibold text-sm text-gray-700 dark:text-gray-300">
+            台本自動配置のデフォルトテロップスタイル
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            台本→自動配置で生成されるテロップに適用されるスタイル。
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs mb-1">フォントサイズ (px)</label>
+              <input
+                type="number"
+                min={8}
+                max={200}
+                value={s.autoTeropFontSize}
+                onChange={(e) =>
+                  update("autoTeropFontSize", Number(e.target.value) || 48)
+                }
+                className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">縦位置 (% 0=上 / 100=下)</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={s.autoTeropY}
+                onChange={(e) => update("autoTeropY", Number(e.target.value))}
+                className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">文字色</label>
+              <input
+                type="color"
+                value={s.autoTeropFontColor}
+                // ドラッグ中は live update のみ。recents 追加は onBlur (commit) で。
+                onChange={(e) => update("autoTeropFontColor", e.target.value)}
+                onBlur={(e) => recordColorUsed(e.target.value)}
+                className="w-full h-8 rounded border border-gray-300 dark:border-gray-600"
+              />
+              <ColorSwatches
+                value={s.autoTeropFontColor}
+                onChange={(c) => {
+                  update("autoTeropFontColor", c);
+                  recordColorUsed(c);
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">縁の色</label>
+              <input
+                type="color"
+                value={s.autoTeropOutlineColor}
+                onChange={(e) => update("autoTeropOutlineColor", e.target.value)}
+                onBlur={(e) => recordColorUsed(e.target.value)}
+                className="w-full h-8 rounded border border-gray-300 dark:border-gray-600"
+              />
+              <ColorSwatches
+                value={s.autoTeropOutlineColor}
+                onChange={(c) => {
+                  update("autoTeropOutlineColor", c);
+                  recordColorUsed(c);
+                }}
+              />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">縁の太さ (px、0=なし)</label>
+              <input
+                type="number"
+                min={0}
+                max={20}
+                value={s.autoTeropOutlineWidth}
+                onChange={(e) =>
+                  update("autoTeropOutlineWidth", Number(e.target.value))
+                }
+                className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+            <div>
+              <label className="block text-xs mb-1">背景色（空 = なし）</label>
+              <input
+                type="text"
+                value={s.autoTeropFillColor}
+                onChange={(e) => update("autoTeropFillColor", e.target.value)}
+                placeholder="例: rgba(0,0,0,0.6)"
+                className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs mb-1">フォントファミリー（空 = システム既定）</label>
+            <input
+              type="text"
+              value={s.autoTeropFontFamily}
+              onChange={(e) => update("autoTeropFontFamily", e.target.value)}
+              placeholder='例: "Noto Sans JP"'
+              className="w-full px-2 py-1 text-sm rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            />
+          </div>
         </section>
 
         <section className="space-y-3 py-5 border-t border-gray-200 dark:border-gray-800">
@@ -762,6 +762,55 @@ export function SettingsModal({ open, onClose, onSaved }: Props) {
           >
             → Google Cloud で YouTube Data API v3 を有効化（無料・クレカ不要）
           </button>
+
+          <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+            <div className="text-sm font-semibold mb-1">
+              YouTube Analytics 連携（OAuth）
+            </div>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2">
+              自分の動画の視聴維持率・CTR・インプレッション等の詳細データを取得するのに使用。Google Cloud Console で「OAuth 2.0 クライアント ID（デスクトップアプリ）」を作成して登録してください。
+            </p>
+            <label className="block text-sm">OAuth Client ID</label>
+            <input
+              type="text"
+              value={s.youtubeOAuthClientId}
+              onChange={(e) => update("youtubeOAuthClientId", e.target.value)}
+              placeholder="xxxxxxxxxxxx.apps.googleusercontent.com"
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 mb-2"
+            />
+            <label className="block text-sm">OAuth Client Secret</label>
+            <input
+              type="password"
+              value={s.youtubeOAuthClientSecret}
+              onChange={(e) =>
+                update("youtubeOAuthClientSecret", e.target.value)
+              }
+              placeholder="GOCSPX-..."
+              className="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            />
+            <div className="flex flex-col gap-0.5 mt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  openUrl("https://console.cloud.google.com/apis/credentials")
+                }
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline text-left"
+              >
+                → Google Cloud: OAuth 認証情報ページを開く
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  openUrl(
+                    "https://console.cloud.google.com/apis/library/youtubeanalytics.googleapis.com",
+                  )
+                }
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline text-left"
+              >
+                → YouTube Analytics API を有効化
+              </button>
+            </div>
+          </div>
         </section>
 
         <div className="flex gap-2">

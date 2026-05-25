@@ -13,6 +13,7 @@ import type {
   KeyframeTrack,
   LayerKeyframes,
   BubbleShape,
+  ExpressionKeyframe,
 } from "../types";
 import {
   VOICEVOX_SPEAKERS,
@@ -20,6 +21,7 @@ import {
   SOFTALK_VOICES,
 } from "../lib/providers/tts";
 import { loadSettings } from "../lib/storage";
+import { ColorSwatches, recordColorUsed } from "./ColorSwatches";
 
 const SAY_VOICES = [
   { id: "Kyoko", label: "Kyoko（女性・日本語）" },
@@ -32,6 +34,25 @@ const TTS_PROVIDER_OPTIONS = [
   { id: "softalk", label: "SofTalk（ゆっくり霊夢/魔理沙）" },
   { id: "say", label: "macOS say" },
 ];
+
+/**
+ * Live2D の model3.json から表情名 (Expressions[].Name) のリストを取り出す。
+ * 失敗時は空配列を返す (UI を壊さない)。
+ */
+async function fetchExpressionNames(modelPath: string): Promise<string[]> {
+  try {
+    const url = convertFileSrc(modelPath);
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const json = (await res.json()) as {
+      FileReferences?: { Expressions?: Array<{ Name?: string }> };
+    };
+    const exprs = json.FileReferences?.Expressions ?? [];
+    return exprs.map((e) => e.Name ?? "").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
 
 function probeVideoDuration(path: string): Promise<number> {
   const url =
@@ -90,6 +111,8 @@ interface Props {
   importedComments?: import("../types").ExtractedComment[];
   /** キーフレーム「現在位置で追加」に使う再生ヘッド時刻（秒） */
   playheadSec?: number;
+  /** クロスフェード自動配置のため、テンプレ内の全レイヤー一覧 */
+  allLayers?: Layer[];
 }
 
 type KeyframeProp = "x" | "y" | "scale" | "opacity" | "rotation";
@@ -290,90 +313,8 @@ function WheelSlider({
   );
 }
 
-function ScrubbingLabel({
-  text,
-  value,
-  setter,
-  step,
-}: {
-  text: string;
-  value: number | undefined;
-  setter: (v: number) => void;
-  step: number;
-}) {
-  const [dragging, setDragging] = useState(false);
-  const startRef = useRef<{ x: number; v: number } | null>(null);
-  const labelRef = useRef<HTMLLabelElement>(null);
-  // wheel 用に最新の value / setter / step を保持（イベントは passive:false 登録する）
-  const latestRef = useRef({ value, setter, step });
-  useEffect(() => {
-    latestRef.current = { value, setter, step };
-  }, [value, setter, step]);
-
-  useEffect(() => {
-    const el = labelRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      const cur = latestRef.current;
-      if (cur.value === undefined || !Number.isFinite(cur.value)) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const dir = e.deltaY < 0 ? 1 : -1;
-      const s = cur.step;
-      const factor = e.shiftKey ? s * 10 : e.altKey ? s * 0.1 : s;
-      cur.setter(cur.value + dir * factor);
-    };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, []);
-
-  const onPointerDown = (e: React.PointerEvent<HTMLLabelElement>) => {
-    if (value === undefined || !Number.isFinite(value)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    startRef.current = { x: e.clientX, v: value };
-    setDragging(true);
-    try {
-      (e.currentTarget as HTMLLabelElement).setPointerCapture(e.pointerId);
-    } catch {
-      /* noop */
-    }
-  };
-  const onPointerMove = (e: React.PointerEvent<HTMLLabelElement>) => {
-    if (!dragging || !startRef.current) return;
-    const dx = e.clientX - startRef.current.x;
-    const factor = e.shiftKey ? step * 10 : e.altKey ? step * 0.1 : step;
-    setter(startRef.current.v + dx * factor);
-  };
-  const onPointerUp = (e: React.PointerEvent<HTMLLabelElement>) => {
-    setDragging(false);
-    startRef.current = null;
-    try {
-      (e.currentTarget as HTMLLabelElement).releasePointerCapture(e.pointerId);
-    } catch {
-      /* noop */
-    }
-  };
-
-  return (
-    <label
-      ref={labelRef}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      className={`select-none ${
-        dragging
-          ? "text-blue-600 font-semibold"
-          : "text-gray-600 dark:text-gray-400 hover:text-blue-600"
-      }`}
-      style={{ cursor: "ew-resize" }}
-      title="左右ドラッグ or マウスホイールで値を変更（Shift:大 / Alt:小）"
-    >
-      {text}
-    </label>
-  );
-}
+// ScrubbingLabel は廃止 (label 上のドラッグ / ホイール操作は誤発火が多かった)。
+// 値の変更は数値フィールド直接 (NumField の onWheel) に集約する。
 
 function NumField({
   value,
@@ -401,9 +342,35 @@ function NumField({
   }, [formatted, focused]);
   const display = local ?? formatted;
 
+  // ホイール増減: フォーカスしてなくても scroll で値が変えられるように
+  // React の onWheel は passive listener なので preventDefault が効かない →
+  // useEffect + native addEventListener({ passive: false }) で登録する
+  const inputRef = useRef<HTMLInputElement>(null);
+  // 最新の value / setter / step / mixed をクロージャから読むための ref
+  const stateRef = useRef({ value, setter, step, mixed });
+  stateRef.current = { value, setter, step, mixed };
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const s = stateRef.current;
+      if (s.mixed) return;
+      e.preventDefault();
+      const dir = e.deltaY < 0 ? 1 : -1;
+      const mult = e.shiftKey ? 10 : 1;
+      const cur = s.value ?? 0;
+      const next = cur + s.step * dir * mult;
+      const p = s.step < 1 ? 2 : 0;
+      s.setter(Number(next.toFixed(p)));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
     <div className="flex items-center gap-1">
       <input
+        ref={inputRef}
         type="number"
         value={display}
         placeholder={mixed ? "—" : ""}
@@ -431,6 +398,7 @@ function NumField({
           }
         }}
         className="w-20 px-1 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+        title="クリックで編集 / ホイールで増減 (Shift で 10 倍)"
       />
       {unit && <span className="text-gray-400">{unit}</span>}
     </div>
@@ -444,8 +412,10 @@ type SectionId =
   | "border"
   | "fill"
   | "text"
+  | "text-style"
   | "source"
   | "audio"
+  | "character"
   | "animation"
   | "keyframes"
   | "crop"
@@ -460,12 +430,14 @@ const TAB_OF_SECTION: Record<SectionId, PropTab> = {
   shape: "style",
   border: "style",
   fill: "style",
-  text: "style",
+  text: "basic",
+  "text-style": "style",
   decoration: "style",
   animation: "motion",
   keyframes: "motion",
   source: "detail",
   audio: "detail",
+  character: "detail",
   crop: "style",
   bubble: "style",
 };
@@ -539,15 +511,20 @@ export function LayerPropertyPanel({
   narrationBusyLayerId,
   importedComments,
   playheadSec = 0,
+  allLayers = [],
 }: Props) {
   const list: Layer[] = layers ?? (layer ? [layer] : []);
   const [openSections, setOpenSections] = useState<Set<SectionId>>(
     new Set(DEFAULT_OPEN),
   );
+  // キャラレイヤー: モデルが定義してる表情名のリスト (model3.json から fetch)
+  const [characterExpressions, setCharacterExpressions] = useState<string[]>(
+    [],
+  );
   const [activeTab, setActiveTab] = useState<PropTab>("basic");
   // ナレーション生成で使う TTS プロバイダ / 声の選択（設定からデフォルト読込）
-  const [narrProvider, setNarrProvider] = useState<string>("openai");
-  const [narrVoice, setNarrVoice] = useState<string>("alloy");
+  const [narrProvider, setNarrProvider] = useState<string>("voicevox");
+  const [narrVoice, setNarrVoice] = useState<string>("3");
   useEffect(() => {
     loadSettings()
       .then((s) => {
@@ -557,7 +534,7 @@ export function LayerPropertyPanel({
           s.ttsProvider === "openai" ||
           s.ttsProvider === "softalk"
             ? s.ttsProvider
-            : "openai";
+            : "voicevox";
         setNarrProvider(prov);
         if (prov === "voicevox" && s.voicevoxSpeaker !== undefined) {
           setNarrVoice(String(s.voicevoxSpeaker));
@@ -597,6 +574,27 @@ export function LayerPropertyPanel({
     });
   };
   const isOpen = (id: SectionId) => openSections.has(id);
+
+  // 早期 return より前に書く必要がある (React のフック規則: 呼ばれる回数が render 間で同じであること)
+  const earlyPrimary = list[0];
+  // キャラレイヤーの modelPath が変わったら表情名一覧を fetch する
+  useEffect(() => {
+    if (
+      !earlyPrimary ||
+      earlyPrimary.type !== "character" ||
+      !earlyPrimary.modelPath
+    ) {
+      setCharacterExpressions([]);
+      return;
+    }
+    let cancelled = false;
+    fetchExpressionNames(earlyPrimary.modelPath).then((names) => {
+      if (!cancelled) setCharacterExpressions(names);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [earlyPrimary?.type, earlyPrimary?.modelPath]);
 
   if (list.length === 0) {
     return (
@@ -680,12 +678,9 @@ export function LayerPropertyPanel({
     const mixed = value === undefined;
     return (
       <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-        <ScrubbingLabel
-          text={label}
-          value={value}
-          setter={setter}
-          step={step}
-        />
+        <label className="text-gray-600 dark:text-gray-400 select-none">
+          {label}
+        </label>
         <NumField
           value={value}
           setter={setter}
@@ -697,7 +692,7 @@ export function LayerPropertyPanel({
     );
   };
 
-  /** 色ピッカー（ネイティブ color + テキスト併用） */
+  /** 色ピッカー（ネイティブ color + テキスト併用 + プリセット/最近使った色の swatch 行） */
   const colorInput = (
     label: string,
     value: string | undefined,
@@ -706,21 +701,35 @@ export function LayerPropertyPanel({
     const v = value ?? "#ffffff";
     // rgba() のようなものが来たら color input に渡せない → テキストのみ
     const isHex = /^#[0-9a-fA-F]{3,8}$/.test(v);
+    // ドラッグ中は live preview のみ。recents は commit (onBlur or swatch click) でだけ追加。
+    // こうしないと <input type="color"> のドラッグ中に何十個も似た色が recents に溜まる。
+    const handleLive = (next: string) => {
+      setter(next);
+    };
+    const handleCommit = (next: string) => {
+      setter(next);
+      recordColorUsed(next);
+    };
     return (
-      <div className="grid grid-cols-[70px_1fr_80px] items-center gap-1 text-[11px]">
-        <label className="text-gray-600 dark:text-gray-400">{label}</label>
-        <input
-          type="color"
-          value={isHex ? v.slice(0, 7) : "#ffffff"}
-          onChange={(e) => setter(e.target.value)}
-          className="w-full h-5 rounded border border-gray-300 dark:border-gray-600 cursor-pointer"
-        />
-        <input
-          type="text"
-          value={v}
-          onChange={(e) => setter(e.target.value)}
-          className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-        />
+      <div className="text-[11px]">
+        <div className="grid grid-cols-[70px_1fr_80px] items-center gap-1">
+          <label className="text-gray-600 dark:text-gray-400">{label}</label>
+          <input
+            type="color"
+            value={isHex ? v.slice(0, 7) : "#ffffff"}
+            onChange={(e) => handleLive(e.target.value)}
+            onBlur={(e) => handleCommit(e.target.value)}
+            className="w-full h-5 rounded border border-gray-300 dark:border-gray-600 cursor-pointer"
+          />
+          <input
+            type="text"
+            value={v}
+            onChange={(e) => handleLive(e.target.value)}
+            onBlur={(e) => handleCommit(e.target.value)}
+            className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+          />
+        </div>
+        <ColorSwatches value={v} onChange={handleCommit} />
       </div>
     );
   };
@@ -738,12 +747,9 @@ export function LayerPropertyPanel({
     const v = value ?? min;
     return (
       <div className="grid grid-cols-[70px_1fr_46px] items-center gap-1 text-[11px]">
-        <ScrubbingLabel
-          text={label}
-          value={value}
-          setter={setter}
-          step={step}
-        />
+        <label className="text-gray-600 dark:text-gray-400 select-none">
+          {label}
+        </label>
         <WheelSlider
           value={v}
           onChange={setter}
@@ -782,6 +788,7 @@ export function LayerPropertyPanel({
   const showText = allHaveType(["comment"]);
   const showSource = allHaveType(["image", "video"]);
   const showAudio = allHaveType(["audio"]);
+  const showCharacter = allHaveType(["character"]);
   // 音声のみ選択中は「位置・サイズ / 形状 / 枠線」は意味がないので非表示
   const allAudio = showAudio;
 
@@ -792,6 +799,7 @@ export function LayerPropertyPanel({
     color: "🎨",
     shape: "⬜",
     audio: "🎵",
+    character: "🎭",
   };
   const headerLabel = multi ? (
     <span className="text-blue-600 dark:text-blue-400">
@@ -806,8 +814,12 @@ export function LayerPropertyPanel({
 
   return (
     <div className="text-xs">
+      {/* ==== 上部バー + タブバーを 1 つの sticky でラップ ====
+           (タブバー側だけ別 sticky にすると、上部バーの高さが可変なせいで
+            スクロール時に重なって "めり込む" 不具合が出る) */}
+      <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
       {/* ==== 上部バー：常時表示 ==== */}
-      <div className="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-1.5 py-1.5 space-y-1.5">
+      <div className="px-1.5 py-1.5 space-y-1.5">
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-semibold truncate">{headerLabel}</div>
           {!multi && (
@@ -902,16 +914,14 @@ export function LayerPropertyPanel({
               (v) => {
                 const newRate = Math.max(0.5, Math.min(4, v));
                 const patch: Partial<Layer> = { playbackRate: newRate };
-                // 単一選択 & ループOFF & 素材尺が既知なら、タイムライン尺も連動
-                if (
-                  !multi &&
-                  primary &&
-                  !primary.audioLoop &&
-                  primary.sourceDurationSec &&
-                  primary.sourceDurationSec > 0
-                ) {
-                  const newDur = primary.sourceDurationSec / newRate;
-                  patch.endSec = primary.startSec + newDur;
+                // タイムライン尺も再生速度の比率で伸縮させる
+                if (!multi && primary) {
+                  const oldRate = primary.playbackRate ?? 1;
+                  const oldDur = primary.endSec - primary.startSec;
+                  if (oldDur > 0 && oldRate > 0) {
+                    const newDur = oldDur * (oldRate / newRate);
+                    patch.endSec = primary.startSec + newDur;
+                  }
                 }
                 onChange(patch);
               },
@@ -929,16 +939,14 @@ export function LayerPropertyPanel({
             (v) => {
               const newRate = Math.max(0.5, Math.min(4, v));
               const patch: Partial<Layer> = { playbackRate: newRate };
-              // video ループ OFF & 素材尺が既知なら、タイムライン尺を連動
-              if (
-                !multi &&
-                primary &&
-                primary.videoLoop === false &&
-                primary.sourceDurationSec &&
-                primary.sourceDurationSec > 0
-              ) {
-                const newDur = primary.sourceDurationSec / newRate;
-                patch.endSec = primary.startSec + newDur;
+              // タイムライン尺も再生速度の比率で伸縮させる
+              if (!multi && primary) {
+                const oldRate = primary.playbackRate ?? 1;
+                const oldDur = primary.endSec - primary.startSec;
+                if (oldDur > 0 && oldRate > 0) {
+                  const newDur = oldDur * (oldRate / newRate);
+                  patch.endSec = primary.startSec + newDur;
+                }
               }
               onChange(patch);
             },
@@ -949,8 +957,8 @@ export function LayerPropertyPanel({
           )}
       </div>
 
-      {/* ==== タブバー ==== */}
-      <div className="flex sticky top-[calc(2.4rem+1px)] z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+      {/* ==== タブバー (上部バーと同じ sticky コンテナ内) ==== */}
+      <div className="flex border-t border-gray-200 dark:border-gray-700">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -966,13 +974,45 @@ export function LayerPropertyPanel({
           </button>
         ))}
       </div>
+      </div>{/* /sticky wrapper */}
 
-      <Section id="timing" title="タイミング" open={isOpen("timing")} onToggle={toggle} currentTab={activeTab}>
-        {numInput("開始", common("startSec"), (v) => onChange({ startSec: Math.max(0, v) }), 0.1, "s")}
-        {numInput("終了", common("endSec"), (v) => onChange({ endSec: Math.max(0.1, v) }), 0.1, "s")}
-      </Section>
+      {/* タイミング (開始/終了) は上部の常時表示にあるためセクションは削除 */}
 
       <Section id="animation" title="アニメーション" open={isOpen("animation")} onToggle={toggle} currentTab={activeTab}>
+        {!multi && primary && allLayers.length > 0 && (
+          <button
+            type="button"
+            onClick={() => {
+              const cur = primary;
+              const overlap = 0.5;
+              // 「直前のレイヤー」= endSec が cur.startSec に最も近く、かつ ≤ cur.startSec のレイヤー
+              // ただし cur 自身は除外、種別は問わない（同じトラックでなくても OK）
+              const prev = allLayers
+                .filter((l) => l.id !== cur.id && l.endSec <= cur.startSec + 0.05)
+                .sort((a, b) => b.endSec - a.endSec)[0];
+              const patch: Partial<Layer> = {
+                entryAnimation: "fade",
+                entryDuration: overlap,
+              };
+              if (prev) {
+                // prev の終了より overlap 秒前に start を移動
+                const newStart = Math.max(0, prev.endSec - overlap);
+                const len = cur.endSec - cur.startSec;
+                patch.startSec = newStart;
+                patch.endSec = newStart + len;
+                // prev より上のトラックに（同じだと時間重複できないので）
+                if (cur.zIndex <= prev.zIndex) {
+                  patch.zIndex = prev.zIndex + 1;
+                }
+              }
+              onChange(patch);
+            }}
+            className="w-full mb-1.5 px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px]"
+            title="直前のレイヤーと 0.5 秒分時間を重ね、フェードイン入場で滑らかに切り替えるよう自動設定する"
+          >
+            ✨ 直前レイヤーとクロスフェード
+          </button>
+        )}
         <div className="grid grid-cols-[70px_1fr] items-center gap-1">
           <label className="text-gray-600">入場</label>
           <select
@@ -1383,22 +1423,14 @@ export function LayerPropertyPanel({
               1,
               "px",
             )}
-            <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-              <label className="text-gray-600 dark:text-gray-400">色</label>
-              <input
-                type="color"
-                value={common("border")?.color ?? "#ffffff"}
-                onChange={(e) =>
-                  onChange({
-                    border: {
-                      width: common("border")?.width ?? 2,
-                      color: e.target.value,
-                    },
-                  })
-                }
-                className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
-              />
-            </div>
+            {colorInput("色", common("border")?.color, (c) =>
+              onChange({
+                border: {
+                  width: common("border")?.width ?? 2,
+                  color: c,
+                },
+              }),
+            )}
           </div>
         )}
       </Section>
@@ -1406,19 +1438,9 @@ export function LayerPropertyPanel({
 
       {showFill && (
         <Section id="fill" title="塗り色" open={isOpen("fill")} onToggle={toggle} currentTab={activeTab}>
-          <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-            <label className="text-gray-600 dark:text-gray-400">塗り色</label>
-            <input
-              type="color"
-              value={
-                (common("fillColor") ?? "#333333")?.startsWith("#")
-                  ? common("fillColor") ?? "#333333"
-                  : "#333333"
-              }
-              onChange={(e) => onChange({ fillColor: e.target.value })}
-              className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
-            />
-          </div>
+          {colorInput("塗り色", common("fillColor"), (c) =>
+            onChange({ fillColor: c }),
+          )}
         </Section>
       )}
 
@@ -1458,17 +1480,10 @@ export function LayerPropertyPanel({
               ))}
             </select>
           </div>
-          {common("kineticAnimation") === "keyword-color" && (
-            <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-              <label className="text-gray-600">強調色</label>
-              <input
-                type="color"
-                value={common("keywordColor") ?? "#ffe600"}
-                onChange={(e) => onChange({ keywordColor: e.target.value })}
-                className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
-              />
-            </div>
-          )}
+          {common("kineticAnimation") === "keyword-color" &&
+            colorInput("強調色", common("keywordColor") ?? "#ffe600", (c) =>
+              onChange({ keywordColor: c }),
+            )}
           <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
             <label className="text-gray-600">装飾</label>
             <select
@@ -1575,111 +1590,7 @@ export function LayerPropertyPanel({
               />
             </div>
           )}
-          {numInput(
-            "文字サイズ",
-            common("fontSize") ?? (multi ? undefined : primary.fontSize ?? 48),
-            (v) => onChange({ fontSize: Math.max(8, v) }),
-            1,
-            "px",
-          )}
-          <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-            <label className="text-gray-600 dark:text-gray-400">フォント</label>
-            <select
-              value={common("fontFamily") ?? ""}
-              onChange={(e) =>
-                onChange({ fontFamily: e.target.value || undefined })
-              }
-              className="px-1.5 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-            >
-              {FONT_FAMILY_PRESETS.map((f) => (
-                <option key={f.id} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-            <label className="text-gray-600 dark:text-gray-400">文字色</label>
-            <input
-              type="color"
-              value={common("fontColor") ?? "#FFFFFF"}
-              onChange={(e) => onChange({ fontColor: e.target.value })}
-              className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
-            />
-          </div>
-
-          {/* 文字縁取り */}
-          <label className="flex items-center gap-1 text-[11px] pt-1">
-            <input
-              type="checkbox"
-              checked={(common("textOutlineWidth") ?? 0) > 0}
-              onChange={(e) =>
-                onChange({
-                  textOutlineWidth: e.target.checked
-                    ? common("textOutlineWidth") ?? 3
-                    : 0,
-                  textOutlineColor:
-                    common("textOutlineColor") ?? "#000000",
-                })
-              }
-              className="h-3 w-3"
-            />
-            文字に縁取りをつける
-          </label>
-          {(common("textOutlineWidth") ?? 0) > 0 && (
-            <div className="ml-4 space-y-1">
-              {numInput(
-                "縁 太さ",
-                common("textOutlineWidth") ??
-                  (multi ? undefined : primary.textOutlineWidth ?? 3),
-                (v) => onChange({ textOutlineWidth: Math.max(0, v) }),
-                1,
-                "px",
-              )}
-              <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
-                <label className="text-gray-600 dark:text-gray-400">縁の色</label>
-                <input
-                  type="color"
-                  value={common("textOutlineColor") ?? "#000000"}
-                  onChange={(e) =>
-                    onChange({ textOutlineColor: e.target.value })
-                  }
-                  className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
-                />
-              </div>
-            </div>
-          )}
-
-          <label className="flex items-center gap-1 text-[11px] pt-1">
-            <input
-              type="checkbox"
-              checked={!!common("fillColor")}
-              onChange={(e) =>
-                onChange({
-                  fillColor: e.target.checked
-                    ? common("fillColor") ?? "rgba(0,0,0,0.6)"
-                    : undefined,
-                })
-              }
-              className="h-3 w-3"
-            />
-            背景色を使う
-          </label>
-          {!!common("fillColor") && (
-            <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px] ml-4">
-              <label className="text-gray-600 dark:text-gray-400">背景色</label>
-              <input
-                type="color"
-                value={
-                  common("fillColor")?.startsWith("#")
-                    ? common("fillColor") ?? "#000000"
-                    : "#000000"
-                }
-                onChange={(e) => onChange({ fillColor: e.target.value })}
-                className="w-full h-6 rounded border border-gray-300 dark:border-gray-600"
-              />
-            </div>
-          )}
+          {/* 文字サイズ / 文字色 は上部の常時表示。フォント / 縁取り / 背景色 は「見た目」タブの text-style セクションに移動 */}
           {multi && (
             <p className="text-[10px] text-gray-400">
               テキスト本文は個別に編集してください
@@ -1740,15 +1651,103 @@ export function LayerPropertyPanel({
                 }
               >
                 {narrationBusyLayerId === primary.id
-                  ? "🔊 生成中..."
+                  ? "生成中..."
                   : primary.generatedNarrationLayerId
-                    ? "🔊 最新テキストで更新"
-                    : "🔊 ナレーション生成"}
+                    ? "最新テキストで更新"
+                    : "ナレーション生成"}
               </button>
               {primary.generatedNarrationLayerId && (
                 <p className="text-[9px] text-gray-500">
                   生成済。テキストを更新してボタン押下で置き換え
                 </p>
+              )}
+            </div>
+          )}
+        </Section>
+      )}
+
+      {showText && (
+        <Section
+          id="text-style"
+          title="テキスト装飾"
+          open={isOpen("text-style")}
+          onToggle={toggle}
+          currentTab={activeTab}
+        >
+          {/* フォント */}
+          <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
+            <label className="text-gray-600 dark:text-gray-400">フォント</label>
+            <select
+              value={common("fontFamily") ?? ""}
+              onChange={(e) =>
+                onChange({ fontFamily: e.target.value || undefined })
+              }
+              className="px-1.5 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            >
+              {FONT_FAMILY_PRESETS.map((f) => (
+                <option key={f.id} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* 文字縁取り */}
+          <label className="flex items-center gap-1 text-[11px] pt-1">
+            <input
+              type="checkbox"
+              checked={(common("textOutlineWidth") ?? 0) > 0}
+              onChange={(e) =>
+                onChange({
+                  textOutlineWidth: e.target.checked
+                    ? common("textOutlineWidth") ?? 3
+                    : 0,
+                  textOutlineColor:
+                    common("textOutlineColor") ?? "#000000",
+                })
+              }
+              className="h-3 w-3"
+            />
+            文字に縁取りをつける
+          </label>
+          {(common("textOutlineWidth") ?? 0) > 0 && (
+            <div className="ml-4 space-y-1">
+              {numInput(
+                "縁 太さ",
+                common("textOutlineWidth") ??
+                  (multi ? undefined : primary.textOutlineWidth ?? 3),
+                (v) => onChange({ textOutlineWidth: Math.max(0, v) }),
+                1,
+                "px",
+              )}
+              {colorInput(
+                "縁の色",
+                common("textOutlineColor") ?? "#000000",
+                (c) => onChange({ textOutlineColor: c }),
+              )}
+            </div>
+          )}
+
+          {/* 背景色 */}
+          <label className="flex items-center gap-1 text-[11px] pt-1">
+            <input
+              type="checkbox"
+              checked={!!common("fillColor")}
+              onChange={(e) =>
+                onChange({
+                  fillColor: e.target.checked
+                    ? common("fillColor") ?? "rgba(0,0,0,0.6)"
+                    : undefined,
+                })
+              }
+              className="h-3 w-3"
+            />
+            背景色を使う
+          </label>
+          {!!common("fillColor") && (
+            <div className="ml-4">
+              {colorInput("背景色", common("fillColor"), (c) =>
+                onChange({ fillColor: c }),
               )}
             </div>
           )}
@@ -1825,6 +1824,284 @@ export function LayerPropertyPanel({
         </Section>
       )}
 
+      {showCharacter && !multi && (
+        <Section
+          id="character"
+          title="キャラ (Live2D)"
+          open={isOpen("character")}
+          onToggle={toggle}
+          currentTab={activeTab}
+        >
+          {primary.modelPath && (
+            <div className="text-[10px] text-emerald-600 dark:text-emerald-400 truncate">
+              ✓ {primary.modelPath.split(/[\\/]/).pop()}
+            </div>
+          )}
+          {!primary.modelPath && (
+            <div className="text-[10px] text-amber-600 dark:text-amber-400">
+              モデル未設定
+            </div>
+          )}
+
+          {/* リンク音声: 未選択 = 自動 (全音声に同期) / チェック付き = その音声群だけに反応 */}
+          {(() => {
+            const audioLayers = (allLayers ?? []).filter(
+              (l) => l.type === "audio" && !l.hidden,
+            );
+            // 旧 linkedAudioLayerId との後方互換: ids が空なら旧フィールドを採用
+            const currentIds: string[] =
+              primary.linkedAudioLayerIds &&
+              primary.linkedAudioLayerIds.length > 0
+                ? primary.linkedAudioLayerIds
+                : primary.linkedAudioLayerId
+                ? [primary.linkedAudioLayerId]
+                : [];
+            const idSet = new Set(currentIds);
+            const setIds = (next: string[]) =>
+              onChange({
+                linkedAudioLayerIds: next.length > 0 ? next : undefined,
+                // 旧フィールドは無効化 (後方互換用に残してるが新規では使わない)
+                linkedAudioLayerId: undefined,
+              });
+            return (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-gray-500">
+                    リンク音声 ({currentIds.length === 0 ? "自動 (全音声)" : `${currentIds.length} 本`})
+                  </span>
+                  {currentIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setIds([])}
+                      className="text-[10px] text-blue-600 hover:underline"
+                      title="自動 (全音声) に戻す"
+                    >
+                      クリア
+                    </button>
+                  )}
+                </div>
+                {audioLayers.length === 0 ? (
+                  <div className="text-[10px] text-gray-400 px-1">
+                    音声レイヤー未追加
+                  </div>
+                ) : (
+                  <div className="max-h-32 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded p-1 flex flex-col gap-0.5">
+                    {audioLayers.map((l) => {
+                      const fileName =
+                        typeof l.source === "string"
+                          ? l.source.split(/[\\/]/).pop() ?? l.id
+                          : l.id;
+                      const checked = idSet.has(l.id);
+                      return (
+                        <label
+                          key={l.id}
+                          className="flex items-center gap-1.5 text-[10px] px-1 py-0.5 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setIds([...currentIds, l.id]);
+                              } else {
+                                setIds(
+                                  currentIds.filter((id) => id !== l.id),
+                                );
+                              }
+                            }}
+                            className="h-3 w-3"
+                          />
+                          <span className="flex-1 truncate">{fileName}</span>
+                          <span className="text-gray-400 whitespace-nowrap">
+                            {l.startSec.toFixed(1)}s
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* リップシンクモード */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] text-gray-500">リップシンク</span>
+            <div className="flex gap-1">
+              {(
+                [
+                  { id: "voicevox", label: "VOICEVOX (高精度)" },
+                  { id: "rms", label: "音量のみ" },
+                  { id: "off", label: "OFF" },
+                ] as const
+              ).map((opt) => {
+                const cur = primary.lipsyncMode ?? "voicevox";
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onChange({ lipsyncMode: opt.id })}
+                    className={`flex-1 px-1 py-1 rounded border text-[10px] ${
+                      cur === opt.id
+                        ? "bg-blue-100 dark:bg-blue-900/40 border-blue-500"
+                        : "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 瞬き */}
+          <label className="flex items-center gap-1 text-[11px]">
+            <input
+              type="checkbox"
+              checked={primary.blinkConfig?.enabled ?? false}
+              onChange={(e) => {
+                const cur = primary.blinkConfig ?? {
+                  enabled: true,
+                  duration: 0.15,
+                  intervalMean: 4,
+                  intervalJitter: 1.5,
+                  seed: Math.floor(Math.random() * 0x7fffffff),
+                };
+                onChange({
+                  blinkConfig: { ...cur, enabled: e.target.checked },
+                });
+              }}
+              className="h-3 w-3"
+            />
+            瞬きする
+          </label>
+
+          {/* 表情キーフレーム */}
+          {characterExpressions.length > 0 && (
+            <div className="flex flex-col gap-1 mt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] text-gray-500">
+                  表情切替 ({characterExpressions.length} 種)
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = primary.expressionKeyframes ?? [];
+                    const next: ExpressionKeyframe[] = [
+                      ...cur,
+                      {
+                        time: playheadSec,
+                        expression: characterExpressions[0],
+                        fadeIn: 0,
+                      },
+                    ].sort((a, b) => a.time - b.time);
+                    onChange({ expressionKeyframes: next });
+                  }}
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100"
+                >
+                  ＋ 現在位置に追加
+                </button>
+              </div>
+              {(primary.expressionKeyframes ?? []).map((kf, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-1 text-[10px]"
+                >
+                  <input
+                    type="number"
+                    step={0.1}
+                    value={kf.time}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      if (!isFinite(v)) return;
+                      const cur = [...(primary.expressionKeyframes ?? [])];
+                      cur[idx] = { ...cur[idx], time: v };
+                      cur.sort((a, b) => a.time - b.time);
+                      onChange({ expressionKeyframes: cur });
+                    }}
+                    className="w-12 px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-right"
+                  />
+                  <span className="text-gray-500">s</span>
+                  <select
+                    value={kf.expression}
+                    onChange={(e) => {
+                      const cur = [...(primary.expressionKeyframes ?? [])];
+                      cur[idx] = { ...cur[idx], expression: e.target.value };
+                      onChange({ expressionKeyframes: cur });
+                    }}
+                    className="flex-1 px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                  >
+                    {characterExpressions.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = (primary.expressionKeyframes ?? []).filter(
+                        (_, i) => i !== idx,
+                      );
+                      onChange({ expressionKeyframes: cur });
+                    }}
+                    className="text-red-500 hover:text-red-700 px-1"
+                    title="削除"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* クレジット (任意。配布物 readme に従って書く) */}
+          <details className="text-[10px] mt-1">
+            <summary className="cursor-pointer text-gray-500">
+              クレジット情報
+            </summary>
+            <div className="flex flex-col gap-1 mt-1 pl-2">
+              <input
+                type="text"
+                placeholder="制作者名"
+                value={primary.credit?.author ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    credit: { ...primary.credit, author: e.target.value },
+                  })
+                }
+                className="px-1.5 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+              <input
+                type="text"
+                placeholder="配布元 URL"
+                value={primary.credit?.sourceUrl ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    credit: { ...primary.credit, sourceUrl: e.target.value },
+                  })
+                }
+                className="px-1.5 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+              <textarea
+                placeholder="概要欄に貼る指定文 (任意)"
+                value={primary.credit?.requiredCreditText ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    credit: {
+                      ...primary.credit,
+                      requiredCreditText: e.target.value,
+                    },
+                  })
+                }
+                rows={2}
+                className="px-1.5 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 resize-y"
+              />
+            </div>
+          </details>
+        </Section>
+      )}
+
       {showSource && !multi && (
         <Section
           id="source"
@@ -1834,19 +2111,6 @@ export function LayerPropertyPanel({
           currentTab={activeTab}
         >
           <div className="flex gap-1">
-            {primary.type === "image" && (
-              <button
-                type="button"
-                onClick={() => onChange({ source: "auto" })}
-                className={`flex-1 px-1.5 py-1 rounded border text-[10px] ${
-                  primary.source === "auto"
-                    ? "bg-blue-100 dark:bg-blue-900/40 border-blue-500"
-                    : "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
-                }`}
-              >
-                🤖 AI自動
-              </button>
-            )}
             <button
               type="button"
               onClick={() => pickFile(primary.type as "image" | "video")}

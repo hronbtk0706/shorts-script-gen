@@ -86,16 +86,29 @@ export function LayerPreview({ layer, widthPx = 260, heightPx }: Props) {
     }
   }, [localTime, isPlaying, layer?.source]);
 
-  // audio 要素（音声レイヤー再生時）
+  // audio 要素（音声レイヤー再生時）— playbackRate と volume も反映
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
+    const rate = Math.max(0.25, Math.min(4, layer?.playbackRate ?? 1));
+    a.playbackRate = rate;
+    a.defaultPlaybackRate = rate;
+    a.volume = Math.max(0, Math.min(1, layer?.volume ?? 1));
     if (isPlaying) {
-      a.play().catch(() => {});
+      a.play()
+        .then(() => {
+          a.playbackRate = rate;
+        })
+        .catch(() => {});
     } else {
       a.pause();
     }
-  }, [isPlaying, layer?.source]);
+  }, [
+    isPlaying,
+    layer?.source,
+    layer?.playbackRate,
+    layer?.volume,
+  ]);
 
   if (!layer) {
     return (
@@ -130,7 +143,17 @@ export function LayerPreview({ layer, widthPx = 260, heightPx }: Props) {
           )}
         </div>
         {resolved && (
-          <audio ref={audioRef} src={resolved} loop={!!layer.audioLoop} />
+          <audio
+            ref={audioRef}
+            src={resolved}
+            loop={!!layer.audioLoop}
+            onLoadedMetadata={() => {
+              const a = audioRef.current;
+              if (!a) return;
+              a.playbackRate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+              a.volume = Math.max(0, Math.min(1, layer.volume ?? 1));
+            }}
+          />
         )}
         <PlayButton
           isPlaying={isPlaying}
@@ -273,7 +296,7 @@ function renderContent(
               fontSize: 9,
             }}
           >
-            {layer.source === "auto" ? "🖼 AI画像" : "🖼 画像未設定"}
+            🖼 画像未設定
           </div>
         );
       }

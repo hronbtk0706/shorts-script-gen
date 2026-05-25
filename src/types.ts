@@ -7,7 +7,8 @@ export type LayerType =
   | "color"
   | "shape"
   | "comment"
-  | "audio";
+  | "audio"
+  | "character";
 
 export type LayerShape = "rect" | "circle" | "rounded";
 
@@ -145,6 +146,83 @@ export interface LayerKeyframes {
   rotation?: KeyframeTrack;
 }
 
+/**
+ * 素材のクレジット情報。
+ * Live2D モデル / 音声合成キャラ / 画像素材など、
+ * YouTube 概要欄に転記する必要がある素材すべてに共通。
+ */
+export interface AssetCredit {
+  /** 制作者名 */
+  author?: string;
+  /** 配布元 URL */
+  sourceUrl?: string;
+  /** ライセンス全文（モデルに同梱されている README の内容など） */
+  licenseText?: string;
+  /** 動画概要欄に貼るためのクレジット表記（例: "Live2D モデル: ◯◯氏 / VOICEVOX:ずんだもん"） */
+  requiredCreditText?: string;
+}
+
+/**
+ * Cubism モデルが持つ標準パラメータの抽象名 → 実モデルの Parameter ID への対応表。
+ * モデルによって命名 (ParamMouthOpenY / PARAM_MOUTH_OPEN_Y / Mouth_Open 等) が異なるため、
+ * モデル読み込み時に自動検出してこのテーブルを埋める。
+ */
+export interface CubismParamMap {
+  mouthOpenY?: string;
+  mouthForm?: string;
+  /** 母音別の口形状パラメータ（モデルが持っていれば優先利用、無ければ MouthOpenY/Form で合成） */
+  mouthA?: string;
+  mouthI?: string;
+  mouthU?: string;
+  mouthE?: string;
+  mouthO?: string;
+  eyeLOpen?: string;
+  eyeROpen?: string;
+  eyeBallX?: string;
+  eyeBallY?: string;
+  angleX?: string;
+  angleY?: string;
+  angleZ?: string;
+  bodyAngleX?: string;
+  bodyAngleY?: string;
+  bodyAngleZ?: string;
+  breath?: string;
+  browLY?: string;
+  browRY?: string;
+}
+
+/** 瞬きの設定。決定的な乱数で同じ系列を再現できるよう seed を持つ */
+export interface BlinkConfig {
+  enabled: boolean;
+  /** 瞬き 1 回の継続時間 (秒)。標準 0.15 */
+  duration: number;
+  /** 瞬きの平均間隔 (秒)。標準 4。シードと組み合わせて時刻列を生成 */
+  intervalMean: number;
+  /** 間隔の揺らぎ (秒、±)。標準 1.5 */
+  intervalJitter: number;
+  /** 乱数シード。同じ値ならプレビューとエクスポートで瞬きタイミング完全一致 */
+  seed: number;
+}
+
+/** リップシンクのソース */
+export type LipsyncMode =
+  /** リンク音声の VOICEVOX query JSON からモーラ駆動 (最高精度) */
+  | "voicevox"
+  /** リンク音声の振幅から MouthOpenY のみ駆動 (フォールバック) */
+  | "rms"
+  /** 完全に手動 (キーフレーム or 静止) */
+  | "off";
+
+/** 表情切替の 1 ポイント。Live2D の .exp3.json ファイル名で指定 */
+export interface ExpressionKeyframe {
+  /** グローバル時刻 (秒) */
+  time: number;
+  /** モデルが持つ expression のファイル名 (例: "smile.exp3.json") */
+  expression: string;
+  /** クロスフェード秒。0 で即時切替 */
+  fadeIn?: number;
+}
+
 /** v2 Timeline 型レイヤー */
 export interface Layer {
   id: string;
@@ -233,6 +311,65 @@ export interface Layer {
    * 未指定 = 既存の shape/borderRadius 挙動（通常の矩形テキストボックス）。
    */
   bubble?: BubbleStyle;
+
+  // -----------------------------------------------------------------------
+  // character レイヤー専用フィールド (type === "character" のときのみ意味を持つ)
+  // -----------------------------------------------------------------------
+  /** Live2D モデルの .model3.json への絶対パス */
+  modelPath?: string;
+  /** @deprecated linkedAudioLayerIds に統合。読込互換のため残す */
+  linkedAudioLayerId?: string;
+  /**
+   * リップシンク駆動元の音声レイヤー id 配列。
+   * - 空 / 未指定 → 自動 (テンプレ内の全音声に時刻ベースで同期)
+   * - 1 件以上指定 → その音声群だけに反応 (時刻ベース切替)
+   *
+   * 同じテンプレに複数キャラを置いて、キャラごとにセリフを振り分けたい時や、
+   * BGM 等にキャラを反応させたくない時に使う。
+   */
+  linkedAudioLayerIds?: string[];
+  /** リップシンクのモード */
+  lipsyncMode?: LipsyncMode;
+  /** モデル読み込み時に自動検出されたパラメータ名マッピング */
+  cubismParamMap?: CubismParamMap;
+  /** 瞬きの設定 */
+  blinkConfig?: BlinkConfig;
+  /** 表情のタイムライン (時刻順、複数可) */
+  expressionKeyframes?: ExpressionKeyframe[];
+  /** 任意の Cubism パラメータの手動上書きトラック (パラメータ ID → トラック) */
+  paramOverrides?: Record<string, KeyframeTrack>;
+  /**
+   * 物理演算の固定ステップ FPS。
+   * プレビューとエクスポートで同じ値を使うことで、髪揺れ等の物理状態が一致する。
+   * 既定はテンプレートの出力 FPS と同じにする。
+   */
+  physicsFps?: number;
+  /** 素材のクレジット情報 (モデル登録時に必須化する想定) */
+  credit?: AssetCredit;
+}
+
+/** テンプレートのアスペクト。新規作成時に決定、後から変更不可。 */
+export type TemplateAspect = "vertical" | "horizontal";
+
+/** アスペクトに対応する出力解像度（編集座標系もこの値を使う）。 */
+export const ASPECT_DIMENSIONS: Record<
+  TemplateAspect,
+  { width: number; height: number }
+> = {
+  vertical: { width: 1080, height: 1920 },
+  horizontal: { width: 1920, height: 1080 },
+};
+
+/** テンプレに aspect が無い旧データは縦扱い（後方互換） */
+export function templateAspectOf(t: { aspect?: TemplateAspect }): TemplateAspect {
+  return t.aspect ?? "vertical";
+}
+
+export function templateDimensions(t: { aspect?: TemplateAspect }): {
+  width: number;
+  height: number;
+} {
+  return ASPECT_DIMENSIONS[templateAspectOf(t)];
 }
 
 export interface VideoTemplate {
@@ -245,20 +382,24 @@ export interface VideoTemplate {
   sourceChannel?: string;
   createdAt: string;
   totalDuration: number;
+  /** 縦/横。未指定 (旧テンプレ) は縦扱い */
+  aspect?: TemplateAspect;
   overallPacing?: string;
   narrationStyle?: string;
   themeVibe?: string;
   /** 全レイヤーを global timeline に配置 */
   layers: Layer[];
-  /** テンプレ編集画面でインポートした YouTube コメント（次回取得で上書き） */
+  /** @deprecated 旧版互換: 単一動画のインポート結果。新版は importedCommentBundles を使用 */
   importedComments?: ExtractedComment[];
-  /** importedComments の取得元動画メタ情報 */
+  /** @deprecated 旧版互換: 上の取得元情報 */
   importedCommentsSource?: {
     videoUrl: string;
     videoTitle?: string;
     channelTitle?: string;
     fetchedAt: string;
   };
+  /** テンプレにインポート済みの YouTube コメント（複数動画分を保持） */
+  importedCommentBundles?: CommentBundle[];
 }
 
 export interface ReferenceVideo {
@@ -286,6 +427,8 @@ export interface ExtractedComment {
   text: string;
   author?: string;
   likeCount: number;
+  /** このコメントへの返信数（トップレベルコメントのみ。返信自身は undefined） */
+  replyCount?: number;
   isReply: boolean;
   parentId?: string;
   publishedAt?: string;
@@ -313,7 +456,6 @@ export interface ScriptInput {
   referenceBundle?: ReferenceBundle;
   template?: VideoTemplate;
   selectedComments?: ExtractedComment[];
-  /** マニュアルモード（AI画像生成をスキップ、ユーザー指定レイヤーのみで合成） */
   manualMode?: boolean;
 }
 

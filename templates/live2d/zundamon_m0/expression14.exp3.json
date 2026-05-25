@@ -1,0 +1,15 @@
+{
+	"Type": "Live2D Expression",
+	"Parameters": [
+		{
+			"Id": "Param_off_iris",
+			"Value": 1,
+			"Blend": "Add"
+		},
+		{
+			"Id": "Param_14",
+			"Value": 1,
+			"Blend": "Add"
+		}
+	]
+}

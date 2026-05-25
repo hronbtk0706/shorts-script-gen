@@ -1,7 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { VideoTemplate, Layer } from "../types";
+import { templateDimensions } from "../types";
 import { loadSettings } from "./storage";
-import { composeLayerContentPng } from "./layerComposer";
+import {
+  composeLayerContentPng,
+  composeAnimatedTextLayerVideo,
+  layerNeedsAnimatedTextVideo,
+  setCompositionCanvasDimensions,
+} from "./layerComposer";
+import { composeCharacterLayerVideo } from "./characterRender";
 
 export interface ProgressUpdate {
   phase:
@@ -68,6 +75,8 @@ interface RustTemplateLayerInput {
   entryDuration: number;
   exitAnimation: string;
   exitDuration: number;
+  ambientAnimation: string;
+  ambientIntensity: number;
   videoLoop: boolean;
   playbackRate: number;
   crop?: RustCrop;
@@ -102,10 +111,20 @@ const QUALITY_PRESET_MAP: Record<
   high: { crf: 18, preset: "slow" },
 };
 
+/** ファイル名に使えない文字を _ に置換し、適度な長さに切り詰める */
+function sanitizeFilename(s: string, fallback: string): string {
+  const cleaned = s
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+  return cleaned.length > 0 ? cleaned : fallback;
+}
+
 export async function generateVideoFromTemplate(
   template: VideoTemplate,
   onProgress: ProgressCallback,
-  options?: { quality?: VideoQualityPreset },
+  options?: { quality?: VideoQualityPreset; title?: string },
 ): Promise<VideoResult> {
   const qualityKey = options?.quality ?? "standard";
   const { crf: videoCrf, preset: videoPreset } =
@@ -114,7 +133,17 @@ export async function generateVideoFromTemplate(
   const pad = (n: number) => String(n).padStart(2, "0");
   const sessionId = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
+  // ユーザ指定タイトル → サニタイズ → ファイル名に組み込み
+  const titleBase = sanitizeFilename(
+    (options?.title ?? template.name ?? "").trim(),
+    "video",
+  );
+
   const settings = await loadSettings();
+
+  // テンプレのアスペクトに合わせて出力解像度を確定し、各 compose 関数 / Canvas 系に伝える
+  const canvasDims = templateDimensions(template);
+  setCompositionCanvasDimensions(canvasDims.width, canvasDims.height);
 
   // hidden は書き出しから除外
   const visible = template.layers.filter((l) => !l.hidden);
@@ -153,10 +182,10 @@ export async function generateVideoFromTemplate(
       message: `レイヤー ${processed}/${visualLayers.length} を処理中 (${layer.type})`,
     });
 
-    const x_px = Math.round((layer.x / 100) * 1080);
-    const y_px = Math.round((layer.y / 100) * 1920);
-    const w_px = Math.max(2, Math.round((layer.width / 100) * 1080));
-    const h_px = Math.max(2, Math.round((layer.height / 100) * 1920));
+    const x_px = Math.round((layer.x / 100) * canvasDims.width);
+    const y_px = Math.round((layer.y / 100) * canvasDims.height);
+    const w_px = Math.max(2, Math.round((layer.width / 100) * canvasDims.width));
+    const h_px = Math.max(2, Math.round((layer.height / 100) * canvasDims.height));
 
     const common = {
       xPx: x_px,
@@ -172,6 +201,8 @@ export async function generateVideoFromTemplate(
       entryDuration: layer.entryDuration ?? 0.3,
       exitAnimation: layer.exitAnimation ?? "none",
       exitDuration: layer.exitDuration ?? 0.3,
+      ambientAnimation: layer.ambientAnimation ?? "none",
+      ambientIntensity: layer.ambientIntensity ?? 1,
       keyframes: (layer.keyframes ?? {}) as RustLayerKeyframes,
     };
 
@@ -188,6 +219,115 @@ export async function generateVideoFromTemplate(
         videoLoop: layer.videoLoop ?? true,
         playbackRate: layer.playbackRate ?? 1,
         crop: layer.crop,
+      });
+    } else if (layer.type === "character" && layer.modelPath) {
+      // Live2D キャラレイヤー: WebCodecs で frame-step 描画して
+      // VP9 alpha WebM に焼き、video レイヤーとして既存パイプラインに乗せる。
+      // tickCharacter はプレビューと同じ関数なので、同じ (layer, t) で同じ絵が出る。
+      // リップシンク候補:
+      // - linkedAudioLayerIds 1 件以上 → その音声群だけ
+      // - 0 件 (自動)             → テンプレ内の全音声
+      // - 旧 linkedAudioLayerId    → [その 1 本] とみなす (後方互換)
+      const explicitIds: string[] =
+        layer.linkedAudioLayerIds && layer.linkedAudioLayerIds.length > 0
+          ? layer.linkedAudioLayerIds
+          : layer.linkedAudioLayerId
+          ? [layer.linkedAudioLayerId]
+          : [];
+      let audiosForLipsync: Layer[] = [];
+      if (explicitIds.length > 0) {
+        const idSet = new Set(explicitIds);
+        audiosForLipsync = template.layers.filter(
+          (l) => l.type === "audio" && !l.hidden && idSet.has(l.id),
+        );
+      } else {
+        audiosForLipsync = template.layers.filter(
+          (l) => l.type === "audio" && !l.hidden,
+        );
+      }
+      onProgress({
+        phase: "overlay",
+        sceneIndex: processed - 1,
+        totalScenes: visualLayers.length,
+        message: `キャラ動画を生成中 (${layer.id})...`,
+      });
+      const charResult = await composeCharacterLayerVideo({
+        layer,
+        audiosForLipsync,
+        outputWidth: w_px,
+        outputHeight: h_px,
+        fps: 30,
+        sessionId,
+        baseName: `character_${layer.id}`,
+        onProgress: (cur, total) => {
+          onProgress({
+            phase: "overlay",
+            sceneIndex: processed - 1,
+            totalScenes: visualLayers.length,
+            message: `キャラ描画 ${cur}/${total} frame`,
+          });
+        },
+      });
+      rustLayers.push({
+        ...common,
+        kind: "video",
+        path: charResult.outputPath,
+        // 焼き上がった WebM はちょうどレイヤー尺なのでループ不要
+        videoLoop: false,
+        playbackRate: 1,
+      });
+    } else if (layerNeedsAnimatedTextVideo(layer)) {
+      // 文字単位 / 単語単位アニメ持ちのテキスト/コメントは
+      // フレームごとに Canvas で描いて透過 .mov に焼く（プレビューと同じ毎フレーム描画方式）。
+      const { path: videoPath, padL, padT, padR, padB } =
+        await composeAnimatedTextLayerVideo(
+          layer,
+          sessionId,
+          `layer_${layer.id}_anim`,
+        );
+      const hasPad = padL || padT || padR || padB;
+      const adjXPx = hasPad ? x_px - padL : x_px;
+      const adjYPx = hasPad ? y_px - padT : y_px;
+      const adjWPx = hasPad ? w_px + padL + padR : w_px;
+      const adjHPx = hasPad ? h_px + padT + padB : h_px;
+      let adjKeyframes = common.keyframes;
+      if (hasPad && (common.keyframes.x || common.keyframes.y)) {
+        const dxPct = (padL / canvasDims.width) * 100;
+        const dyPct = (padT / canvasDims.height) * 100;
+        adjKeyframes = {
+          ...common.keyframes,
+          x: common.keyframes.x
+            ? {
+                ...common.keyframes.x,
+                frames: common.keyframes.x.frames.map((f) => ({
+                  ...f,
+                  value: f.value - dxPct,
+                })),
+              }
+            : undefined,
+          y: common.keyframes.y
+            ? {
+                ...common.keyframes.y,
+                frames: common.keyframes.y.frames.map((f) => ({
+                  ...f,
+                  value: f.value - dyPct,
+                })),
+              }
+            : undefined,
+        };
+      }
+      rustLayers.push({
+        ...common,
+        xPx: adjXPx,
+        yPx: adjYPx,
+        wPx: adjWPx,
+        hPx: adjHPx,
+        keyframes: adjKeyframes,
+        kind: "video",
+        path: videoPath,
+        // フレーム数 = 表示秒数 * 30 で焼いてあるのでループ不要
+        videoLoop: false,
+        playbackRate: 1,
       });
     } else {
       // static なレイヤーは PNG に焼き込む
@@ -208,8 +348,8 @@ export async function generateVideoFromTemplate(
       // キーフレームの x/y は % 値。PNG 拡張した場合は padL/padT のぶんだけシフトする。
       let adjKeyframes = common.keyframes;
       if (hasPad && (common.keyframes.x || common.keyframes.y)) {
-        const dxPct = (padL / 1080) * 100;
-        const dyPct = (padT / 1920) * 100;
+        const dxPct = (padL / canvasDims.width) * 100;
+        const dyPct = (padT / canvasDims.height) * 100;
         adjKeyframes = {
           ...common.keyframes,
           x: common.keyframes.x
@@ -281,9 +421,12 @@ export async function generateVideoFromTemplate(
     layers: rustLayers,
     audioLayers: rustAudio,
     bgmPath,
-    outputFilename: `video_${sessionId}.mp4`,
+    outputFilename: `${titleBase}_${sessionId}.mp4`,
     videoCrf,
     videoPreset,
+    videoEncoder: settings.videoEncoder || "libx264",
+    canvasWidth: canvasDims.width,
+    canvasHeight: canvasDims.height,
   });
 
   onProgress({

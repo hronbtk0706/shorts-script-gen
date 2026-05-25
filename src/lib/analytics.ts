@@ -21,6 +21,17 @@ export interface PerformanceRecord {
   ctr: number;
   uploadedAt?: string;
   metricsUpdatedAt?: string;
+  /** YouTube にアップロード済みの場合の動画ID（Analytics取得用） */
+  youtubeVideoId?: string;
+  /** Analytics API の詳細メトリクス（任意） */
+  ytAnalytics?: {
+    shares?: number;
+    subscribersGained?: number;
+    subscribersLost?: number;
+    averageViewDurationSec?: number;
+    impressions?: number;
+    fetchedAt: string;
+  };
 }
 
 export async function saveRecord(record: PerformanceRecord): Promise<void> {
@@ -47,6 +58,19 @@ export async function updateMetrics(
   const idx = records.findIndex((r) => r.id === id);
   if (idx < 0) return;
   records[idx] = { ...records[idx], ...metrics, metricsUpdatedAt: new Date().toISOString() };
+  await store.set(KEY, records);
+  await store.save();
+}
+
+/** 任意フィールド（youtubeVideoId, ytAnalytics, topic 等）をマージ更新する */
+export async function patchRecord(
+  id: string,
+  patch: Partial<PerformanceRecord>,
+): Promise<void> {
+  const records = await loadRecords();
+  const idx = records.findIndex((r) => r.id === id);
+  if (idx < 0) return;
+  records[idx] = { ...records[idx], ...patch };
   await store.set(KEY, records);
   await store.save();
 }

@@ -32,18 +32,19 @@ export function SeBrowser({ onSelect, seDir }: Props) {
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
 
-  // ポップアップ外クリックで閉じる
+  // モーダル開いてる時に Esc で閉じる
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
         setOpen(false);
+        stopPreview();
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const load = async () => {
@@ -106,7 +107,7 @@ export function SeBrowser({ onSelect, seDir }: Props) {
     : files;
 
   return (
-    <div className="relative" ref={panelRef}>
+    <>
       <button
         type="button"
         onClick={handleOpen}
@@ -118,83 +119,109 @@ export function SeBrowser({ onSelect, seDir }: Props) {
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-64 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl flex flex-col"
-          style={{ maxHeight: 360 }}
+        <div
+          className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-6"
+          onClick={() => {
+            setOpen(false);
+            stopPreview();
+          }}
         >
-          <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex items-center gap-1">
-            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300 flex-1">
-              🔊 SE一覧
-            </span>
-            <button
-              type="button"
-              onClick={() => load()}
-              className="text-[10px] text-blue-500 hover:underline"
-            >
-              更新
-            </button>
-          </div>
-
-          <div className="p-1.5 border-b border-gray-200 dark:border-gray-700">
-            <input
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="絞り込み..."
-              className="w-full text-[11px] px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 outline-none"
-              autoFocus
-            />
-          </div>
-
-          <div className="overflow-y-auto flex-1">
-            {loading && (
-              <div className="text-[11px] text-gray-400 text-center py-4">
-                読み込み中...
-              </div>
-            )}
-            {!loading && filtered.length === 0 && (
-              <div className="text-[11px] text-gray-400 text-center py-4">
-                {files.length === 0
-                  ? "C:\\Users\\...\\Documents\\SEが見つかりません"
-                  : "該当なし"}
-              </div>
-            )}
-            {filtered.map((file) => (
-              <div
-                key={file.path}
-                className="flex items-center gap-1 px-2 py-1 hover:bg-gray-100 dark:hover:bg-gray-800 group"
+          <div
+            className="w-full max-w-2xl max-h-[85vh] bg-white dark:bg-gray-900 rounded-lg shadow-xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+              <span className="text-sm font-bold flex-1">🔊 SE 選択</span>
+              <button
+                type="button"
+                onClick={() => load()}
+                className="text-xs px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="一覧を再読み込み"
               >
-                <button
-                  type="button"
-                  onClick={() => previewFile(file)}
-                  className={`p-0.5 rounded text-[11px] flex-shrink-0 ${
-                    playing === file.path
-                      ? "text-orange-500"
-                      : "text-gray-400 hover:text-blue-500"
-                  }`}
-                  title="プレビュー再生"
-                >
-                  {playing === file.path ? "⏸" : "▶"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelect(file)}
-                  className="flex-1 text-left text-[11px] text-gray-700 dark:text-gray-300 truncate hover:text-blue-600 dark:hover:text-blue-400"
-                  title={file.name}
-                >
-                  {file.name}
-                </button>
-                <span className="text-[9px] text-gray-400 uppercase flex-shrink-0">
-                  {file.ext}
-                </span>
-              </div>
-            ))}
-          </div>
+                🔄 更新
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  stopPreview();
+                }}
+                className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 text-lg leading-none px-1"
+                title="閉じる"
+              >
+                ✕
+              </button>
+            </div>
 
-          <div className="p-1.5 border-t border-gray-200 dark:border-gray-700 text-[9px] text-gray-400 text-center">
-            Documents\SE ({files.length}件)
+            <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
+              <input
+                type="text"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="ファイル名で絞り込み..."
+                className="w-full text-sm px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 outline-none"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {loading && (
+                <div className="text-xs text-gray-400 text-center py-8">
+                  読み込み中...
+                </div>
+              )}
+              {!loading && filtered.length === 0 && (
+                <div className="text-xs text-gray-400 text-center py-8">
+                  {files.length === 0
+                    ? "Documents\\SE フォルダにファイルが見つかりません"
+                    : "該当なし"}
+                </div>
+              )}
+              {filtered.map((file) => (
+                <div
+                  key={file.path}
+                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/20 border-b border-gray-100 dark:border-gray-800"
+                >
+                  <button
+                    type="button"
+                    onClick={() => previewFile(file)}
+                    className={`shrink-0 w-7 h-7 rounded text-sm flex items-center justify-center ${
+                      playing === file.path
+                        ? "bg-orange-500 text-white"
+                        : "bg-gray-100 dark:bg-gray-800 text-gray-500 hover:bg-blue-500 hover:text-white"
+                    }`}
+                    title="プレビュー再生"
+                  >
+                    {playing === file.path ? "⏸" : "▶"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(file)}
+                    className="flex-1 text-left text-sm text-gray-700 dark:text-gray-300 truncate hover:text-blue-600 dark:hover:text-blue-400"
+                    title={file.name}
+                  >
+                    {file.name}
+                  </button>
+                  <span className="text-[10px] text-gray-400 uppercase shrink-0">
+                    {file.ext}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(file)}
+                    className="shrink-0 px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                  >
+                    使用
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-400 text-center">
+              Documents\SE ({files.length} 件)・▶ で試聴・「使用」 or ファイル名クリックで追加
+            </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

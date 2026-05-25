@@ -225,7 +225,7 @@ export function ScriptForm({ onSubmit, loading }: Props) {
           <CommentPicker
             selected={selectedComments}
             onSelectedChange={setSelectedComments}
-            onBundleChange={setCommentBundle}
+            onBundlesChange={(bundles) => setCommentBundle(bundles[0] ?? null)}
           />
         </div>
       )}

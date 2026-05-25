@@ -83,6 +83,8 @@ interface Props {
     modifier?: "shift" | "ctrl" | null,
   ) => void;
   onPlayheadChange: (t: number) => void;
+  /** ユーザーがタイムラインをクリック/ドラッグしてシークを開始したとき呼ばれる（再生中なら止めるのに使う） */
+  onSeekStart?: () => void;
   onLayersReorder?: (layers: Layer[]) => void;
 }
 
@@ -108,6 +110,8 @@ interface DragState {
   mode: DragMode;
   initialMouseX: number;
   initialMouseY: number;
+  /** ドラッグ開始時のスクロール位置（自動スクロールで増えた分を deltaPx に足し戻すため） */
+  initialScrollLeft: number;
   initialStart: number;
   initialEnd: number;
   initialZIndex: number;
@@ -139,6 +143,7 @@ export function TemplateTimeline({
   onLayerUpdate,
   onLayerSelect,
   onPlayheadChange,
+  onSeekStart,
   onLayersReorder,
   selectedLayerIds,
 }: Props) {
@@ -148,6 +153,10 @@ export function TemplateTimeline({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const trackAreaRef = useRef<HTMLDivElement>(null);
   const tracksContainerRef = useRef<HTMLDivElement>(null);
+  // ラベル列を playhead より上の z-index で常に描く overlay。
+  // 既存の各行のラベルセルは ruler row (z-30) の中にあり、playhead (z-45) を超えられない。
+  // この overlay を inner-container 直下に置き、scrollLeft 同期で水平方向に sticky させる。
+  const labelOverlayRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [playheadDragging, setPlayheadDragging] = useState(false);
   // タイムライン上のキーフレームマーカーを掴んで時刻編集するときの状態
@@ -165,6 +174,20 @@ export function TemplateTimeline({
 
   const trackContentWidth = Math.max(0, totalDuration * pxPerSec);
   const innerWidth = LABEL_WIDTH + trackContentWidth;
+
+  // labelOverlayRef を scrollContainer の scrollLeft に追従させる（水平方向 sticky の代わり）。
+  // transform は使わない: sticky 子孫の containing block を作って ruler ラベルの sticky-top を壊すため。
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    const overlay = labelOverlayRef.current;
+    if (!container || !overlay) return;
+    const update = () => {
+      overlay.style.left = `${container.scrollLeft}px`;
+    };
+    container.addEventListener("scroll", update, { passive: true });
+    update();
+    return () => container.removeEventListener("scroll", update);
+  }, []);
 
   // Ctrl+ホイールでズーム（カーソル位置の時刻を保ったままスケール）
   useEffect(() => {
@@ -350,9 +373,46 @@ export function TemplateTimeline({
 
   useEffect(() => {
     if (!drag) return;
-    const onMouseMove = (e: MouseEvent) => {
-      const deltaPx = e.clientX - drag.initialMouseX;
+    // 自動スクロール: ポインタがコンテナの左/右端付近に来たら時間軸方向にスクロール。
+    // 自動スクロールで増えた scrollLeft 分も deltaPx に加算して、レイヤーの位置/サイズを伸ばし続ける。
+    const EDGE_PX = 40;
+    const MAX_SPEED_PX_PER_FRAME = 20;
+    let lastClientX: number | null = null;
+    let lastClientY: number | null = null;
+    let rafId: number | null = null;
+
+    const applyUpdate = () => {
+      if (lastClientX === null) return;
+      const container = scrollContainerRef.current;
+
+      // 端っこ近くにポインタがあれば自動スクロール
+      if (container) {
+        const cRect = container.getBoundingClientRect();
+        const leftTriggerX = cRect.left + LABEL_WIDTH;
+        let dx = 0;
+        if (lastClientX < leftTriggerX + EDGE_PX) {
+          const dist = leftTriggerX + EDGE_PX - lastClientX;
+          dx = -Math.min(MAX_SPEED_PX_PER_FRAME, dist * 0.4);
+        } else if (lastClientX > cRect.right - EDGE_PX) {
+          const dist = lastClientX - (cRect.right - EDGE_PX);
+          dx = Math.min(MAX_SPEED_PX_PER_FRAME, dist * 0.4);
+        }
+        if (dx !== 0) {
+          const maxScroll = container.scrollWidth - container.clientWidth;
+          container.scrollLeft = Math.max(
+            0,
+            Math.min(maxScroll, container.scrollLeft + dx),
+          );
+        }
+      }
+
+      // deltaPx は「マウスの screen 移動量 + スクロールで進んだ量」の合計
+      const scrollDelta = container
+        ? container.scrollLeft - drag.initialScrollLeft
+        : 0;
+      const deltaPx = lastClientX - drag.initialMouseX + scrollDelta;
       const deltaSec = pxToSec(deltaPx);
+
       let newStart = drag.initialStart;
       let newEnd = drag.initialEnd;
       if (drag.mode === "move") {
@@ -462,10 +522,11 @@ export function TemplateTimeline({
       if (
         drag.mode === "move" &&
         (!drag.multi || drag.multi.length === 0) &&
-        tracksContainerRef.current
+        tracksContainerRef.current &&
+        lastClientY !== null
       ) {
         const rect = tracksContainerRef.current.getBoundingClientRect();
-        const yInContainer = e.clientY - rect.top;
+        const yInContainer = lastClientY - rect.top;
         const target = computeDragTarget(yInContainer);
         const prev = drag.previewTarget;
         const same =
@@ -480,6 +541,18 @@ export function TemplateTimeline({
           setDrag({ ...drag, previewTarget: target });
         }
       }
+    };
+
+    const tickLoop = () => {
+      applyUpdate();
+      rafId = requestAnimationFrame(tickLoop);
+    };
+
+    const onMouseMove = (e: MouseEvent) => {
+      lastClientX = e.clientX;
+      lastClientY = e.clientY;
+      // mousemove 時はその場で 1 回更新（rAF を待たずに即時応答）
+      applyUpdate();
     };
     const onMouseUp = () => {
       if (drag.mode === "move") {
@@ -537,9 +610,11 @@ export function TemplateTimeline({
     };
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    rafId = requestAnimationFrame(tickLoop);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag, pxPerSec, totalDuration, layers, playheadSec, tracks]);
@@ -582,6 +657,7 @@ export function TemplateTimeline({
       mode,
       initialMouseX: e.clientX,
       initialMouseY: e.clientY,
+      initialScrollLeft: scrollContainerRef.current?.scrollLeft ?? 0,
       initialStart: layer.startSec,
       initialEnd: layer.endSec,
       initialZIndex: layer.zIndex,
@@ -594,18 +670,57 @@ export function TemplateTimeline({
   const handleTrackBgMouseDown = (e: React.MouseEvent) => {
     if (drag) return;
     if (!trackAreaRef.current) return;
+    onSeekStart?.(); // 再生中ならここで止める
     const rect = trackAreaRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const raw = Math.max(0, Math.min(totalDuration, pxToSec(x)));
     onPlayheadChange(snapPlayhead(raw));
-    // 以降 mousemove でシーク追従（選択解除は document 側でまとめて処理）
     setPlayheadDragging(true);
     e.preventDefault();
   };
 
   useEffect(() => {
     if (!playheadDragging) return;
+    // ドラッグ中にカーソルがスクロールコンテナの端に近いと自動スクロール。
+    // mousemove が一度も発火するまでは lastClientX が未確定なので、自動スクロールも playhead 更新も行わない
+    let lastClientX: number | null = null;
+    let rafId: number | null = null;
+    const EDGE_PX = 40;
+    const MAX_SPEED_PX_PER_FRAME = 20;
+
+    const applyAutoScrollAndPlayhead = () => {
+      const container = scrollContainerRef.current;
+      const track = trackAreaRef.current;
+      if (!container || !track || lastClientX === null) {
+        rafId = requestAnimationFrame(applyAutoScrollAndPlayhead);
+        return;
+      }
+      const cRect = container.getBoundingClientRect();
+      const leftTriggerX = cRect.left + LABEL_WIDTH;
+      let dx = 0;
+      if (lastClientX < leftTriggerX + EDGE_PX) {
+        const dist = leftTriggerX + EDGE_PX - lastClientX;
+        dx = -Math.min(MAX_SPEED_PX_PER_FRAME, dist * 0.4);
+      } else if (lastClientX > cRect.right - EDGE_PX) {
+        const dist = lastClientX - (cRect.right - EDGE_PX);
+        dx = Math.min(MAX_SPEED_PX_PER_FRAME, dist * 0.4);
+      }
+      if (dx !== 0) {
+        const maxScroll = container.scrollWidth - container.clientWidth;
+        container.scrollLeft = Math.max(
+          0,
+          Math.min(maxScroll, container.scrollLeft + dx),
+        );
+      }
+      const tRect = track.getBoundingClientRect();
+      const x = lastClientX - tRect.left;
+      const raw = Math.max(0, Math.min(totalDuration, pxToSec(x)));
+      onPlayheadChange(snapPlayhead(raw));
+      rafId = requestAnimationFrame(applyAutoScrollAndPlayhead);
+    };
+
     const onMouseMove = (e: MouseEvent) => {
+      lastClientX = e.clientX;
       if (!trackAreaRef.current) return;
       const rect = trackAreaRef.current.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -616,9 +731,11 @@ export function TemplateTimeline({
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
     document.body.style.cursor = "ew-resize";
+    rafId = requestAnimationFrame(applyAutoScrollAndPlayhead);
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      if (rafId !== null) cancelAnimationFrame(rafId);
       document.body.style.cursor = "";
     };
   }, [playheadDragging, pxPerSec, totalDuration, layers, onPlayheadChange]);
@@ -1145,6 +1262,81 @@ export function TemplateTimeline({
               </div>
             </div>
           )}
+
+          {/*
+            ラベル overlay (z-50): playhead (z-45) より上に重なるように、
+            inner-container 直下に絶対配置 + scrollLeft 連動で水平方向に「貼り付き」。
+            既存の各行のラベルセル (z-30 以下のスタッキング) はそのまま残しておくが、
+            この overlay によって視覚的に覆われるため、playhead の線・ハンドルが
+            ラベル領域に「めり込む」ことが無くなる。
+          */}
+          <div
+            ref={labelOverlayRef}
+            className="absolute top-0"
+            style={{
+              left: 0,
+              width: LABEL_WIDTH,
+              zIndex: 50,
+              pointerEvents: "none",
+            }}
+          >
+            {/* ルーラー部分のラベル: 縦スクロールで viewport top に sticky */}
+            <div
+              className="sticky top-0 bg-gray-100 dark:bg-gray-800 border-b border-r border-gray-200 dark:border-gray-700 flex items-center justify-between px-2 text-[10px] text-gray-500 font-medium"
+              style={{
+                height: RULER_HEIGHT,
+                width: LABEL_WIDTH,
+                pointerEvents: "auto",
+              }}
+              title={`ズーム ${(pxPerSec / DEFAULT_PX_PER_SEC).toFixed(2)}x (Ctrl+ホイール / Ctrl+=- / Ctrl+0)`}
+            >
+              <span>タイムライン</span>
+              <span className="text-gray-400 tabular-nums">
+                {(pxPerSec / DEFAULT_PX_PER_SEC).toFixed(1)}x
+              </span>
+            </div>
+            {/* トラックごとのラベル */}
+            {tracks.length === 0 ? (
+              <div
+                className="bg-gray-100/60 dark:bg-gray-800/60 border-r border-gray-200 dark:border-gray-700"
+                style={{ width: LABEL_WIDTH, height: ROW_HEIGHT }}
+              />
+            ) : (
+              tracks.map((track, trackIdx) => {
+                const isMainTrack = !track.isAudio && track.zIndex === 0;
+                const isLastVideoTrack =
+                  !track.isAudio &&
+                  tracks[trackIdx + 1]?.isAudio === true;
+                return (
+                  <div
+                    key={track.zIndex}
+                    style={{
+                      width: LABEL_WIDTH,
+                      height: ROW_HEIGHT,
+                      pointerEvents: "auto",
+                    }}
+                    className={`shrink-0 border-b border-r border-gray-200 dark:border-gray-700 flex items-center px-2 text-[10px] text-gray-500 ${
+                      isMainTrack
+                        ? "bg-amber-100/80 dark:bg-amber-900/30"
+                        : track.isAudio
+                          ? "bg-purple-100/50 dark:bg-purple-900/20"
+                          : "bg-gray-100/80 dark:bg-gray-800/80"
+                    } ${
+                      isLastVideoTrack
+                        ? "border-b-2 border-b-amber-500 dark:border-b-amber-600"
+                        : ""
+                    }`}
+                  >
+                    <span className="font-medium">
+                      {isMainTrack && "★ "}
+                      {track.isAudio ? "🎵 " : ""}
+                      トラック {trackIdx + 1}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
       </div>
     </div>
   );

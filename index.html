@@ -9,6 +9,13 @@
 
   <body>
     <div id="root"></div>
+    <!--
+      Live2D Cubism Core: 配布規約上 npm 等で再配布できないため、
+      Live2D 公式から取得して public/live2dcubismcore.min.js に配置する必要がある。
+      未配置でも他機能は動作する (キャラレイヤーのみ無効になる)。
+      入手手順は public/CUBISM_CORE_README.md を参照。
+    -->
+    <script src="/live2dcubismcore.min.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

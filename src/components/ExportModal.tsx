@@ -6,6 +6,7 @@ import {
   exportTemplateToVideo,
 } from "../lib/exportTemplate";
 import type { ProgressUpdate, VideoQualityPreset } from "../lib/video";
+import { buildCreditText } from "../lib/buildCreditText";
 
 const QUALITY_PRESET_LABEL: Record<
   VideoQualityPreset,
@@ -21,6 +22,8 @@ interface Props {
   open: boolean;
   template: VideoTemplate;
   onClose: () => void;
+  /** エクスポート成功時にテンプレを自動保存するためのコールバック */
+  onAutoSave?: () => Promise<void> | void;
 }
 
 type Phase = "idle" | "running" | "cancelling" | "success" | "cancelled" | "error";
@@ -35,7 +38,7 @@ const PHASE_LABEL: Record<string, string> = {
   error: "エラー",
 };
 
-export function ExportModal({ open, template, onClose }: Props) {
+export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const [log, setLog] = useState<string[]>([]);
@@ -49,6 +52,7 @@ export function ExportModal({ open, template, onClose }: Props) {
     if (saved === "low" || saved === "standard" || saved === "high") return saved;
     return "standard";
   });
+  const [title, setTitle] = useState(template.name);
 
   useEffect(() => {
     if (!open) {
@@ -58,8 +62,11 @@ export function ExportModal({ open, template, onClose }: Props) {
       setLog([]);
       setOutputPath(null);
       setErrorMsg(null);
+    } else {
+      // モーダルを開く度にテンプレ名でタイトルを初期化
+      setTitle(template.name);
     }
-  }, [open]);
+  }, [open, template.name]);
 
   const handleStart = () => {
     if (phase === "running") return;
@@ -76,6 +83,7 @@ export function ExportModal({ open, template, onClose }: Props) {
     exportTemplateToVideo({
       template,
       quality,
+      title,
       onProgress: (p) => {
         setProgress(p);
         if (p.message) {
@@ -83,10 +91,22 @@ export function ExportModal({ open, template, onClose }: Props) {
         }
       },
     })
-      .then((result) => {
+      .then(async (result) => {
         setOutputPath(result.outputPath);
         setPhase("success");
         setLog((prev) => [...prev, `完成: ${result.outputPath}`]);
+        // エクスポート成功 → テンプレを自動保存 (失敗してもエラー扱いにはしない)
+        if (onAutoSave) {
+          try {
+            await onAutoSave();
+            setLog((prev) => [...prev, "テンプレを自動保存しました"]);
+          } catch (e) {
+            setLog((prev) => [
+              ...prev,
+              `テンプレ自動保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
+            ]);
+          }
+        }
       })
       .catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
@@ -169,6 +189,27 @@ export function ExportModal({ open, template, onClose }: Props) {
         <div className="text-xs text-gray-600 dark:text-gray-400">
           {template.name}（{template.totalDuration}秒 /{" "}
           {template.layers.length}レイヤー）
+        </div>
+
+        {/* 出力タイトル */}
+        <div
+          className={`rounded border border-gray-200 dark:border-gray-700 p-2 space-y-1 ${
+            phase !== "idle" ? "opacity-60 pointer-events-none" : ""
+          }`}
+        >
+          <label className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
+            タイトル（出力ファイル名のベース）
+          </label>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="例: 銀魂_銀さん実写化_v1"
+            className="w-full px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+          />
+          <div className="text-[10px] text-gray-500">
+            最終的なファイル名: <code>{title.trim() ? title.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 64) || "video" : "video"}_YYYYMMDD_HHMMSS.mp4</code>
+          </div>
         </div>
 
         {/* 画質選択（idle 状態のみ操作可能） */}
@@ -303,6 +344,29 @@ export function ExportModal({ open, template, onClose }: Props) {
                 className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
               >
                 📂 フォルダを開く
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const text = buildCreditText(template);
+                  if (!text) return;
+                  try {
+                    await navigator.clipboard.writeText(text);
+                    setLog((prev) => [
+                      ...prev,
+                      "クレジット文をクリップボードにコピーしました",
+                    ]);
+                  } catch (e) {
+                    setLog((prev) => [
+                      ...prev,
+                      `クリップボードコピー失敗: ${e}`,
+                    ]);
+                  }
+                }}
+                className="px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs"
+                title="YouTube 概要欄に貼るためのクレジット文をクリップボードにコピー"
+              >
+                📋 概要欄テンプレをコピー
               </button>
               <button
                 type="button"

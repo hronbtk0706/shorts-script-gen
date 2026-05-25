@@ -11,6 +11,8 @@ export interface ExportOptions {
   onProgress: (p: ProgressUpdate) => void;
   /** 画質プリセット。省略時は "standard" */
   quality?: VideoQualityPreset;
+  /** 出力ファイル名のベース（拡張子・タイムスタンプは自動付与）。省略時は template.name を使う */
+  title?: string;
 }
 
 export interface ExportResult {
@@ -27,8 +29,8 @@ export interface ExportResult {
 export async function exportTemplateToVideo(
   opts: ExportOptions,
 ): Promise<ExportResult> {
-  const { template, onProgress, quality } = opts;
-  return generateVideoFromTemplate(template, onProgress, { quality });
+  const { template, onProgress, quality, title } = opts;
+  return generateVideoFromTemplate(template, onProgress, { quality, title });
 }
 
 export async function cancelTemplateExport(): Promise<void> {

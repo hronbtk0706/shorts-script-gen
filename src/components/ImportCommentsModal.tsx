@@ -4,47 +4,40 @@ import { CommentPicker } from "./CommentPicker";
 
 interface Props {
   open: boolean;
-  /** 既にインポート済みのコメント（表示用。再取得すると置換されるが、UIで確認できるようにする） */
-  existingComments?: ExtractedComment[];
-  existingSource?: {
-    videoUrl: string;
-    videoTitle?: string;
-    channelTitle?: string;
-    fetchedAt: string;
-  };
+  /** 既にインポート済みのバンドル群（複数動画分） */
+  existingBundles?: CommentBundle[];
   onImport: (
     comments: ExtractedComment[],
-    source: {
-      videoUrl: string;
-      videoTitle?: string;
-      channelTitle?: string;
-      fetchedAt: string;
-    },
+    bundles: CommentBundle[],
   ) => void;
   onClose: () => void;
 }
 
 export function ImportCommentsModal({
   open,
-  existingComments,
-  existingSource,
+  existingBundles,
   onImport,
   onClose,
 }: Props) {
   const [selected, setSelected] = useState<ExtractedComment[]>([]);
-  const [bundle, setBundle] = useState<CommentBundle | null>(null);
+  const [bundles, setBundles] = useState<CommentBundle[]>(existingBundles ?? []);
 
+  // open が false→true に変わったときだけテンプレ側の既存バンドルを反映する。
+  // open 中に親 re-render で existingBundles 参照が変わっても無視する
+  // （そうしないと取得途中でバンドルが古い状態に戻ってしまう）
   useEffect(() => {
-    if (!open) {
-      // 閉じたら状態リセット
+    if (open) {
+      setBundles(existingBundles ?? []);
+    } else {
       setSelected([]);
-      setBundle(null);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   if (!open) return null;
 
-  const canImport = selected.length > 0 && bundle;
+  const totalComments = bundles.reduce((acc, b) => acc + b.comments.length, 0);
+  const canImport = selected.length > 0;
 
   return (
     <div
@@ -69,22 +62,20 @@ export function ImportCommentsModal({
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <p className="text-[11px] text-gray-500 dark:text-gray-400">
-            YouTube 動画 URL
-            を入力してコメントを取得し、テンプレ内のコメントレイヤーに挿入したいものを選んで「インポート」してください。前回取得したコメントは上書きされます。
+            複数の YouTube 動画からコメントを取得して保持できます。動画ごとに別のタブで切り替えて選択し、「インポート」でテンプレにまとめて登録します。
           </p>
 
-          {existingComments && existingComments.length > 0 && existingSource && (
-            <div className="p-2 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
-              ⚠ 現在インポート済み: {existingComments.length}{" "}
-              件（{existingSource.videoTitle ?? existingSource.videoUrl}
-              ）— 新規取得で置き換わります
+          {bundles.length > 0 && (
+            <div className="p-2 rounded bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-[11px] text-emerald-800 dark:text-emerald-300">
+              📚 取得済み: {bundles.length} 動画 / 計 {totalComments} 件
             </div>
           )}
 
           <CommentPicker
             selected={selected}
             onSelectedChange={setSelected}
-            onBundleChange={setBundle}
+            onBundlesChange={setBundles}
+            initialBundles={bundles}
           />
         </div>
 
@@ -103,13 +94,7 @@ export function ImportCommentsModal({
             type="button"
             disabled={!canImport}
             onClick={() => {
-              if (!bundle) return;
-              onImport(selected, {
-                videoUrl: bundle.videoUrl,
-                videoTitle: bundle.videoTitle,
-                channelTitle: bundle.channelTitle,
-                fetchedAt: bundle.fetchedAt,
-              });
+              onImport(selected, bundles);
               onClose();
             }}
             className="px-4 py-1.5 rounded bg-fuchsia-600 hover:bg-fuchsia-700 disabled:bg-gray-400 text-white text-xs"

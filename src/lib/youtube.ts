@@ -149,7 +149,7 @@ function buildPromptText(videos: ReferenceVideo[]): string {
   return lines.join("\n");
 }
 
-function extractVideoIdFromUrl(url: string): string | null {
+export function extractVideoIdFromUrl(url: string): string | null {
   const clean = url.trim();
   if (!clean) return null;
   const patterns = [
@@ -220,17 +220,27 @@ function decodeHtml(s: string): string {
 /**
  * YouTube Data API v3 で特定動画のコメントを取得。
  * 無料枠 10,000 units/day、commentThreads.list = 1 call あたり 1 unit。
+ *
+ * fetchAllReplies=true のときは、totalReplyCount > インライン数 のコメントについて
+ * 別途 comments.list を呼び全返信を取得する（API quota 追加消費）。
  */
 export async function fetchCommentsViaDataApi(
   videoId: string,
   apiKey: string,
   maxCount: number,
   onProgress?: (fetched: number) => void,
+  fetchAllReplies: boolean = false,
 ): Promise<ExtractedComment[]> {
   const collected: ExtractedComment[] = [];
   let pageToken: string | undefined;
+  // 親コメント ID → インライン取得済みの返信 ID 集合（重複排除用）
+  const repliesPending: Array<{
+    parentId: string;
+    inlineIds: Set<string>;
+    expected: number;
+  }> = [];
 
-  for (let page = 0; page < 10 && collected.length < maxCount; page++) {
+  for (let page = 0; page < 20 && collected.length < maxCount; page++) {
     const params = new URLSearchParams({
       part: "snippet,replies",
       videoId,
@@ -256,17 +266,21 @@ export async function fetchCommentsViaDataApi(
       const top = thread.snippet.topLevelComment;
       const topText = decodeHtml(top.snippet.textDisplay ?? "").trim();
       if (!topText) continue;
+      const totalReplyCount = thread.snippet.totalReplyCount ?? 0;
       collected.push({
         id: top.id,
         text: topText,
         author: top.snippet.authorDisplayName,
         likeCount: top.snippet.likeCount ?? 0,
+        replyCount: totalReplyCount,
         isReply: false,
         publishedAt: top.snippet.publishedAt,
       });
       onProgress?.(collected.length);
 
-      for (const reply of thread.replies?.comments ?? []) {
+      const inlineReplies = thread.replies?.comments ?? [];
+      const inlineIds = new Set<string>();
+      for (const reply of inlineReplies) {
         if (collected.length >= maxCount) break;
         const replyText = decodeHtml(reply.snippet.textDisplay ?? "").trim();
         if (!replyText) continue;
@@ -279,7 +293,21 @@ export async function fetchCommentsViaDataApi(
           parentId: top.id,
           publishedAt: reply.snippet.publishedAt,
         });
+        inlineIds.add(reply.id);
         onProgress?.(collected.length);
+      }
+
+      // インラインで取りきれてない返信がある → 後で comments.list で補完
+      if (
+        fetchAllReplies &&
+        totalReplyCount > inlineReplies.length &&
+        collected.length < maxCount
+      ) {
+        repliesPending.push({
+          parentId: top.id,
+          inlineIds,
+          expected: totalReplyCount,
+        });
       }
     }
 
@@ -287,7 +315,76 @@ export async function fetchCommentsViaDataApi(
     if (!pageToken) break;
   }
 
+  // 残りの返信を comments.list で取得（fetchAllReplies=true 時のみ）
+  if (fetchAllReplies && repliesPending.length > 0) {
+    for (const pending of repliesPending) {
+      if (collected.length >= maxCount) break;
+      try {
+        const extra = await fetchRepliesForComment(
+          pending.parentId,
+          apiKey,
+          maxCount - collected.length,
+        );
+        for (const r of extra) {
+          if (collected.length >= maxCount) break;
+          if (pending.inlineIds.has(r.id)) continue; // インラインで取得済みはスキップ
+          collected.push(r);
+          onProgress?.(collected.length);
+        }
+      } catch (e) {
+        console.warn(
+          `[youtube] fetchRepliesForComment failed for ${pending.parentId}:`,
+          e,
+        );
+      }
+    }
+  }
+
   return collected.slice(0, maxCount);
+}
+
+/** 特定の親コメントへの全返信を取得する（comments.list 経由） */
+async function fetchRepliesForComment(
+  parentId: string,
+  apiKey: string,
+  maxCount: number,
+): Promise<ExtractedComment[]> {
+  const out: ExtractedComment[] = [];
+  let pageToken: string | undefined;
+  for (let page = 0; page < 10 && out.length < maxCount; page++) {
+    const params = new URLSearchParams({
+      part: "snippet",
+      parentId,
+      maxResults: "100",
+      textFormat: "plainText",
+      key: apiKey,
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const url = `https://www.googleapis.com/youtube/v3/comments?${params}`;
+    const res = await tauriFetch(url);
+    if (!res.ok) break;
+    const data = (await res.json()) as {
+      items?: Array<{ id: string; snippet: DataApiCommentSnippet }>;
+      nextPageToken?: string;
+    };
+    for (const reply of data.items ?? []) {
+      if (out.length >= maxCount) break;
+      const replyText = decodeHtml(reply.snippet.textDisplay ?? "").trim();
+      if (!replyText) continue;
+      out.push({
+        id: reply.id,
+        text: replyText,
+        author: reply.snippet.authorDisplayName,
+        likeCount: reply.snippet.likeCount ?? 0,
+        isReply: true,
+        parentId,
+        publishedAt: reply.snippet.publishedAt,
+      });
+    }
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return out;
 }
 
 async function fetchVideoMetaViaDataApi(
@@ -312,8 +409,9 @@ async function fetchVideoMetaViaDataApi(
 
 export async function fetchAllComments(
   url: string,
-  maxCount = 200,
+  maxCount = 500,
   onProgress?: (fetched: number) => void,
+  fetchAllReplies: boolean = false,
 ): Promise<CommentBundle | null> {
   const videoId = extractVideoIdFromUrl(url);
   if (!videoId) {
@@ -330,7 +428,7 @@ export async function fetchAllComments(
 
   try {
     const [comments, meta] = await Promise.all([
-      fetchCommentsViaDataApi(videoId, apiKey, maxCount, onProgress),
+      fetchCommentsViaDataApi(videoId, apiKey, maxCount, onProgress, fetchAllReplies),
       fetchVideoMetaViaDataApi(videoId, apiKey),
     ]);
 

@@ -10,10 +10,8 @@ import {
   type AnalysisProgress,
 } from "../lib/templateAnalyzer";
 import { loadSettings } from "../lib/storage";
-import {
-  exportTemplatePack,
-  importTemplatePack,
-} from "../lib/templatePack";
+import { exportTemplatePack } from "../lib/templatePack";
+import { deleteTemplateAssets } from "../lib/assetImport";
 import type { VideoTemplate } from "../types";
 import { TemplateBuilder } from "./TemplateBuilder";
 
@@ -84,6 +82,12 @@ export function TemplateManager() {
     if (!confirm(`テンプレート「${t.name}」を削除しますか?（復元不可）`)) return;
     try {
       await deleteTemplate(t.id);
+      // アプリ管理下の素材フォルダも削除
+      try {
+        await deleteTemplateAssets(t.id);
+      } catch (e) {
+        console.warn("[TemplateManager] deleteTemplateAssets failed:", e);
+      }
       await reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -104,18 +108,6 @@ export function TemplateManager() {
     try {
       const out = await exportTemplatePack(t);
       if (out) alert(`書き出し完了:\n${out}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const handleImportPack = async () => {
-    try {
-      const tpl = await importTemplatePack();
-      if (!tpl) return;
-      await saveTemplate(tpl);
-      await reload();
-      alert(`読み込み完了: ${tpl.name}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -172,7 +164,7 @@ export function TemplateManager() {
             ← 一覧に戻る
           </button>
           <span className="text-gray-500">
-            {editingTemplate ? `編集中: ${editingTemplate.name}` : "新規テンプレ作成"}
+            {editingTemplate ? `編集中: ${editingTemplate.name}` : "新規作成"}
           </span>
           {builderDirty && (
             <span className="text-amber-600 dark:text-amber-400 text-[10px]">
@@ -217,14 +209,6 @@ export function TemplateManager() {
           className="px-3 py-1.5 rounded text-sm bg-emerald-600 text-white hover:bg-emerald-700"
         >
           ✏️ 手動で作成
-        </button>
-        <button
-          type="button"
-          onClick={handleImportPack}
-          className="px-3 py-1.5 rounded text-sm bg-indigo-600 text-white hover:bg-indigo-700"
-          title="テンプレート＋素材を同梱した .zip を読み込む"
-        >
-          📦 パック読み込み
         </button>
         <button
           type="button"

@@ -5,27 +5,44 @@ import type { CommentBundle, ExtractedComment } from "../types";
 interface Props {
   selected: ExtractedComment[];
   onSelectedChange: (comments: ExtractedComment[]) => void;
-  onBundleChange?: (bundle: CommentBundle | null) => void;
+  /** 取得済みバンドル全体の変更通知（保存用） */
+  onBundlesChange?: (bundles: CommentBundle[]) => void;
+  /** 既存の取得済みバンドル（モーダル再オープン時に復元） */
+  initialBundles?: CommentBundle[];
   maxCount?: number;
 }
 
-type SortKey = "likes" | "date";
+type SortKey = "likes" | "replies" | "date";
 
 export function CommentPicker({
   selected,
   onSelectedChange,
-  onBundleChange,
-  maxCount = 200,
+  onBundlesChange,
+  initialBundles,
+  maxCount = 500,
 }: Props) {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
-  const [bundle, setBundle] = useState<CommentBundle | null>(null);
+
+  // initialBundles は mount 時のみ初期値として使用する（以後は内部 state のみで管理）。
+  // 親の再レンダーで参照だけ変わっても reset しないようにして、
+  // 取得途中にソート切替などで state が巻き戻るのを防ぐ
+  const [bundles, setBundles] = useState<CommentBundle[]>(initialBundles ?? []);
+  const [activeVideoId, setActiveVideoId] = useState<string | null>(
+    initialBundles && initialBundles.length > 0 ? initialBundles[0].videoId : null,
+  );
 
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey>("likes");
   const [showReplies, setShowReplies] = useState(true);
+  const [fetchAllReplies, setFetchAllReplies] = useState(false);
+
+  const updateBundles = (next: CommentBundle[]) => {
+    setBundles(next);
+    onBundlesChange?.(next);
+  };
 
   const handleFetch = async () => {
     if (!url.trim()) {
@@ -35,22 +52,45 @@ export function CommentPicker({
     setError(null);
     setLoading(true);
     setProgress(0);
-    setBundle(null);
-    onSelectedChange([]);
-    onBundleChange?.(null);
     try {
-      const result = await fetchAllComments(url.trim(), maxCount, setProgress);
+      const result = await fetchAllComments(
+        url.trim(),
+        maxCount,
+        setProgress,
+        fetchAllReplies,
+      );
       if (!result) {
         setError("コメントを取得できませんでした");
       } else {
-        setBundle(result);
-        onBundleChange?.(result);
+        // 同じ videoId があれば置換、なければ追加
+        const existingIdx = bundles.findIndex((b) => b.videoId === result.videoId);
+        const next =
+          existingIdx >= 0
+            ? bundles.map((b, i) => (i === existingIdx ? result : b))
+            : [...bundles, result];
+        updateBundles(next);
+        setActiveVideoId(result.videoId);
+        setUrl("");
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(`エラー: ${msg}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRemoveBundle = (videoId: string) => {
+    if (!confirm("この動画のコメントリストを削除しますか?")) return;
+    const next = bundles.filter((b) => b.videoId !== videoId);
+    // 削除対象のコメントを選択からも外す
+    const removedIds = new Set(
+      bundles.find((b) => b.videoId === videoId)?.comments.map((c) => c.id) ?? [],
+    );
+    onSelectedChange(selected.filter((c) => !removedIds.has(c.id)));
+    updateBundles(next);
+    if (activeVideoId === videoId) {
+      setActiveVideoId(next[0]?.videoId ?? null);
     }
   };
 
@@ -67,12 +107,17 @@ export function CommentPicker({
     }
   };
 
-  // Build grouped view: parents with children
+  const activeBundle = useMemo(
+    () => bundles.find((b) => b.videoId === activeVideoId) ?? null,
+    [bundles, activeVideoId],
+  );
+
+  // アクティブなバンドルから表示用リストを構築
   const grouped = useMemo(() => {
-    if (!bundle) return [];
-    const parents = bundle.comments.filter((c) => !c.isReply);
+    if (!activeBundle) return [];
+    const parents = activeBundle.comments.filter((c) => !c.isReply);
     const byParent = new Map<string, ExtractedComment[]>();
-    for (const c of bundle.comments) {
+    for (const c of activeBundle.comments) {
       if (c.isReply && c.parentId) {
         const list = byParent.get(c.parentId) ?? [];
         list.push(c);
@@ -98,13 +143,18 @@ export function CommentPicker({
     // Sort parents
     items.sort((a, b) => {
       if (sortBy === "likes") return b.parent.likeCount - a.parent.likeCount;
+      if (sortBy === "replies") {
+        const ar = a.parent.replyCount ?? a.replies.length;
+        const br = b.parent.replyCount ?? b.replies.length;
+        return br - ar;
+      }
       return (b.parent.publishedAt ?? "").localeCompare(
         a.parent.publishedAt ?? "",
       );
     });
 
     return items;
-  }, [bundle, search, sortBy]);
+  }, [activeBundle, search, sortBy]);
 
   const visibleCount = grouped.reduce(
     (acc, it) => acc + 1 + (showReplies ? it.replies.length : 0),
@@ -131,6 +181,16 @@ export function CommentPicker({
           {loading ? `取得中 (${progress})` : "コメント取得"}
         </button>
       </div>
+      <label className="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-400 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={fetchAllReplies}
+          onChange={(e) => setFetchAllReplies(e.target.checked)}
+          disabled={loading}
+          className="h-3.5 w-3.5"
+        />
+        💬 返信もすべて取得（YouTube 標準だと最大5件まで。多いコメントの全返信を見たい時に。API 消費が増えます）
+      </label>
 
       {error && (
         <div className="p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300">
@@ -138,13 +198,53 @@ export function CommentPicker({
         </div>
       )}
 
-      {bundle && (
+      {bundles.length > 0 && (
+        <div className="flex flex-wrap gap-1 border-b border-gray-200 dark:border-gray-800 pb-1">
+          {bundles.map((b) => {
+            const isActive = b.videoId === activeVideoId;
+            const selCount = b.comments.filter((c) => selectedIds.has(c.id)).length;
+            return (
+              <div
+                key={b.videoId}
+                className={`group flex items-center gap-1 px-2 py-1 rounded-t text-[11px] cursor-pointer transition ${
+                  isActive
+                    ? "bg-blue-100 dark:bg-blue-900/40 text-blue-900 dark:text-blue-100"
+                    : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+                }`}
+                onClick={() => setActiveVideoId(b.videoId)}
+                title={b.videoTitle ?? b.videoUrl}
+              >
+                <span className="truncate max-w-[160px]">
+                  📹 {b.videoTitle ?? b.videoId}
+                </span>
+                <span className="text-[10px] text-gray-500">
+                  ({b.comments.length}
+                  {selCount > 0 ? ` / 選${selCount}` : ""})
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveBundle(b.videoId);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-500 px-0.5"
+                  title="削除"
+                >
+                  ✕
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {activeBundle && (
         <>
           <div className="text-[11px] text-gray-500 dark:text-gray-400 truncate">
-            📹 {bundle.videoTitle ?? bundle.videoId}
-            {bundle.channelTitle && ` / ${bundle.channelTitle}`}
+            📹 {activeBundle.videoTitle ?? activeBundle.videoId}
+            {activeBundle.channelTitle && ` / ${activeBundle.channelTitle}`}
             {" — "}
-            取得 {bundle.comments.length} 件
+            取得 {activeBundle.comments.length} 件
           </div>
 
           <div className="flex items-center gap-2 text-xs">
@@ -161,6 +261,7 @@ export function CommentPicker({
               className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
             >
               <option value="likes">いいね順</option>
+              <option value="replies">返信数順</option>
               <option value="date">新着順</option>
             </select>
             <label className="flex items-center gap-1 cursor-pointer select-none">
@@ -250,6 +351,9 @@ function CommentRow({
             <span className="truncate max-w-[120px]">@{comment.author}</span>
           )}
           <span>👍 {comment.likeCount.toLocaleString()}</span>
+          {!comment.isReply && comment.replyCount !== undefined && comment.replyCount > 0 && (
+            <span>💬 {comment.replyCount.toLocaleString()}</span>
+          )}
         </div>
         <div className="mt-0.5 leading-relaxed break-words whitespace-pre-wrap">
           {comment.text}

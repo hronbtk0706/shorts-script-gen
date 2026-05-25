@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { invoke } from "@tauri-apps/api/core";
-import type { Layer, VideoTemplate } from "../types";
+import type { CommentBundle, ExtractedComment, Layer, VideoTemplate } from "../types";
+import { templateDimensions } from "../types";
 import { TemplateCanvas } from "./TemplateCanvas";
 import { TemplateTimeline } from "./TemplateTimeline";
 import { LayerPanel } from "./LayerPanel";
+import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { LayerPropertyPanel } from "./LayerPropertyPanel";
 import { LayerPreview } from "./LayerPreview";
 import { ExportModal } from "./ExportModal";
 import { ImportCommentsModal } from "./ImportCommentsModal";
+import { AutoPlaceTeropsModal } from "./AutoPlaceTeropsModal";
+import { PatternBackgroundModal } from "./PatternBackgroundModal";
 import {
   genLayerId,
   newBlankTemplateData,
@@ -29,6 +32,32 @@ import {
 } from "../lib/presetStore";
 import { loadSettings } from "../lib/storage";
 import { getTtsProvider } from "../lib/providers/tts";
+import { extractVideoIdFromUrl } from "../lib/youtube";
+
+/** 旧形式 importedComments/Source → 新形式 importedCommentBundles 互換レイヤ */
+function getBundlesFromTemplate(t: VideoTemplate): CommentBundle[] {
+  if (t.importedCommentBundles && t.importedCommentBundles.length > 0) {
+    return t.importedCommentBundles;
+  }
+  if (t.importedComments && t.importedComments.length > 0 && t.importedCommentsSource) {
+    const src = t.importedCommentsSource;
+    return [
+      {
+        videoId: extractVideoIdFromUrl(src.videoUrl) ?? src.videoUrl,
+        videoUrl: src.videoUrl,
+        videoTitle: src.videoTitle,
+        channelTitle: src.channelTitle,
+        fetchedAt: src.fetchedAt,
+        comments: t.importedComments,
+      },
+    ];
+  }
+  return [];
+}
+
+function flattenBundles(bundles: CommentBundle[]): ExtractedComment[] {
+  return bundles.flatMap((b) => b.comments);
+}
 
 function probeAudioDurationPath(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -56,7 +85,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const initial = useMemo(() => {
     const base =
       editing ??
-      newBlankTemplateData("新規テンプレート", makeTemplateId("new-template"));
+      newBlankTemplateData("無題", makeTemplateId("new-template"));
     // 旧 text 型を comment に移行 → 音声 zIndex を負値に正規化
     const migrated = migrateTextToComment(base.layers);
     return { ...base, layers: migrateAudioToNegativeZ(migrated) };
@@ -94,6 +123,11 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [importCommentsOpen, setImportCommentsOpen] = useState(false);
+  const [autoPlaceOpen, setAutoPlaceOpen] = useState(false);
+  const [leftPaneMode, setLeftPaneMode] = useState<"layers" | "assets">(
+    "layers",
+  );
+  const [patternBgOpen, setPatternBgOpen] = useState(false);
   const [presetOpen, setPresetOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [presetList, setPresetList] = useState<LayerPreset[]>([]);
@@ -332,6 +366,149 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
     setTemplate((t) => ({ ...t, layers }));
   };
 
+  /** 素材ライブラリの 1 アイテムをタイムライン（プレイヘッド位置）にレイヤーとして追加する */
+  const addAssetAsLayer = async (asset: {
+    kind: "images" | "videos" | "audio";
+    path: string;
+  }) => {
+    const start = Math.max(0, playheadSec);
+    const desiredLen = 3;
+    let end = start + desiredLen;
+
+    // 動画・音声は素材尺を取って終了秒に反映
+    let sourceDurationSec: number | undefined;
+    let fit:
+      | { x: number; y: number; width: number; height: number }
+      | undefined;
+
+    if (asset.kind === "audio") {
+      try {
+        const a = new Audio();
+        a.preload = "metadata";
+        a.src = (await import("@tauri-apps/api/core")).convertFileSrc(asset.path);
+        await new Promise<void>((res, rej) => {
+          a.onloadedmetadata = () => res();
+          a.onerror = () => rej(new Error("metadata fail"));
+        });
+        if (isFinite(a.duration) && a.duration > 0) {
+          sourceDurationSec = a.duration;
+          end = start + a.duration;
+        }
+      } catch {
+        // noop
+      }
+    } else if (asset.kind === "videos") {
+      try {
+        const v = document.createElement("video");
+        v.preload = "metadata";
+        v.muted = true;
+        v.src = (await import("@tauri-apps/api/core")).convertFileSrc(asset.path);
+        await new Promise<void>((res, rej) => {
+          v.onloadedmetadata = () => res();
+          v.onerror = () => rej(new Error("metadata fail"));
+        });
+        if (isFinite(v.duration) && v.duration > 0) {
+          sourceDurationSec = v.duration;
+          end = start + v.duration;
+        }
+        const vw = v.videoWidth || 1080;
+        const vh = v.videoHeight || 1920;
+        const imgRatio = vw / vh;
+        // テンプレのアスペクトに合わせる（縦 = 1080/1920、横 = 1920/1080）
+        const tplDims = templateDimensions(template);
+        const canvasRatio = tplDims.width / tplDims.height;
+        let widthPct: number;
+        let heightPct: number;
+        if (imgRatio >= canvasRatio) {
+          widthPct = 80;
+          heightPct = widthPct * (canvasRatio / imgRatio);
+        } else {
+          heightPct = 80;
+          widthPct = heightPct * (imgRatio / canvasRatio);
+        }
+        fit = {
+          x: (100 - widthPct) / 2,
+          y: (100 - heightPct) / 2,
+          width: widthPct,
+          height: heightPct,
+        };
+      } catch {
+        // noop
+      }
+    } else {
+      // images: アスペクト比で配置
+      try {
+        const img = new Image();
+        img.src = (await import("@tauri-apps/api/core")).convertFileSrc(asset.path);
+        await new Promise<void>((res, rej) => {
+          img.onload = () => res();
+          img.onerror = () => rej(new Error("image load fail"));
+        });
+        const w = img.naturalWidth || img.width || 1080;
+        const h = img.naturalHeight || img.height || 1920;
+        const imgRatio = w / h;
+        // テンプレのアスペクトに合わせる（縦 = 1080/1920、横 = 1920/1080）
+        const tplDims = templateDimensions(template);
+        const canvasRatio = tplDims.width / tplDims.height;
+        let widthPct: number;
+        let heightPct: number;
+        if (imgRatio >= canvasRatio) {
+          widthPct = 80;
+          heightPct = widthPct * (canvasRatio / imgRatio);
+        } else {
+          heightPct = 80;
+          widthPct = heightPct * (imgRatio / canvasRatio);
+        }
+        fit = {
+          x: (100 - widthPct) / 2,
+          y: (100 - heightPct) / 2,
+          width: widthPct,
+          height: heightPct,
+        };
+      } catch {
+        // noop
+      }
+    }
+
+    const layerType =
+      asset.kind === "audio"
+        ? "audio"
+        : asset.kind === "videos"
+          ? "video"
+          : "image";
+    const z = findFreeTrackZIndex(
+      template.layers,
+      start,
+      end,
+      asset.kind === "audio" ? "audio" : "video",
+    );
+    const newLayer: Layer = {
+      id: genLayerId(),
+      type: layerType,
+      x: fit?.x ?? 0,
+      y: fit?.y ?? 0,
+      width: fit?.width ?? 100,
+      height: fit?.height ?? 100,
+      zIndex: z,
+      shape: "rect",
+      opacity: 1,
+      rotation: 0,
+      startSec: start,
+      endSec: end,
+      source: asset.path,
+      ...(layerType === "audio"
+        ? { volume: 1, audioFadeIn: 0, audioFadeOut: 0, audioLoop: false }
+        : {}),
+      ...(sourceDurationSec ? { sourceDurationSec } : {}),
+    };
+    setTemplate((t) => ({
+      ...t,
+      layers: [...t.layers, newLayer],
+      totalDuration: Math.max(t.totalDuration, end),
+    }));
+    setSelectedLayerId(newLayer.id);
+  };
+
   const [narrationBusy, setNarrationBusy] = useState<string | null>(null);
 
   const handleGenerateNarration = useCallback(
@@ -375,11 +552,9 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           settings,
         );
         const templateId = editing?.id ?? committedId ?? template.id;
-        const savedPath = await invoke<string>("save_template_narration", {
-          templateId,
-          layerId: textLayerId,
-          sourcePath: tempPath,
-        });
+        // tempPath (一時セッション) → templates/assets/{tid}/audio/ に永続化
+        const { importAsset } = await import("../lib/assetImport");
+        const savedPath = await importAsset(templateId, tempPath, "audio");
         // 生成音声の尺を取得
         const { convertFileSrc } = await import("@tauri-apps/api/core");
         const url = convertFileSrc(savedPath);
@@ -439,15 +614,52 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
     try {
       const effectiveId = editing?.id ?? committedId;
       const withName: VideoTemplate = { ...template, name };
-      const toSave: VideoTemplate = effectiveId
+      let toSave: VideoTemplate = effectiveId
         ? { ...withName, id: effectiveId }
         : { ...withName, id: makeTemplateId(name) };
       toSave.layers = toSave.layers.map((l) => ({
         ...l,
         id: l.id || genLayerId(),
       }));
+
+      // 初回保存で template.id が確定 ID と異なる（仮 ID で素材を生成済み）場合、
+      // assets フォルダをリネームして layer.source の絶対パスも書き換える。
+      if (!effectiveId && template.id && template.id !== toSave.id) {
+        const oldId = template.id;
+        const newId = toSave.id;
+        const { renameTemplateAssets } = await import("../lib/assetImport");
+        try {
+          await renameTemplateAssets(oldId, newId);
+        } catch (e) {
+          console.warn(
+            "[TemplateBuilder] renameTemplateAssets failed (続行):",
+            e,
+          );
+        }
+        const rewriteSource = (s: string) =>
+          s
+            .replace(
+              `/templates/assets/${oldId}/`,
+              `/templates/assets/${newId}/`,
+            )
+            .replace(
+              `\\templates\\assets\\${oldId}\\`,
+              `\\templates\\assets\\${newId}\\`,
+            );
+        toSave = {
+          ...toSave,
+          layers: toSave.layers.map((l) => ({
+            ...l,
+            source:
+              typeof l.source === "string" ? rewriteSource(l.source) : l.source,
+          })),
+        };
+      }
+
       await saveTemplate(toSave);
       setCommittedId(toSave.id);
+      // 状態側の id / source も最新に揃える（次回の素材生成が新 ID 配下に行くように）
+      setTemplate(toSave);
       setDirty(false);
       setSaveMsg({ type: "ok", text: `保存しました: ${name}` });
       // list 更新のためだけに通知（親は editingTemplate を差し替えない）
@@ -569,6 +781,8 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         x: Math.min(src.x + 3, 90),
         y: Math.min(src.y + 3, 90),
         zIndex: nextZ,
+        // 紐付け系 id はコピー時にリセット（複製先で TTS 再生成すると元の音声が消える）
+        generatedNarrationLayerId: undefined,
       };
       working.push(copy);
       copies.push(copy);
@@ -680,6 +894,8 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         startSec: newStart,
         endSec: newEnd,
         zIndex: nextZ,
+        // 紐付け系 id は paste 時にリセット
+        generatedNarrationLayerId: undefined,
       };
       working.push(copy);
       pasted.push(copy);
@@ -842,23 +1058,46 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         }
         className="w-44 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
       />
-      <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
-        尺
-        <input
-          type="number"
-          min={5}
-          max={300}
-          value={template.totalDuration}
-          onChange={(e) =>
-            setTemplate((t) => ({
-              ...t,
-              totalDuration: Number(e.target.value) || 30,
-            }))
-          }
-          className="w-14 px-1 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-        />
-        <span className="text-[10px]">秒</span>
-      </label>
+      {/* アスペクト比: 初回保存前のみ切替可能 */}
+      {!committedId && !editing ? (
+        <div
+          className="flex items-center gap-0.5 rounded border border-gray-300 dark:border-gray-600 overflow-hidden"
+          title="出力アスペクト（保存後は変更不可）"
+        >
+          <button
+            type="button"
+            onClick={() =>
+              setTemplate((t) => ({ ...t, aspect: "vertical" }))
+            }
+            className={`px-2 py-1 text-xs ${
+              (template.aspect ?? "vertical") === "vertical"
+                ? "bg-blue-600 text-white"
+                : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+            }`}
+          >
+            縦
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setTemplate((t) => ({ ...t, aspect: "horizontal" }))
+            }
+            className={`px-2 py-1 text-xs ${
+              template.aspect === "horizontal"
+                ? "bg-blue-600 text-white"
+                : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+            }`}
+          >
+            横
+          </button>
+        </div>
+      ) : (
+        <span className="text-[10px] text-gray-500 dark:text-gray-400">
+          {(template.aspect ?? "vertical") === "horizontal"
+            ? "横 (1920×1080)"
+            : "縦 (1080×1920)"}
+        </span>
+      )}
       {onCancel && (
         <button
           type="button"
@@ -874,7 +1113,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         className="px-3 py-1 rounded bg-amber-500 hover:bg-amber-600 text-white text-xs"
         title="選択レイヤーの見た目・アニメをプリセットに保存／プリセットから挿入"
       >
-        🎁 プリセット
+        プリセット
       </button>
       <button
         type="button"
@@ -882,7 +1121,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         className="px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-xs text-gray-600 dark:text-gray-300"
         title="キーボードショートカット一覧（? キー）"
       >
-        ⌨ ?
+        ?
       </button>
       <button
         type="button"
@@ -890,12 +1129,31 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         className="px-3 py-1 rounded bg-purple-600 hover:bg-purple-700 text-white text-xs relative"
         title="YouTube のコメントを取得してテンプレに取り込む"
       >
-        💬 コメント取得
-        {template.importedComments && template.importedComments.length > 0 && (
-          <span className="absolute -top-1 -right-1 bg-amber-400 text-[10px] text-gray-900 rounded-full px-1 min-w-[16px] h-4 flex items-center justify-center">
-            {template.importedComments.length}
-          </span>
-        )}
+        コメント取得
+        {(() => {
+          const total = flattenBundles(getBundlesFromTemplate(template)).length;
+          return total > 0 ? (
+            <span className="absolute -top-1 -right-1 bg-amber-400 text-[10px] text-gray-900 rounded-full px-1 min-w-[16px] h-4 flex items-center justify-center">
+              {total}
+            </span>
+          ) : null;
+        })()}
+      </button>
+      <button
+        type="button"
+        onClick={() => setAutoPlaceOpen(true)}
+        className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+        title="台本を貼り付けて、VOICEVOX でナレーション生成 → タイムラインの末尾に自動配置"
+      >
+        台本から自動配置
+      </button>
+      <button
+        type="button"
+        onClick={() => setPatternBgOpen(true)}
+        className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-700 text-white text-xs"
+        title="水玉や格子などのパターン背景動画を生成して、タイムラインに追加する"
+      >
+        パターン背景
       </button>
       <button
         type="button"
@@ -903,7 +1161,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         className="px-3 py-1 rounded bg-fuchsia-600 hover:bg-fuchsia-700 text-white text-xs"
         title="このテンプレの内容そのままを MP4 として書き出す"
       >
-        🎬 エクスポート
+        エクスポート
       </button>
       <button
         type="button"
@@ -926,28 +1184,49 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
 
       {saveMsg && (
         <div
-          className={`text-xs px-2 py-1 rounded shrink-0 ${
+          className={`fixed top-3 left-1/2 -translate-x-1/2 z-[60] text-xs px-3 py-1.5 rounded shadow-lg pointer-events-none ${
             saveMsg.type === "ok"
-              ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300"
-              : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300"
+              ? "bg-emerald-100 dark:bg-emerald-900/80 text-emerald-700 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-700"
+              : "bg-red-100 dark:bg-red-900/80 text-red-700 dark:text-red-200 border border-red-300 dark:border-red-700"
           }`}
         >
           {saveMsg.text}
         </div>
       )}
 
-      {/* 2 カラム: 左=Canvas+Controls / 右=Panels+Timeline */}
+      {/* レイアウト:
+          - 縦動画 (9:16): 2 カラム (480px キャンバス + 右側にパネル + タイムライン縦並び)
+          - 横動画 (16:9): grid-template-areas で キャンバス + 右パネル + 全幅タイムライン
+            → 横動画でキャンバスを広く、タイムラインも広く使える */}
       <div
         className="flex-1 min-h-0"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "480px 1fr",
-          gap: "1.5rem",
-          alignItems: "stretch",
-        }}
+        style={
+          template.aspect === "horizontal"
+            ? {
+                display: "grid",
+                gridTemplateColumns: "1fr 800px",
+                gridTemplateRows: "1fr 260px",
+                gridTemplateAreas: '"canvas panels" "timeline timeline"',
+                gap: "1.5rem",
+                alignItems: "stretch",
+              }
+            : {
+                display: "grid",
+                gridTemplateColumns: "480px 1fr",
+                gap: "1.5rem",
+                alignItems: "stretch",
+              }
+        }
       >
         {/* 左: キャンバスのみ */}
-        <div className="flex flex-col min-w-0 min-h-0">
+        <div
+          className="flex flex-col min-w-0 min-h-0"
+          style={
+            template.aspect === "horizontal"
+              ? { gridArea: "canvas" }
+              : undefined
+          }
+        >
           <div className="flex-1 min-h-0 flex items-start justify-center">
             <TemplateCanvas
               layers={template.layers}
@@ -958,35 +1237,82 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               showGrid={showGrid}
               currentTimeSec={playheadSec}
               isPlaying={isPlaying}
-
+              aspect={template.aspect ?? "vertical"}
             />
           </div>
         </div>
 
-        {/* 右: パネル + タイムライン */}
-        <div className="flex flex-col min-w-0 min-h-0 gap-2">
+        {/* 右: パネル (横動画) または パネル + タイムライン (縦動画) */}
+        <div
+          className="flex flex-col min-w-0 min-h-0 gap-2"
+          style={
+            template.aspect === "horizontal"
+              ? { gridArea: "panels" }
+              : undefined
+          }
+        >
           <div
             className="grid shrink-0"
             style={{
               gridTemplateColumns: "280px 240px 260px",
               gap: "1.25rem",
-              height: "460px",
+              // 横動画は親 grid の高さに合わせる、縦動画は固定 460
+              height: template.aspect === "horizontal" ? "100%" : "460px",
+              minHeight: 0,
             }}
           >
-            <div className="min-w-0 overflow-y-auto" data-keep-selection>
-              <LayerPanel
-                layers={template.layers}
-                selectedLayerId={selectedLayerId}
-                selectedLayerIds={selectedLayerIds}
-                onLayersChange={setLayers}
-                onLayerSelect={handleLayerSelect}
-                newLayerDefaults={{
-                  startSec: playheadSec,
-                  endSec: Math.min(playheadSec + 3, template.totalDuration),
-                }}
-                currentTimeSec={playheadSec}
-                seFolderPath={seFolderPath}
-              />
+            <div className="min-w-0 overflow-hidden flex flex-col" data-keep-selection>
+              <div className="flex gap-1 p-1 border-b border-gray-200 dark:border-gray-700 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setLeftPaneMode("layers")}
+                  className={`flex-1 px-2 py-1 text-xs rounded ${
+                    leftPaneMode === "layers"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200"
+                  }`}
+                >
+                  📋 レイヤー
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLeftPaneMode("assets")}
+                  className={`flex-1 px-2 py-1 text-xs rounded ${
+                    leftPaneMode === "assets"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 dark:bg-gray-800 hover:bg-gray-200"
+                  }`}
+                >
+                  📁 素材
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                {leftPaneMode === "layers" ? (
+                  <LayerPanel
+                    layers={template.layers}
+                    selectedLayerId={selectedLayerId}
+                    selectedLayerIds={selectedLayerIds}
+                    onLayersChange={setLayers}
+                    onLayerSelect={handleLayerSelect}
+                    newLayerDefaults={{
+                      startSec: playheadSec,
+                      endSec: Math.min(playheadSec + 3, template.totalDuration),
+                    }}
+                    currentTimeSec={playheadSec}
+                    seFolderPath={seFolderPath}
+                    templateId={template.id}
+                    canvasRatio={
+                      templateDimensions(template).width /
+                      templateDimensions(template).height
+                    }
+                  />
+                ) : (
+                  <AssetLibraryPanel
+                    templateId={template.id}
+                    onAdd={(asset) => addAssetAsLayer(asset)}
+                  />
+                )}
+              </div>
             </div>
             <div
               className="min-w-0 overflow-y-auto pr-1"
@@ -1003,8 +1329,9 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
                 }}
                 onGenerateNarration={handleGenerateNarration}
                 narrationBusyLayerId={narrationBusy}
-                importedComments={template.importedComments}
+                importedComments={flattenBundles(getBundlesFromTemplate(template))}
                 playheadSec={playheadSec}
+                allLayers={template.layers}
               />
             </div>
             <div
@@ -1019,6 +1346,10 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               </div>
             </div>
           </div>
+          {/* 縦動画はここでタイムライン → controls の順に並べる。
+              横動画は親で gridArea="timeline" として外に出すので、ここでは閉じる */}
+          {template.aspect !== "horizontal" && (
+          <>
           {/* タイムライン上のコントロール */}
           <div
             className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] shrink-0"
@@ -1055,6 +1386,23 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               {playheadSec.toFixed(1)}s / {template.totalDuration}s · 表示{" "}
               {visibleLayers.length}/{template.layers.length}
             </span>
+            <label className="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-400">
+              尺
+              <input
+                type="number"
+                min={5}
+                max={300}
+                value={template.totalDuration}
+                onChange={(e) =>
+                  setTemplate((t) => ({
+                    ...t,
+                    totalDuration: Number(e.target.value) || 30,
+                  }))
+                }
+                className="w-14 px-1 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+              <span className="text-[10px]">秒</span>
+            </label>
             <label className="flex items-center gap-1 cursor-pointer">
               <input
                 type="checkbox"
@@ -1081,27 +1429,182 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               onLayerUpdate={updateLayer}
               onLayerSelect={handleLayerSelect}
               onPlayheadChange={setPlayheadSec}
+              onSeekStart={() => setIsPlaying(false)}
               onLayersReorder={setLayers}
             />
           </div>
+          </>
+          )}
         </div>
+
+        {/* 横動画専用: 全幅タイムライン (キャンバスの下) */}
+        {template.aspect === "horizontal" && (
+          <div
+            className="flex flex-col min-w-0 min-h-0 gap-1"
+            style={{ gridArea: "timeline" }}
+          >
+            {/* コントロール */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] shrink-0">
+              <button
+                type="button"
+                onClick={undo}
+                disabled={!canUndo}
+                className="px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-[11px] disabled:opacity-40"
+              >
+                ↶ 元に戻す
+              </button>
+              <button
+                type="button"
+                onClick={redo}
+                disabled={!canRedo}
+                className="px-2 py-0.5 rounded border border-gray-300 dark:border-gray-600 text-[11px] disabled:opacity-40"
+              >
+                やり直す ↷
+              </button>
+              <button
+                type="button"
+                onClick={togglePlay}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                  isPlaying
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                }`}
+                title={isPlaying ? "一時停止 (Space)" : "再生 (Space)"}
+              >
+                {isPlaying ? "⏸ 一時停止" : "▶ 再生"}
+              </button>
+              <span className="text-gray-500">
+                {playheadSec.toFixed(1)}s / {template.totalDuration}s · 表示{" "}
+                {visibleLayers.length}/{template.layers.length}
+              </span>
+              <label className="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-400">
+                尺
+                <input
+                  type="number"
+                  min={5}
+                  max={300}
+                  value={template.totalDuration}
+                  onChange={(e) =>
+                    setTemplate((t) => ({
+                      ...t,
+                      totalDuration: Number(e.target.value) || 30,
+                    }))
+                  }
+                  className="w-14 px-1 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                />
+                <span className="text-[10px]">秒</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showGrid}
+                  onChange={(e) => setShowGrid(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                グリッド
+              </label>
+              {selectedLayer && !selectedLayerInTime && (
+                <span className="px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px]">
+                  ⚠ 選択は非表示
+                </span>
+              )}
+            </div>
+            <div className="flex-1 min-h-0">
+              <TemplateTimeline
+                layers={template.layers}
+                totalDuration={template.totalDuration}
+                playheadSec={playheadSec}
+                selectedLayerId={selectedLayerId}
+                selectedLayerIds={selectedLayerIds}
+                onLayerUpdate={updateLayer}
+                onLayerSelect={handleLayerSelect}
+                onPlayheadChange={setPlayheadSec}
+                onSeekStart={() => setIsPlaying(false)}
+                onLayersReorder={setLayers}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <ExportModal
         open={exportOpen}
         template={template}
         onClose={() => setExportOpen(false)}
+        onAutoSave={handleSave}
+      />
+
+      <AutoPlaceTeropsModal
+        open={autoPlaceOpen}
+        template={template}
+        importedComments={flattenBundles(getBundlesFromTemplate(template))}
+        onApply={(updated) => setTemplate(updated)}
+        onClose={() => setAutoPlaceOpen(false)}
+      />
+
+      <PatternBackgroundModal
+        open={patternBgOpen}
+        templateId={template.id}
+        canvasWidth={templateDimensions(template).width}
+        canvasHeight={templateDimensions(template).height}
+        onGenerated={(videoPath, durationSec) => {
+          // プレイヘッド位置に背景動画レイヤーを追加（フル画面、最背面）
+          const start = Math.max(0, playheadSec);
+          const end = Math.min(template.totalDuration, start + Math.max(durationSec, 5));
+          const bgZ = Math.min(
+            0,
+            ...template.layers.filter((l) => l.zIndex >= 0).map((l) => l.zIndex),
+          );
+          const newLayer: Layer = {
+            id: genLayerId(),
+            type: "video",
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+            zIndex: bgZ - 1 < 0 ? 0 : bgZ, // 動画系の最背面
+            shape: "rect",
+            opacity: 1,
+            rotation: 0,
+            startSec: start,
+            endSec: end,
+            source: videoPath,
+            videoLoop: true,
+            sourceDurationSec: durationSec,
+          };
+          // zIndex を 0 に固定して全レイヤーを 1 段上げる（背景は最背面に）
+          const shifted = template.layers.map((l) =>
+            l.zIndex >= 0 ? { ...l, zIndex: l.zIndex + 1 } : l,
+          );
+          setTemplate((t) => ({
+            ...t,
+            layers: [...shifted, { ...newLayer, zIndex: 0 }],
+            totalDuration: Math.max(t.totalDuration, end),
+          }));
+          setSelectedLayerId(newLayer.id);
+        }}
+        onClose={() => setPatternBgOpen(false)}
       />
 
       <ImportCommentsModal
         open={importCommentsOpen}
-        existingComments={template.importedComments}
-        existingSource={template.importedCommentsSource}
-        onImport={(comments, source) => {
+        existingBundles={getBundlesFromTemplate(template)}
+        onImport={(selectedComments, bundles) => {
+          // 選択したコメントのみをバンドルごとに残して保存する
+          // （取得しただけのコメントは含めない）
+          const selectedIds = new Set(selectedComments.map((c) => c.id));
+          const filteredBundles = bundles
+            .map((b) => ({
+              ...b,
+              comments: b.comments.filter((c) => selectedIds.has(c.id)),
+            }))
+            .filter((b) => b.comments.length > 0);
           setTemplate((t) => ({
             ...t,
-            importedComments: comments,
-            importedCommentsSource: source,
+            importedCommentBundles: filteredBundles,
+            // 旧形式のフィールドは無効化（新形式が優先される）
+            importedComments: undefined,
+            importedCommentsSource: undefined,
           }));
         }}
         onClose={() => setImportCommentsOpen(false)}
@@ -1223,7 +1726,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h3 className="font-semibold text-sm">🎁 レイヤープリセット</h3>
+              <h3 className="font-semibold text-sm">レイヤープリセット</h3>
               <button
                 type="button"
                 onClick={() => setPresetOpen(false)}

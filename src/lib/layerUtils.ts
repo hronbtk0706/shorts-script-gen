@@ -68,6 +68,24 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
         audioFadeOut: 0,
         audioLoop: false,
       };
+    case "character":
+      return {
+        ...base,
+        x: 25,
+        y: 30,
+        width: 50,
+        height: 60,
+        source: "user",
+        lipsyncMode: "voicevox",
+        physicsFps: 30,
+        blinkConfig: {
+          enabled: true,
+          duration: 0.15,
+          intervalMean: 4,
+          intervalJitter: 1.5,
+          seed: Math.floor(Math.random() * 0x7fffffff),
+        },
+      };
   }
 }
 
@@ -77,7 +95,14 @@ export function visibleLayersAt(layers: Layer[], tSec: number): Layer[] {
 }
 
 export function cloneLayer(layer: Layer): Layer {
-  return { ...layer, id: genLayerId() };
+  // 紐付け系のIDはクローン時に必ずリセットする。
+  // generatedNarrationLayerId は元レイヤーの音声を指しているため、コピー側で
+  // ナレーション再生成すると元の音声が消されてしまう。クローンは「音声未紐付け」状態にする
+  return {
+    ...layer,
+    id: genLayerId(),
+    generatedNarrationLayerId: undefined,
+  };
 }
 
 export function sortedLayers(layers: Layer[]): Layer[] {
@@ -295,7 +320,11 @@ export function isValidV2Template(t: unknown): t is VideoTemplate {
   );
 }
 
-export function newBlankTemplateData(name: string, id: string): VideoTemplate {
+export function newBlankTemplateData(
+  name: string,
+  id: string,
+  aspect: import("../types").TemplateAspect = "vertical",
+): VideoTemplate {
   const totalDuration = 30;
   return {
     version: 2,
@@ -303,6 +332,7 @@ export function newBlankTemplateData(name: string, id: string): VideoTemplate {
     name,
     createdAt: new Date().toISOString(),
     totalDuration,
+    aspect,
     themeVibe: "",
     overallPacing: "",
     narrationStyle: "",
