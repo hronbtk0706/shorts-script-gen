@@ -10,7 +10,7 @@ import {
   type AnalysisProgress,
 } from "../lib/templateAnalyzer";
 import { loadSettings } from "../lib/storage";
-import { exportTemplatePack } from "../lib/templatePack";
+import { exportTemplatePack, importTemplatePack } from "../lib/templatePack";
 import { deleteTemplateAssets } from "../lib/assetImport";
 import type { VideoTemplate } from "../types";
 import { TemplateBuilder } from "./TemplateBuilder";
@@ -113,6 +113,19 @@ export function TemplateManager() {
     }
   };
 
+  const handleImportPack = async () => {
+    setError(null);
+    try {
+      const imported = await importTemplatePack();
+      if (!imported) return; // キャンセル
+      await saveTemplate(imported);
+      await reload();
+      alert(`読み込み完了:\n${imported.name}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const handleEditStart = (t: VideoTemplate) => {
     setEditingTemplate(t);
     setMode("manual-builder");
@@ -209,6 +222,13 @@ export function TemplateManager() {
           className="px-3 py-1.5 rounded text-sm bg-emerald-600 text-white hover:bg-emerald-700"
         >
           ✏️ 手動で作成
+        </button>
+        <button
+          type="button"
+          onClick={handleImportPack}
+          className="px-3 py-1.5 rounded text-sm bg-amber-600 text-white hover:bg-amber-700"
+        >
+          📦 パックを読み込み
         </button>
         <button
           type="button"
