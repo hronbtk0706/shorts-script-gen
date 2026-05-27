@@ -1204,7 +1204,8 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           template.aspect === "horizontal"
             ? {
                 display: "grid",
-                gridTemplateColumns: "1fr 800px",
+                // プレビュー列を出さないぶんパネルを狭め、キャンバス(1fr)を広げる
+                gridTemplateColumns: "1fr 540px",
                 gridTemplateRows: "1fr 260px",
                 gridTemplateAreas: '"canvas panels" "timeline timeline"',
                 gap: "1.5rem",
@@ -1254,7 +1255,11 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           <div
             className="grid shrink-0"
             style={{
-              gridTemplateColumns: "280px 240px 260px",
+              // 横編集はプレビュー列なしの 2 カラム、縦編集は 3 カラム（プレビュー付き）
+              gridTemplateColumns:
+                template.aspect === "horizontal"
+                  ? "280px 240px"
+                  : "280px 240px 260px",
               gap: "1.25rem",
               // 横動画は親 grid の高さに合わせる、縦動画は固定 460
               height: template.aspect === "horizontal" ? "100%" : "460px",
@@ -1334,17 +1339,20 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
                 allLayers={template.layers}
               />
             </div>
-            <div
-              className="min-w-0 overflow-hidden flex flex-col gap-1"
-              data-keep-selection
-            >
-              <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300 shrink-0">
-                プレビュー
-              </h4>
-              <div className="flex-1 min-h-0 flex items-start justify-center">
-                <LayerPreview layer={selectedLayer} />
+            {/* 横編集時はレイヤー単体プレビューを出さない（縦のみ表示） */}
+            {template.aspect !== "horizontal" && (
+              <div
+                className="min-w-0 overflow-hidden flex flex-col gap-1"
+                data-keep-selection
+              >
+                <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300 shrink-0">
+                  プレビュー
+                </h4>
+                <div className="flex-1 min-h-0 flex items-start justify-center">
+                  <LayerPreview layer={selectedLayer} />
+                </div>
               </div>
-            </div>
+            )}
           </div>
           {/* 縦動画はここでタイムライン → controls の順に並べる。
               横動画は親で gridArea="timeline" として外に出すので、ここでは閉じる */}

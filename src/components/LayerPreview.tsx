@@ -12,8 +12,10 @@ interface Props {
   layer: Layer | null;
   /** プレビューボックスの幅 (px) */
   widthPx?: number;
-  /** プレビューボックスの高さ (px)。未指定なら 9:16 比で算出 */
+  /** プレビューボックスの高さ (px)。未指定なら aspect に応じて算出 */
   heightPx?: number;
+  /** テンプレの向き。horizontal=16:9、vertical=9:16（既定 vertical） */
+  aspect?: "vertical" | "horizontal";
 }
 
 function resolveSrc(src: string | undefined): string | null {
@@ -34,8 +36,9 @@ function resolveSrc(src: string | undefined): string | null {
   }
 }
 
-export function LayerPreview({ layer, widthPx = 260, heightPx }: Props) {
-  const h = heightPx ?? Math.round((widthPx * 16) / 9);
+export function LayerPreview({ layer, widthPx = 260, heightPx, aspect = "vertical" }: Props) {
+  // 横テンプレは 16:9（横長）、縦テンプレは 9:16（縦長）でプレビュー枠を作る
+  const h = heightPx ?? Math.round(widthPx * (aspect === "horizontal" ? 9 / 16 : 16 / 9));
   const w = widthPx;
   const [isPlaying, setIsPlaying] = useState(true);
   const [localTime, setLocalTime] = useState(0);
