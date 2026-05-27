@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1850,47 +1851,91 @@ fn compose_template_video_inner(
         ),
     ]);
 
-    // 入力 1..N: 各レイヤー
+    // 入力 1..N: 各レイヤー（パス + ループ設定 + kind で dedup）
+    // 同じ video が複数 chunk で背景に使われると -i が重複して argv 肥大化 → Windows 32KB
+    // 制限超過。同一入力は ffmpeg 内で複数回参照できるので、入力自体は 1 回だけ追加し、
+    // filter_complex から複数回 [N:v] で参照する。
+    let mut vis_input_to_idx: HashMap<(String, bool, bool), usize> = HashMap::new();
+    let mut vis_layer_to_idx: Vec<usize> = Vec::with_capacity(n_layers);
+    let mut next_input_idx: usize = 1; // 0 は黒背景
+
     for layer in &layers_sorted {
-        match layer.kind.as_str() {
-            "static" => {
-                cmd.args([
-                    "-loop",
-                    "1",
-                    "-framerate",
-                    &FPS.to_string(),
-                    "-t",
-                    &format!("{:.3}", total_duration),
-                    "-i",
-                ])
-                    .arg(&layer.path);
-            }
-            "video" => {
-                if layer.video_loop {
-                    cmd.args(["-stream_loop", "-1"]);
+        let key = (
+            layer.path.clone(),
+            // video の場合のみ stream_loop の有無で別入力扱い
+            layer.video_loop,
+            layer.kind == "static",
+        );
+        let idx = if let Some(&existing) = vis_input_to_idx.get(&key) {
+            existing
+        } else {
+            let new_idx = next_input_idx;
+            next_input_idx += 1;
+            match layer.kind.as_str() {
+                "static" => {
+                    cmd.args([
+                        "-loop",
+                        "1",
+                        "-framerate",
+                        &FPS.to_string(),
+                        "-t",
+                        &format!("{:.3}", total_duration),
+                        "-i",
+                    ])
+                        .arg(&layer.path);
                 }
-                cmd.args(["-i"]).arg(&layer.path);
+                "video" => {
+                    if layer.video_loop {
+                        cmd.args(["-stream_loop", "-1"]);
+                    }
+                    cmd.args(["-i"]).arg(&layer.path);
+                }
+                other => {
+                    return Err(format!("unknown layer kind: {}", other));
+                }
             }
-            other => {
-                return Err(format!("unknown layer kind: {}", other));
-            }
-        }
+            vis_input_to_idx.insert(key, new_idx);
+            new_idx
+        };
+        vis_layer_to_idx.push(idx);
     }
 
-    // 入力 N+1..: オーディオレイヤー
-    let audio_input_start = 1 + n_layers;
+    let total_visual_inputs = next_input_idx - 1;
+    eprintln!(
+        "[compose_template_video] visual inputs: total layers={}, unique inputs={}, dedup saved={}",
+        n_layers,
+        total_visual_inputs,
+        n_layers - total_visual_inputs,
+    );
+
+    // 入力 N+1..: オーディオレイヤー（同じ wav が複数 chunk で参照されることは少ないが
+    // 念のため同じパス + loop で dedup）
+    let audio_input_start = 1 + total_visual_inputs;
+    let mut audio_input_to_idx: HashMap<(String, bool), usize> = HashMap::new();
+    let mut audio_layer_to_idx: Vec<usize> = Vec::with_capacity(audio_layers.len());
+    let mut next_audio_idx: usize = audio_input_start;
     for audio in &audio_layers {
-        if audio.audio_loop {
-            cmd.args(["-stream_loop", "-1"]);
-        }
-        cmd.args(["-i"]).arg(&audio.path);
+        let key = (audio.path.clone(), audio.audio_loop);
+        let idx = if let Some(&existing) = audio_input_to_idx.get(&key) {
+            existing
+        } else {
+            let new_idx = next_audio_idx;
+            next_audio_idx += 1;
+            if audio.audio_loop {
+                cmd.args(["-stream_loop", "-1"]);
+            }
+            cmd.args(["-i"]).arg(&audio.path);
+            audio_input_to_idx.insert(key, new_idx);
+            new_idx
+        };
+        audio_layer_to_idx.push(idx);
     }
 
     // 入力 M+1: BGM（オプション）
     let bgm_input_idx: Option<usize> =
         bgm_path.as_ref().filter(|s| !s.is_empty()).map(|p| {
             cmd.args(["-stream_loop", "-1", "-i"]).arg(p);
-            audio_input_start + audio_layers.len()
+            next_audio_idx
         });
 
     // ======== filter_complex ========
@@ -1899,7 +1944,7 @@ fn compose_template_video_inner(
     // ----- ビデオ: 背景 → 各レイヤー overlay -----
     let mut current_bg = "[0:v]".to_string();
     for (i, layer) in layers_sorted.iter().enumerate() {
-        let input_idx = 1 + i;
+        let input_idx = vis_layer_to_idx[i];
         let is_last = i + 1 == n_layers;
         let next_bg = if is_last {
             "[vout]".to_string()
@@ -2223,7 +2268,7 @@ fn compose_template_video_inner(
     // ----- 音声: 各レイヤー + BGM を amix -----
     let mut amix_inputs: Vec<String> = Vec::new();
     for (i, audio) in audio_layers.iter().enumerate() {
-        let input_idx = audio_input_start + i;
+        let input_idx = audio_layer_to_idx[i];
         let mut steps: Vec<String> = Vec::new();
 
         // 再生速度（atempo は 0.5〜100.0 対応。実用範囲は 0.5〜4.0）
@@ -2299,7 +2344,19 @@ fn compose_template_video_inner(
         filter.len(),
     );
 
-    cmd.args(["-filter_complex", &filter]);
+    // Windows の CreateProcess は引数列を ~32KB に制限する。
+    // 大規模テンプレ (数百レイヤー) で filter_complex がそれを超えると
+    // "spawn: ファイル名または拡張子が長すぎます (os error 206)" になるので
+    // 8KB を超えたら -filter_complex_script でファイル経由に切り替える。
+    if filter.len() > 8192 {
+        let filter_script = base_dir.join(format!(".filter_complex_{}.txt", output_filename));
+        std::fs::write(&filter_script, &filter)
+            .map_err(|e| format!("write filter_complex_script: {}", e))?;
+        cmd.arg("-filter_complex_script");
+        cmd.arg(&filter_script);
+    } else {
+        cmd.args(["-filter_complex", &filter]);
+    }
     cmd.args(["-map", "[vout]", "-map", audio_map.as_str()]);
 
     // エンコーダごとに最適なパラメータを設定する。
@@ -2372,6 +2429,35 @@ fn compose_template_video_inner(
 
     let output_path = base_dir.join(&output_filename);
     cmd.arg(&output_path);
+
+    // Windows の CreateProcess は引数列を 32767 文字に制限する。spawn 前に診断ログを
+    // ファイルに書き出し（Tauri release は console を持たないので stderr では見えない）。
+    {
+        let args: Vec<std::ffi::OsString> = cmd.get_args().map(|a| a.to_os_string()).collect();
+        let total_len: usize = args.iter().map(|a| a.len() + 3).sum::<usize>() + 30;
+        let mut report = String::new();
+        report.push_str(&format!(
+            "cmd args count={} estimated_len={} (Win limit=32767)\n\n",
+            args.len(),
+            total_len,
+        ));
+        let mut lens: Vec<(usize, String)> = args
+            .iter()
+            .map(|a| (a.len(), a.to_string_lossy().into_owned()))
+            .collect();
+        lens.sort_by(|a, b| b.0.cmp(&a.0));
+        report.push_str("長い引数 top20:\n");
+        for (l, s) in lens.iter().take(20) {
+            report.push_str(&format!("  {} chars: {}\n", l, &s[..s.len().min(160)]));
+        }
+        report.push_str("\n全引数 (順序保存):\n");
+        for (i, a) in args.iter().enumerate() {
+            let s = a.to_string_lossy();
+            report.push_str(&format!("  [{:3}] ({}) {}\n", i, s.len(), &s[..s.len().min(200)]));
+        }
+        let log_path = base_dir.join(format!(".cmd_args_{}.log", output_filename));
+        let _ = std::fs::write(&log_path, &report);
+    }
 
     let output = run_ffmpeg_cancellable(cmd, state)
         .map_err(|e| format!("ffmpeg compose_template: {}", e))?;
