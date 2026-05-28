@@ -3,6 +3,7 @@ import type { Layer } from "../types";
 import { sortedLayers } from "./layerUtils";
 import { sampleLayerAt } from "./keyframes";
 import { bubbleFullPath } from "./bubble";
+import { computeCanvasAnim, applyCanvasAnim } from "./layerAnimCanvas";
 
 // 出力解像度（テンプレのアスペクトに応じて、composition 開始前に setCompositionCanvasDimensions で切替）。
 // デフォルトは旧テンプレ互換の縦 (1080x1920)。
@@ -63,7 +64,38 @@ export async function composeLayersToDataUrl(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context を取得できませんでした");
 
-  if (!opts.transparent) {
+  await renderLayersOnContext(ctx, layers, resolveSrc, opts);
+
+  return canvas.toDataURL("image/png");
+}
+
+/**
+ * 指定 ctx に時刻 t（opts.atTimeSec）で全レイヤーを合成する。
+ * WebCodecs エクスポート等で canvas を使い回す経路から呼ぶ。
+ * - opts.transparent=false（既定）なら黒背景でクリア。true なら透明クリア。
+ * - opts.skipVideoLayers=true で video レイヤーを除外（preview の static PNG 焼き向け）。
+ */
+export async function renderLayersOnContext(
+  ctx:
+    | CanvasRenderingContext2D
+    | OffscreenCanvasRenderingContext2D,
+  layers: Layer[],
+  resolveSrc: LayerSourceResolver,
+  opts: {
+    skipVideoLayers?: boolean;
+    atTimeSec?: number;
+    transparent?: boolean;
+    /** layer.id → 現在フレームソース (HTMLVideoElement / OffscreenCanvas 等)。
+     * WebCodecs 経路で video / character レイヤーを直接 drawImage するのに使う。 */
+    videoFrameSources?: Map<string, CanvasImageSource>;
+    /** true なら入退場アニメ等の動的変換を適用する (WebCodecs エクスポート用)。
+     * 既存の PNG 焼き経路 (composeLayerContentPng) は false のまま使う。 */
+    applyAnim?: boolean;
+  } = {},
+): Promise<void> {
+  if (opts.transparent) {
+    ctx.clearRect(0, 0, FINAL_W, FINAL_H);
+  } else {
     ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, FINAL_W, FINAL_H);
   }
@@ -75,10 +107,14 @@ export async function composeLayersToDataUrl(
     if (t !== undefined && (t < layer.startSec || t >= layer.endSec)) continue;
     // 時刻指定があればキーフレーム補間を反映
     const drawTarget = t !== undefined ? applyKeyframesAtTime(layer, t) : layer;
-    await drawLayer(ctx, drawTarget, resolveSrc);
+    await drawLayer(
+      ctx as CanvasRenderingContext2D,
+      drawTarget,
+      resolveSrc,
+      opts.videoFrameSources,
+      opts.applyAnim ? t : undefined,
+    );
   }
-
-  return canvas.toDataURL("image/png");
 }
 
 /** 指定時刻でのキーフレーム補間値を layer に適用した新しい Layer を返す */
@@ -198,7 +234,9 @@ async function drawLayerContentOnly(
   resolveSrc: LayerSourceResolver,
 ): Promise<void> {
   ctx.save();
-  ctx.globalAlpha = layer.opacity ?? 1;
+  // opacity は Rust 側で colorchannelmixer=aa=... により適用されるため、ここでは焼き込まない
+  // （以前は二重適用で opacity 0.5 が出力 0.25 になる致命傷があった）
+  ctx.globalAlpha = 1;
   // 吹き出しは shape ではなく bubble path で描画するので、矩形/circle クリップは適用しない
   // （tail が枠外に出る場合にクリップで切られてしまうのを防ぐ）
   if (!(layer.type === "comment" && layer.bubble)) {
@@ -234,7 +272,9 @@ async function drawLayerContentOnly(
         if (layer.shape === "arc") {
           drawArcShape(ctx, layer, w, h);
         } else {
-          ctx.fillStyle = layer.fillColor ?? "#333";
+          // preview と合わせるため shape 既定は #FFE600、color 既定は #333
+          const def = layer.type === "shape" ? "#FFE600" : "#333";
+          ctx.fillStyle = layer.fillColor ?? def;
           ctx.fillRect(0, 0, w, h);
         }
         break;
@@ -273,21 +313,26 @@ async function drawLayerContentOnly(
 
   ctx.restore();
 
-  // border は bubble で既に描画済みなのでスキップ
+  // border は bubble で既に描画済みなのでスキップ。
+  // preview の CSS `inset boxShadow` と一致させるため、stroke を枠内側に inset する
+  // （Canvas の stroke は中心線基準で半分外側に出るため、そのままだと PNG 境界で切れる）
   if (!layer.bubble && layer.border && layer.border.width > 0) {
     ctx.save();
+    const lw = layer.border.width * (FINAL_W / 360);
     ctx.strokeStyle = layer.border.color;
-    ctx.lineWidth = layer.border.width * (FINAL_W / 360);
+    ctx.lineWidth = lw;
+    const inset = lw / 2;
     if (layer.shape === "circle") {
       ctx.beginPath();
-      ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(w / 2, h / 2, Math.max(0, w / 2 - inset), Math.max(0, h / 2 - inset), 0, 0, Math.PI * 2);
       ctx.stroke();
     } else if (layer.shape === "rounded") {
       const r = (layer.borderRadius ?? 12) * (FINAL_W / 360);
-      roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+      const innerR = Math.max(0, Math.min(r - inset, (w - lw) / 2, (h - lw) / 2));
+      roundRectPath(ctx, inset, inset, Math.max(0, w - lw), Math.max(0, h - lw), innerR);
       ctx.stroke();
     } else {
-      ctx.strokeRect(0, 0, w, h);
+      ctx.strokeRect(inset, inset, Math.max(0, w - lw), Math.max(0, h - lw));
     }
     ctx.restore();
   }
@@ -297,6 +342,8 @@ async function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
   resolveSrc: LayerSourceResolver,
+  videoFrameSources?: Map<string, CanvasImageSource>,
+  animAtTimeSec?: number,
 ): Promise<void> {
   const w = (layer.width / 100) * FINAL_W;
   const h = (layer.height / 100) * FINAL_H;
@@ -306,13 +353,19 @@ async function drawLayer(
   ctx.save();
   ctx.globalAlpha = layer.opacity ?? 1;
 
-  // 回転を含めた transform
+  // 回転を含めた transform (layer の static rotation)
   if (layer.rotation) {
     ctx.translate(x + w / 2, y + h / 2);
     ctx.rotate((layer.rotation * Math.PI) / 180);
     ctx.translate(-w / 2, -h / 2);
   } else {
     ctx.translate(x, y);
+  }
+
+  // 入退場アニメ (WebCodecs エクスポート経路でのみ animAtTimeSec が渡る)
+  if (animAtTimeSec !== undefined) {
+    const anim = computeCanvasAnim(layer, animAtTimeSec, w, h);
+    applyCanvasAnim(ctx, anim, w, h);
   }
 
   // 形状クリップ
@@ -323,6 +376,54 @@ async function drawLayer(
     switch (layer.type) {
       case "image":
       case "video": {
+        // 動画レイヤーで videoFrameSources に登録があれば、HTMLVideoElement 等の
+        // 現在フレームを直接 drawImage する (WebCodecs エクスポート経路)
+        const frameSource =
+          layer.type === "video" ? videoFrameSources?.get(layer.id) : undefined;
+        if (frameSource) {
+          // VideoFrame (WebCodecs): displayWidth/codedWidth を見る
+          // HTMLVideoElement: videoWidth
+          // HTMLImageElement: naturalWidth
+          // ImageBitmap / OffscreenCanvas: width
+          const fs = frameSource as unknown as {
+            displayWidth?: number;
+            displayHeight?: number;
+            codedWidth?: number;
+            codedHeight?: number;
+            videoWidth?: number;
+            videoHeight?: number;
+            naturalWidth?: number;
+            naturalHeight?: number;
+            width?: number;
+            height?: number;
+          };
+          const srcW =
+            fs.displayWidth ||
+            fs.codedWidth ||
+            fs.videoWidth ||
+            fs.naturalWidth ||
+            fs.width ||
+            w;
+          const srcH =
+            fs.displayHeight ||
+            fs.codedHeight ||
+            fs.videoHeight ||
+            fs.naturalHeight ||
+            fs.height ||
+            h;
+          const crop = layer.crop;
+          const sx = crop ? (crop.x / 100) * srcW : 0;
+          const sy = crop ? (crop.y / 100) * srcH : 0;
+          const sw = crop ? (crop.width / 100) * srcW : srcW;
+          const sh = crop ? (crop.height / 100) * srcH : srcH;
+          const scale = Math.max(w / sw, h / sh);
+          const drawW = sw * scale;
+          const drawH = sh * scale;
+          const dx = (w - drawW) / 2;
+          const dy = (h - drawH) / 2;
+          ctx.drawImage(frameSource, sx, sy, sw, sh, dx, dy, drawW, drawH);
+          break;
+        }
         const src = await resolveSrc(layer);
         if (src) {
           const img = await loadImage(src);
@@ -349,7 +450,9 @@ async function drawLayer(
         if (layer.shape === "arc") {
           drawArcShape(ctx, layer, w, h);
         } else {
-          ctx.fillStyle = layer.fillColor ?? "#333";
+          // preview と合わせるため shape 既定は #FFE600、color 既定は #333
+          const def = layer.type === "shape" ? "#FFE600" : "#333";
+          ctx.fillStyle = layer.fillColor ?? def;
           ctx.fillRect(0, 0, w, h);
         }
         break;
@@ -430,7 +533,9 @@ function drawArcShape(
     ctx.arc(cx, cy, outerR, startRad, endRad, false);
     ctx.closePath();
   }
-  ctx.fillStyle = layer.fillColor ?? "#333";
+  // preview の ArcShapeSvg と合わせて shape 既定は #FFE600、color 既定は #333
+  const def = layer.type === "shape" ? "#FFE600" : "#333";
+  ctx.fillStyle = layer.fillColor ?? def;
   ctx.fill();
 }
 
@@ -443,8 +548,9 @@ function drawBorder(
   h: number,
 ): void {
   ctx.save();
+  const lw = layer.border!.width * (FINAL_W / 360);
   ctx.strokeStyle = layer.border!.color;
-  ctx.lineWidth = layer.border!.width * (FINAL_W / 360);
+  ctx.lineWidth = lw;
   if (layer.rotation) {
     ctx.translate(x + w / 2, y + h / 2);
     ctx.rotate((layer.rotation * Math.PI) / 180);
@@ -452,16 +558,19 @@ function drawBorder(
   } else {
     ctx.translate(x, y);
   }
+  // preview の CSS `inset boxShadow` と一致させるため枠内側に inset
+  const inset = lw / 2;
   if (layer.shape === "circle") {
     ctx.beginPath();
-    ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+    ctx.ellipse(w / 2, h / 2, Math.max(0, w / 2 - inset), Math.max(0, h / 2 - inset), 0, 0, Math.PI * 2);
     ctx.stroke();
   } else if (layer.shape === "rounded") {
     const r = (layer.borderRadius ?? 12) * (FINAL_W / 360);
-    roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+    const innerR = Math.max(0, Math.min(r - inset, (w - lw) / 2, (h - lw) / 2));
+    roundRectPath(ctx, inset, inset, Math.max(0, w - lw), Math.max(0, h - lw), innerR);
     ctx.stroke();
   } else {
-    ctx.strokeRect(0, 0, w, h);
+    ctx.strokeRect(inset, inset, Math.max(0, w - lw), Math.max(0, h - lw));
   }
   ctx.restore();
 }
@@ -488,7 +597,7 @@ function roundRectPath(
 }
 
 // 日本語フォントを OS 横断で指定（Windows/macOS/Linux いずれでもフォールバック可能に）。
-const TEXT_DEFAULT_FONT_STACK = `"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "游ゴシック", "Meiryo", "メイリオ", "MS Gothic", "MSゴシック", "Noto Sans JP", "Noto Sans CJK JP", sans-serif`;
+export const TEXT_DEFAULT_FONT_STACK = `"Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Yu Gothic", "游ゴシック", "Meiryo", "メイリオ", "MS Gothic", "MSゴシック", "Noto Sans JP", "Noto Sans CJK JP", sans-serif`;
 
 function buildTextFontString(layer: Layer): string {
   const fontSize = (layer.fontSize ?? 48) * (FINAL_W / 360);
@@ -1106,18 +1215,22 @@ function drawAnimatedLayerStaticParts(
 
   if (!layer.bubble && layer.border && layer.border.width > 0) {
     ctx.save();
+    const lw = layer.border.width * (FINAL_W / 360);
     ctx.strokeStyle = layer.border.color;
-    ctx.lineWidth = layer.border.width * (FINAL_W / 360);
+    ctx.lineWidth = lw;
+    // preview の CSS `inset boxShadow` と一致させるため枠内側に inset
+    const inset = lw / 2;
     if (layer.shape === "circle") {
       ctx.beginPath();
-      ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.ellipse(w / 2, h / 2, Math.max(0, w / 2 - inset), Math.max(0, h / 2 - inset), 0, 0, Math.PI * 2);
       ctx.stroke();
     } else if (layer.shape === "rounded") {
       const r = (layer.borderRadius ?? 12) * (FINAL_W / 360);
-      roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+      const innerR = Math.max(0, Math.min(r - inset, (w - lw) / 2, (h - lw) / 2));
+      roundRectPath(ctx, inset, inset, Math.max(0, w - lw), Math.max(0, h - lw), innerR);
       ctx.stroke();
     } else {
-      ctx.strokeRect(0, 0, w, h);
+      ctx.strokeRect(inset, inset, Math.max(0, w - lw), Math.max(0, h - lw));
     }
     ctx.restore();
   }

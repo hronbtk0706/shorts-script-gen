@@ -5,6 +5,7 @@ import type { Layer } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
 import { bubbleFullPath } from "../lib/bubble";
+import { TEXT_DEFAULT_FONT_STACK } from "../lib/layerComposer";
 import { CharacterLayerContent } from "./CharacterLayerContent";
 import { LayerErrorBoundary } from "./LayerErrorBoundary";
 
@@ -1024,7 +1025,9 @@ export function renderAnimatedText(
     overflow: "hidden",
     position: "relative",
     boxShadow: borderBoxShadow,
-    fontFamily: layer.fontFamily || undefined,
+    fontFamily: layer.fontFamily
+      ? `${layer.fontFamily}, ${TEXT_DEFAULT_FONT_STACK}`
+      : TEXT_DEFAULT_FONT_STACK,
   };
 
   // 装飾：ネオン / アウトライン / 影ドロップ は text-shadow / -webkit-text-stroke で表現
@@ -1492,7 +1495,55 @@ function AudioLayerPlayer({
   isPlaying: boolean;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
+  // HTMLAudioElement.volume は 0..1 にクランプされるため、100% 超のボリュームは
+  // Web Audio API の GainNode 経由で実現する（エクスポート側 ffmpeg `volume=` と一致させる）。
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
   const resolved = resolveSrcForWebview(layer.source);
+
+  // Web Audio グラフを必要時に一度だけ構築（autoplay policy 対策で suspended の可能性あり）
+  const ensureAudioGraph = (): GainNode | null => {
+    if (gainNodeRef.current) return gainNodeRef.current;
+    const a = audioRef.current;
+    if (!a) return null;
+    const AC: typeof AudioContext | undefined =
+      (window as unknown as { AudioContext?: typeof AudioContext })
+        .AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext })
+        .webkitAudioContext;
+    if (!AC) return null;
+    try {
+      const ctx = new AC();
+      const source = ctx.createMediaElementSource(a);
+      const gain = ctx.createGain();
+      gain.gain.value = layer.volume ?? 1;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+      sourceNodeRef.current = source;
+      gainNodeRef.current = gain;
+      return gain;
+    } catch {
+      return null;
+    }
+  };
+
+  // アンマウント時に Web Audio グラフを片付け
+  useEffect(() => {
+    return () => {
+      try {
+        gainNodeRef.current?.disconnect();
+        sourceNodeRef.current?.disconnect();
+        audioCtxRef.current?.close().catch(() => {});
+      } catch {
+        /* noop */
+      }
+      gainNodeRef.current = null;
+      sourceNodeRef.current = null;
+      audioCtxRef.current = null;
+    };
+  }, []);
 
   // currentTime を同期（scrub 中 / 再生停止中の追従）
   useEffect(() => {
@@ -1514,7 +1565,7 @@ function AudioLayerPlayer({
     }
   }, [currentTimeSec, layer.startSec, layer.audioLoop, layer.playbackRate]);
 
-  // 音量（HTMLAudioElement の 0〜1 制約内でフェードも考慮して反映）
+  // 音量（GainNode 経由で 0..1 制約を回避してフェードを反映）
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
@@ -1530,12 +1581,19 @@ function AudioLayerPlayer({
     if (fadeOut > 0 && toEnd < fadeOut) {
       gain *= Math.max(0, Math.min(1, toEnd / fadeOut));
     }
-    const volumeFinal = Math.max(0, Math.min(1, gain));
-    a.volume = volumeFinal;
-    a.muted = volumeFinal === 0; // muted も明示
-    console.log(
-      `[AudioLayer ${layer.id.slice(-6)}] volume=${volumeFinal.toFixed(2)} (base=${base}, fade=${gain !== base})`,
-    );
+    const volumeFinal = Math.max(0, gain);
+    const gainNode = ensureAudioGraph();
+    if (gainNode) {
+      // Web Audio 経路: GainNode で実音量、HTMLAudioElement.volume は素通し
+      gainNode.gain.value = volumeFinal;
+      a.volume = 1;
+      a.muted = volumeFinal === 0;
+    } else {
+      // フォールバック: AudioContext 不可。0..1 にクランプして HTMLAudioElement に直接
+      const clamped = Math.min(1, volumeFinal);
+      a.volume = clamped;
+      a.muted = clamped === 0;
+    }
   }, [
     currentTimeSec,
     layer.volume,
@@ -1553,9 +1611,6 @@ function AudioLayerPlayer({
     const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
     a.playbackRate = rate;
     a.defaultPlaybackRate = rate;
-    console.log(
-      `[AudioLayer ${layer.id.slice(-6)}] set playbackRate=${rate} (actual=${a.playbackRate})`,
-    );
   }, [layer.playbackRate, layer.id]);
 
   // play/pause（再生開始時に再生速度も再適用 — メタデータ読み込み前に設定したものが
@@ -1564,6 +1619,9 @@ function AudioLayerPlayer({
     const a = audioRef.current;
     if (!a) return;
     if (isPlaying) {
+      // Web Audio Context は autoplay policy で suspended 状態のことがあるため resume
+      ensureAudioGraph();
+      audioCtxRef.current?.resume().catch(() => {});
       const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
       a.playbackRate = rate;
       a.play()

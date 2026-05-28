@@ -13,6 +13,8 @@ export interface ExportOptions {
   quality?: VideoQualityPreset;
   /** 出力ファイル名のベース（拡張子・タイムスタンプは自動付与）。省略時は template.name を使う */
   title?: string;
+  /** overlay 並列グループ数。2/4/8 で filtergraph の直列ボトルネックを緩和（実験的） */
+  filterGroups?: number;
 }
 
 export interface ExportResult {
@@ -29,8 +31,12 @@ export interface ExportResult {
 export async function exportTemplateToVideo(
   opts: ExportOptions,
 ): Promise<ExportResult> {
-  const { template, onProgress, quality, title } = opts;
-  return generateVideoFromTemplate(template, onProgress, { quality, title });
+  const { template, onProgress, quality, title, filterGroups } = opts;
+  return generateVideoFromTemplate(template, onProgress, {
+    quality,
+    title,
+    filterGroups,
+  });
 }
 
 export async function cancelTemplateExport(): Promise<void> {

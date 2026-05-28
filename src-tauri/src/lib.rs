@@ -1898,6 +1898,37 @@ async fn save_render_chunk(
     Ok(out_path.to_string_lossy().into_owned())
 }
 
+/// WebCodecs ベースの完全エクスポート経路の最終 mp4 を出力ディレクトリ（生成動画/）直下に保存する。
+/// 既存 ffmpeg 経路の `compose_template_video` と同じ出力先になるので運用上互換。
+///
+/// `append=false`（最初のチャンク）: ファイルを新規作成（truncate）
+/// `append=true`（後続チャンク）: 既存ファイルに追記
+///
+/// Tauri IPC は JSON 経由なので 数百 MB の Uint8Array を一度に送ると
+/// `Array.from() → JSON.stringify` で `Invalid array length` (RangeError) が出る。
+/// JS 側で 8〜16MB チャンクに分割して順次呼ぶ。
+#[tauri::command]
+async fn save_final_video(
+    app: tauri::AppHandle,
+    filename: String,
+    bytes: Vec<u8>,
+    append: bool,
+) -> Result<String, String> {
+    let dir = output_base_dir(&app)?;
+    let out_path = dir.join(&filename);
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(append)
+        .truncate(!append)
+        .open(&out_path)
+        .map_err(|e| format!("save_final_video open: {}", e))?;
+    file.write_all(&bytes)
+        .map_err(|e| format!("save_final_video write: {}", e))?;
+    Ok(out_path.to_string_lossy().into_owned())
+}
+
 /// 任意パス (絶対) のテキストファイルを UTF-8 で読み込む。
 /// 主に VOICEVOX query JSON sidecar のような「絶対パスで指された小さなテキスト」を
 /// フロントエンドが読みたい場合に使う。
@@ -1967,6 +1998,9 @@ async fn compose_template_video(
     // 出力解像度（省略時は縦 1080x1920・旧テンプレ互換）
     canvas_width: Option<i32>,
     canvas_height: Option<i32>,
+    // overlay 並列グループ数（省略時は SSG_FILTER_GROUPS env、それも無ければ 1=旧挙動）。
+    // 2,4,8 で overlay tree モードを有効化（filtergraph の直列ボトルネック緩和）
+    filter_groups: Option<i32>,
 ) -> Result<String, String> {
     state.begin(session_id.clone());
     let sid_for_cleanup = session_id.clone();
@@ -1984,6 +2018,7 @@ async fn compose_template_video(
         video_encoder.unwrap_or_else(|| "libx264".to_string()),
         canvas_width.unwrap_or(1080).max(2),
         canvas_height.unwrap_or(1920).max(2),
+        filter_groups,
     );
     state.end();
     // 成功時は中間 session フォルダ（layer_*.png 等）を削除してディスクを節約。
@@ -2009,6 +2044,7 @@ fn compose_template_video_inner(
     video_encoder: String,
     canvas_width: i32,
     canvas_height: i32,
+    filter_groups_override: Option<i32>,
 ) -> Result<String, String> {
     let base_dir = output_base_dir(&app)?;
     let asset_dir = base_dir.join(&session_id);
@@ -2237,6 +2273,7 @@ fn compose_template_video_inner(
         let kf_y_anim = keyframe_is_animating(&layer.keyframes.y);
         let kf_scale_anim = keyframe_is_animating(&layer.keyframes.scale);
         let kf_rotation_anim = keyframe_is_animating(&layer.keyframes.rotation);
+        let kf_opacity_anim = keyframe_is_animating(&layer.keyframes.opacity);
 
         let exit_start =
             (layer.end_sec - layer.exit_duration).max(layer.start_sec);
@@ -2307,8 +2344,14 @@ fn compose_template_video_inner(
         //      （pop のバウンス感は失われるが、scale=1 までの easing は残る）
         //   2. scale 直後に pad で「元の PNG サイズに常に揃える」
         //      → overlay framesync が変動サイズに悩まなくなる
+        // ただし rotation が effective なときは rotate 後の bbox が
+        // hypot(iw,ih) (= 元 PNG の √2 倍) に拡大されるため、pad 目標 (元 PNG サイズ)
+        // を下回らせると `Padded dimensions cannot be smaller than input dimensions`
+        // で停止する。rotation 系では pad をスキップする。
         let is_static_layer = input_idx.is_none();
-        let needs_size_stabilize = is_static_layer && has_scale_anim;
+        let has_any_rotation = has_dynamic_rotation || has_rotation_static;
+        let needs_size_stabilize =
+            is_static_layer && has_scale_anim && !has_any_rotation;
 
         // scale: キーフレーム優先。なければ entry/exit + ambient pulse を合算。
         if kf_scale_anim {
@@ -2350,12 +2393,22 @@ fn compose_template_video_inner(
                 sx = sx, sy = sy,
             ));
             if needs_size_stabilize {
-                // pad は scale 後の小さいフレームを元 PNG サイズ (w_px × h_px) の
-                // 透明キャンバスに中央配置 → 出力フレームサイズが毎フレーム同じになる。
+                // pad は scale 後の小さいフレームを元 PNG サイズの透明キャンバスに
+                // 中央配置 → 出力フレームサイズが毎フレーム同じになる。
+                //
+                // odd-width PNG が format=yuva420p の chroma subsample で実フレーム幅が
+                // 1px 増えるケースがあり、その場合 pad 目標を超えて
+                // 「Padded dimensions cannot be smaller than input dimensions」で
+                // 停止する。pad の `iw` は link-time evaluate で per-frame 追従できない
+                // ため、`max(iw, ow)` は機能しない。
+                //
+                // 解決策: pad 目標を **偶数に切り上げ** て、chroma 補正分の余白を確保。
+                let ow = (layer.w_px + 1) & !1;
+                let oh = (layer.h_px + 1) & !1;
                 chain.push_str(&format!(
                     ",pad=w={ow}:h={oh}:x='({ow}-iw)/2':y='({oh}-ih)/2':color=black@0:eval=frame",
-                    ow = layer.w_px,
-                    oh = layer.h_px,
+                    ow = ow,
+                    oh = oh,
                 ));
             }
         }
@@ -2387,8 +2440,18 @@ fn compose_template_video_inner(
             chain.push_str(&format!(",{}", fade));
         }
 
-        // 不透明度
-        if (layer.opacity - 1.0).abs() > 0.01 {
+        // 不透明度: キーフレームがあれば時刻依存式を geq で適用、無ければ静的値を colorchannelmixer。
+        // colorchannelmixer は eval をサポートしないため、時刻可変な alpha 適用には geq を使う。
+        // keyframe_expr は overlay 用に変数名 `t` を使うが、geq は `T`（大文字）なので置換する。
+        if kf_opacity_anim {
+            let opacity_expr = keyframe_expr(&layer.keyframes.opacity, layer.opacity)
+                .replace("lt(t,", "lt(T,")
+                .replace("(t-", "(T-");
+            chain.push_str(&format!(
+                ",format=rgba,geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*clip({},0,1)'",
+                opacity_expr
+            ));
+        } else if (layer.opacity - 1.0).abs() > 0.01 {
             chain.push_str(&format!(
                 ",colorchannelmixer=aa={:.3}",
                 layer.opacity.clamp(0.0, 1.0)
@@ -2519,9 +2582,14 @@ fn compose_template_video_inner(
     // overlay の "over" 演算子は結合則を持つので**理論上は同じ絵**になる。
     // ただし 8bit YUVA の丸めで端の色が微差出る可能性あり。A/B 検証してから
     // default を切替える運用。デフォルトは安全に旧挙動 (1)。
-    let num_groups: usize = std::env::var("SSG_FILTER_GROUPS")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
+    // 優先順位: payload (UI) > SSG_FILTER_GROUPS env > 1 (旧挙動)
+    let num_groups: usize = filter_groups_override
+        .map(|v| v as usize)
+        .or_else(|| {
+            std::env::var("SSG_FILTER_GROUPS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+        })
         .unwrap_or(1)
         .max(1)
         .min(16);
@@ -2605,10 +2673,17 @@ fn compose_template_video_inner(
         let input_idx = audio_layer_to_idx[i];
         let mut steps: Vec<String> = Vec::new();
 
-        // 再生速度（atempo は 0.5〜100.0 対応。実用範囲は 0.5〜4.0）
+        // 再生速度（atempo は 0.5〜100.0 対応）。
+        // プレビュー側は 0.05..4.0 を許容しているので、0.5 未満は atempo を多段化して合成する。
         if (audio.playback_rate - 1.0).abs() > 0.01 {
-            let rate = audio.playback_rate.max(0.5).min(4.0);
-            steps.push(format!("atempo={:.3}", rate));
+            let mut rate = audio.playback_rate.max(0.05).min(4.0);
+            while rate < 0.5 {
+                steps.push("atempo=0.5".to_string());
+                rate /= 0.5;
+            }
+            if (rate - 1.0).abs() > 0.001 {
+                steps.push(format!("atempo={:.3}", rate.min(4.0)));
+            }
         }
         let clip_dur = (audio.end_sec - audio.start_sec).max(0.0);
         if clip_dur > 0.0 {
@@ -3648,6 +3723,7 @@ pub fn run() {
             get_audio_duration,
             read_voicevox_query,
             save_render_chunk,
+            save_final_video,
             import_live2d_model,
             import_live2d_global,
             list_live2d_models,

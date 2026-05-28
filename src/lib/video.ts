@@ -127,7 +127,12 @@ function sanitizeFilename(s: string, fallback: string): string {
 export async function generateVideoFromTemplate(
   template: VideoTemplate,
   onProgress: ProgressCallback,
-  options?: { quality?: VideoQualityPreset; title?: string },
+  options?: {
+    quality?: VideoQualityPreset;
+    title?: string;
+    /** overlay 並列グループ数。指定なしなら 1（旧挙動）。2/4/8 で filter tree 並列化 */
+    filterGroups?: number;
+  },
 ): Promise<VideoResult> {
   const qualityKey = options?.quality ?? "standard";
   const { crf: videoCrf, preset: videoPreset } =
@@ -445,6 +450,7 @@ export async function generateVideoFromTemplate(
       videoEncoder: settings.videoEncoder || "libx264",
       canvasWidth: canvasDims.width,
       canvasHeight: canvasDims.height,
+      filterGroups: options?.filterGroups,
     });
   } finally {
     unlistenProgress();
