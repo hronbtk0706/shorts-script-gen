@@ -231,8 +231,12 @@ async function drawLayerContentOnly(
       }
       case "color":
       case "shape":
-        ctx.fillStyle = layer.fillColor ?? "#333";
-        ctx.fillRect(0, 0, w, h);
+        if (layer.shape === "arc") {
+          drawArcShape(ctx, layer, w, h);
+        } else {
+          ctx.fillStyle = layer.fillColor ?? "#333";
+          ctx.fillRect(0, 0, w, h);
+        }
         break;
       case "comment":
         if (layer.bubble) {
@@ -342,8 +346,12 @@ async function drawLayer(
       }
       case "color":
       case "shape":
-        ctx.fillStyle = layer.fillColor ?? "#333";
-        ctx.fillRect(0, 0, w, h);
+        if (layer.shape === "arc") {
+          drawArcShape(ctx, layer, w, h);
+        } else {
+          ctx.fillStyle = layer.fillColor ?? "#333";
+          ctx.fillRect(0, 0, w, h);
+        }
         break;
       case "comment":
         if (layer.fillColor) {
@@ -379,12 +387,51 @@ function applyShapeClip(
     const r = (layer.borderRadius ?? 12) * (FINAL_W / 360); // キャンバスプレビュー縮尺 → 実寸
     roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
     ctx.clip();
+  } else if (layer.shape === "arc") {
+    // arc は形状自身が描画範囲を決めるためクリップ不要。何もしない。
+    // （drawArcShape が直接 fill するので、矩形クリップを噛ますと逆に問題になる）
   } else {
     // "rect" or undefined: 矩形でクリップ（画像の cover フィットではみ出す分を切る）
     ctx.beginPath();
     ctx.rect(0, 0, w, h);
     ctx.clip();
   }
+}
+
+/**
+ * 扇形 / ドーナツセグメントを描画する。
+ * - 角度: 度。0° = 真上（12時方向）、時計回りで増加（90° = 3時方向）→ Canvas の弧角度に変換するため -π/2 を加える
+ * - 半径: box の min(w,h)/2 を 1.0 とする比率
+ * - arcInnerRadius = 0 ならベタ塗りの扇形（パイ）。> 0 ならドーナツセグメント。
+ * curio-gen が円グラフ／ドーナツチャートを native レイヤーで描くために使う。
+ */
+function drawArcShape(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const maxR = Math.min(w, h) / 2;
+  const outerR = (layer.arcOuterRadius ?? 1.0) * maxR;
+  const innerR = (layer.arcInnerRadius ?? 0.0) * maxR;
+  const startRad = ((layer.arcStart ?? 0) * Math.PI) / 180 - Math.PI / 2;
+  const endRad = ((layer.arcEnd ?? 360) * Math.PI) / 180 - Math.PI / 2;
+  ctx.beginPath();
+  if (innerR > 0) {
+    // ドーナツセグメント: 外周を時計回り → 内周を反時計回りで穴を空ける
+    ctx.arc(cx, cy, outerR, startRad, endRad, false);
+    ctx.arc(cx, cy, innerR, endRad, startRad, true);
+    ctx.closePath();
+  } else {
+    // ベタ塗り扇形: 中心 → 弧 → 中心
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, outerR, startRad, endRad, false);
+    ctx.closePath();
+  }
+  ctx.fillStyle = layer.fillColor ?? "#333";
+  ctx.fill();
 }
 
 function drawBorder(

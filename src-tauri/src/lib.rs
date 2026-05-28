@@ -1969,6 +1969,7 @@ async fn compose_template_video(
     canvas_height: Option<i32>,
 ) -> Result<String, String> {
     state.begin(session_id.clone());
+    let sid_for_cleanup = session_id.clone();
     let result = compose_template_video_inner(
         app.clone(),
         &state,
@@ -1985,6 +1986,12 @@ async fn compose_template_video(
         canvas_height.unwrap_or(1920).max(2),
     );
     state.end();
+    // 成功時は中間 session フォルダ（layer_*.png 等）を削除してディスクを節約。
+    // 失敗時はデバッグのため残す（PNG・filter ファイル・cmd_args ログから原因追跡できる）。
+    // cancel 時は cancel_export 側で既に削除済み。
+    if result.is_ok() {
+        let _ = clean_session_dir(&app, &sid_for_cleanup);
+    }
     result
 }
 
@@ -2293,6 +2300,15 @@ fn compose_template_video_inner(
         );
         let has_ambient_scale = amb_scale_factor.is_some();
         let has_scale_anim = has_entry_exit_scale_anim || has_ambient_scale;
+        // static (PNG ループ) レイヤーで scale=eval=frame の出力サイズが毎フレーム変動すると
+        // 長い overlay チェーン内で framesync が混乱して「カードが見えない」現象が出る。
+        // 対策:
+        //   1. scale 式を min(1, ...) でクランプして overshoot (scale > 1) を抑制
+        //      （pop のバウンス感は失われるが、scale=1 までの easing は残る）
+        //   2. scale 直後に pad で「元の PNG サイズに常に揃える」
+        //      → overlay framesync が変動サイズに悩まなくなる
+        let is_static_layer = input_idx.is_none();
+        let needs_size_stabilize = is_static_layer && has_scale_anim;
 
         // scale: キーフレーム優先。なければ entry/exit + ambient pulse を合算。
         if kf_scale_anim {
@@ -2318,10 +2334,30 @@ fn compose_template_video_inner(
                 sx = format!("({})*{}", sx, p);
                 sy = format!("({})*{}", sy, p);
             }
+            // static (PNG ループ) では pad で出力サイズを固定する必要がある。
+            // pop の bounce オーバーシュート (scale > 1) は pad 出力サイズを超えて
+            // 負の pad x/y を生み、ffmpeg が Invalid argument で停止するため、
+            // scale 式を min(1, ...) でクランプする。
+            // 1 を超える瞬間の "ピョッ" としたバウンス感は失われるが、
+            // 0→1 への easing 自体は維持される。ambient pulse は overshoot しない
+            // 設計なのでクランプ不要。
+            if needs_size_stabilize {
+                sx = format!("min(1,{})", sx);
+                sy = format!("min(1,{})", sy);
+            }
             chain.push_str(&format!(
                 ",scale=w='iw*({sx})':h='ih*({sy})':eval=frame:flags=bilinear",
                 sx = sx, sy = sy,
             ));
+            if needs_size_stabilize {
+                // pad は scale 後の小さいフレームを元 PNG サイズ (w_px × h_px) の
+                // 透明キャンバスに中央配置 → 出力フレームサイズが毎フレーム同じになる。
+                chain.push_str(&format!(
+                    ",pad=w={ow}:h={oh}:x='({ow}-iw)/2':y='({oh}-ih)/2':color=black@0:eval=frame",
+                    ow = layer.w_px,
+                    oh = layer.h_px,
+                ));
+            }
         }
 
         // fade（境界ピッタリ接触側はスキップで明滅防止）

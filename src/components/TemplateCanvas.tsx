@@ -645,6 +645,9 @@ function renderLayerContent(
 ): React.ReactNode {
   switch (layer.type) {
     case "color":
+      if (layer.shape === "arc") {
+        return <ArcShapeSvg layer={layer} defaultFill="#333" />;
+      }
       return (
         <div
           style={{
@@ -655,6 +658,9 @@ function renderLayerContent(
         />
       );
     case "shape":
+      if (layer.shape === "arc") {
+        return <ArcShapeSvg layer={layer} defaultFill="#FFE600" />;
+      }
       return (
         <div
           style={{
@@ -797,6 +803,89 @@ function renderLayerContent(
 }
 
 /** 吹き出し背景の SVG 描画コンポーネント */
+/**
+ * 扇形 / ドーナツセグメントを SVG path で描画する（layer.shape === "arc"）。
+ * layerComposer.ts の drawArcShape と同じ仕様:
+ * - 0° = 真上（12時方向）、時計回り
+ * - 半径は box の min(w,h)/2 を 1.0 とする比率
+ * - arcInnerRadius = 0 → 扇形（パイ）、> 0 → ドーナツセグメント
+ * viewBox は正方形にして preserveAspectRatio="xMidYMid meet" で box の短辺に合わせる。
+ */
+function ArcShapeSvg({
+  layer,
+  defaultFill,
+}: {
+  layer: Layer;
+  defaultFill: string;
+}) {
+  const startDeg = layer.arcStart ?? 0;
+  const endDeg = layer.arcEnd ?? 360;
+  const outerScale = layer.arcOuterRadius ?? 1.0;
+  const innerScale = layer.arcInnerRadius ?? 0.0;
+  const fill = layer.fillColor ?? defaultFill;
+
+  // 100x100 viewBox、中心 (50,50)、最大半径 50
+  const cx = 50;
+  const cy = 50;
+  const maxR = 50;
+  const oR = outerScale * maxR;
+  const iR = innerScale * maxR;
+
+  // 0° = 12時方向、時計回り → SVG math 角度 = (deg - 90)° 、sin/cos 通常通り
+  const toRad = (deg: number) => ((deg - 90) * Math.PI) / 180;
+  const sweep = endDeg - startDeg;
+  const isFullCircle = Math.abs(sweep) >= 360 - 0.01;
+  const largeArc = Math.abs(sweep) > 180 ? 1 : 0;
+
+  let d = "";
+  if (isFullCircle) {
+    // 完全な円: A コマンドは始点=終点だと描かれないので 2 弧で構成
+    if (iR > 0) {
+      d =
+        `M ${cx + oR},${cy} A ${oR},${oR} 0 1,1 ${cx - oR},${cy} ` +
+        `A ${oR},${oR} 0 1,1 ${cx + oR},${cy} Z ` +
+        `M ${cx + iR},${cy} A ${iR},${iR} 0 1,0 ${cx - iR},${cy} ` +
+        `A ${iR},${iR} 0 1,0 ${cx + iR},${cy} Z`;
+    } else {
+      d =
+        `M ${cx + oR},${cy} A ${oR},${oR} 0 1,1 ${cx - oR},${cy} ` +
+        `A ${oR},${oR} 0 1,1 ${cx + oR},${cy} Z`;
+    }
+  } else {
+    const sRad = toRad(startDeg);
+    const eRad = toRad(endDeg);
+    const sx = cx + oR * Math.cos(sRad);
+    const sy = cy + oR * Math.sin(sRad);
+    const ex = cx + oR * Math.cos(eRad);
+    const ey = cy + oR * Math.sin(eRad);
+    if (iR > 0) {
+      const isx = cx + iR * Math.cos(sRad);
+      const isy = cy + iR * Math.sin(sRad);
+      const iex = cx + iR * Math.cos(eRad);
+      const iey = cy + iR * Math.sin(eRad);
+      d =
+        `M ${sx},${sy} A ${oR},${oR} 0 ${largeArc},1 ${ex},${ey} ` +
+        `L ${iex},${iey} A ${iR},${iR} 0 ${largeArc},0 ${isx},${isy} Z`;
+    } else {
+      d =
+        `M ${cx},${cy} L ${sx},${sy} ` +
+        `A ${oR},${oR} 0 ${largeArc},1 ${ex},${ey} Z`;
+    }
+  }
+
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      preserveAspectRatio="xMidYMid meet"
+      width="100%"
+      height="100%"
+      style={{ display: "block" }}
+    >
+      <path d={d} fill={fill} fillRule="evenodd" />
+    </svg>
+  );
+}
+
 function BubbleSvg({ layer }: { layer: Layer }) {
   const bubble = layer.bubble;
   if (!bubble) return null;

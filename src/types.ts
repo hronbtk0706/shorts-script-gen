@@ -10,7 +10,7 @@ export type LayerType =
   | "audio"
   | "character";
 
-export type LayerShape = "rect" | "circle" | "rounded";
+export type LayerShape = "rect" | "circle" | "rounded" | "arc";
 
 export interface LayerBorder {
   width: number;
@@ -238,6 +238,17 @@ export interface Layer {
   shape?: LayerShape;
   borderRadius?: number;
   border?: LayerBorder;
+  /**
+   * shape === "arc" のときのみ使用。扇形 / ドーナツセグメント描画用。
+   * 角度は度。0° = 真上（12時方向）、時計回りで増加（90° = 3時方向）。
+   * 半径は box の min(width, height)/2 を 1.0 とした比率。
+   * arcInnerRadius = 0 ならベタ塗りの扇形（パイ）。> 0 なら中空のドーナツセグメント。
+   * curio-gen のドーナツ／円グラフ用に追加。
+   */
+  arcStart?: number;
+  arcEnd?: number;
+  arcInnerRadius?: number;
+  arcOuterRadius?: number;
   source?: "auto" | "user" | string;
   fillColor?: string;
   text?: string;
