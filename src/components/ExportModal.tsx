@@ -148,14 +148,18 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
     progress?.phase && PHASE_LABEL[progress.phase]
       ? PHASE_LABEL[progress.phase]
       : "準備中…";
+  // ratio (0.0〜1.0) が来ていればそれを優先（ffmpeg 結合中の time= ベース進捗）。
+  // それ以外は従来通り sceneIndex/totalScenes から（overlay 等のフェーズ用）。
   const percent =
-    progress && progress.totalScenes > 0 && progress.sceneIndex !== undefined
-      ? Math.round(
-          ((progress.sceneIndex + 1) / (progress.totalScenes + 1)) * 100,
-        )
-      : phase === "success"
-        ? 100
-        : 0;
+    progress && typeof progress.ratio === "number"
+      ? Math.round(Math.max(0, Math.min(1, progress.ratio)) * 100)
+      : progress && progress.totalScenes > 0 && progress.sceneIndex !== undefined
+        ? Math.round(
+            ((progress.sceneIndex + 1) / (progress.totalScenes + 1)) * 100,
+          )
+        : phase === "success"
+          ? 100
+          : 0;
 
   const isBusy = phase === "running" || phase === "cancelling";
   const isClosable = !isBusy;

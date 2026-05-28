@@ -123,16 +123,88 @@ impl ExportCancelState {
 
 /// FFmpeg を呼ぶ共通ヘルパー。cancelled が立っていたら即 Err、
 /// spawn 後は child を state に登録して外部から kill 可能にする。
+///
+/// 重要: stdout/stderr は piped にした上で **バックグラウンドスレッドで継続ドレイン** する。
+/// これをやらないと Windows の小さい pipe buffer（既定 ~4KB）が満杯になった瞬間に
+/// ffmpeg が次の stderr write でブロックし、CPU 0.1% / mp4 サイズ停滞という典型的
+/// な「ハング」になる（167 movie ソースの init や毎秒数行の進捗ログだけで秒〜数分
+/// で満杯になる）。スレッドで read_to_end しておけば終了時に collected Vec を
+/// `Output.stderr` として返せるので、エラー時のメッセージも従来通り取得できる。
+///
+/// progress: Some((app, total_duration_sec)) を渡すと stderr の `time=HH:MM:SS.MS`
+/// 行を拾って `ffmpeg-progress` イベント（payload: 0.0〜1.0 の f64 比率）を emit する。
 fn run_ffmpeg_cancellable(
     mut cmd: Command,
     state: &ExportCancelState,
+    progress: Option<(tauri::AppHandle, f64)>,
 ) -> Result<std::process::Output, String> {
+    use std::io::Read;
+    use tauri::Emitter;
     if state.is_cancelled() {
         return Err("cancelled".into());
     }
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    let child = cmd.spawn().map_err(|e| format!("spawn: {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| format!("spawn: {}", e))?;
+
+    // 走行中ドレイン: child から stdout/stderr を奪い、専用スレッドで EOF まで読み続ける。
+    // ffmpeg 終了で pipe が close され read_to_end が返り、join() で回収できる。
+    let mut stdout_pipe = child.stdout.take().ok_or("stdout already taken")?;
+    let mut stderr_pipe = child.stderr.take().ok_or("stderr already taken")?;
+    let stdout_handle = std::thread::Builder::new()
+        .name("ffmpeg-stdout-drain".into())
+        .spawn(move || {
+            let mut buf: Vec<u8> = Vec::with_capacity(4096);
+            let _ = stdout_pipe.read_to_end(&mut buf);
+            buf
+        })
+        .map_err(|e| format!("stdout drain thread spawn: {e}"))?;
+    let progress_for_stderr = progress.clone();
+    let stderr_handle = std::thread::Builder::new()
+        .name("ffmpeg-stderr-drain".into())
+        .spawn(move || {
+            // ffmpeg は進捗を CR で上書き出力するので、\n と \r 両方を区切り扱いする。
+            // 区切りごとに line_buf を解析 → progress 設定時は ffmpeg-progress を emit。
+            let mut all: Vec<u8> = Vec::with_capacity(8192);
+            let mut line_buf: Vec<u8> = Vec::with_capacity(256);
+            let mut chunk = [0u8; 1024];
+            let mut last_emit = std::time::Instant::now()
+                - std::time::Duration::from_secs(1);
+            loop {
+                match stderr_pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        all.extend_from_slice(&chunk[..n]);
+                        for &b in &chunk[..n] {
+                            if b == b'\n' || b == b'\r' {
+                                if !line_buf.is_empty() {
+                                    if let Some((app, total)) = progress_for_stderr.as_ref() {
+                                        if *total > 0.0
+                                            && last_emit.elapsed().as_millis() >= 200
+                                        {
+                                            if let Ok(s) = std::str::from_utf8(&line_buf) {
+                                                if let Some(t) = parse_ffmpeg_time(s) {
+                                                    let r = (t / total).clamp(0.0, 1.0);
+                                                    let _ = app.emit("ffmpeg-progress", r);
+                                                    last_emit = std::time::Instant::now();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    line_buf.clear();
+                                }
+                            } else {
+                                line_buf.push(b);
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            all
+        })
+        .map_err(|e| format!("stderr drain thread spawn: {e}"))?;
+
     *state.current_child.lock().unwrap() = Some(child);
 
     // try_wait ベースのポーリング（50ms）
@@ -143,33 +215,33 @@ fn run_ffmpeg_cancellable(
                 let _ = c.kill();
             }
             let _ = state.current_child.lock().unwrap().take();
+            // ドレインスレッドの後始末（kill 後 pipe close → 早期 join）
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
             return Err("cancelled".into());
         }
-        let exited: bool = {
+        let status_opt: Option<std::process::ExitStatus> = {
             let mut guard = state.current_child.lock().unwrap();
             match guard.as_mut() {
-                Some(c) => match c.try_wait() {
-                    Ok(Some(_status)) => true,
-                    Ok(None) => false,
-                    Err(e) => return Err(format!("try_wait: {}", e)),
-                },
+                Some(c) => c.try_wait().map_err(|e| format!("try_wait: {}", e))?,
                 None => return Err("child removed unexpectedly".into()),
             }
         };
-        if exited {
-            let child = state
-                .current_child
-                .lock()
-                .unwrap()
-                .take()
-                .ok_or("child already taken")?;
-            let output = child
-                .wait_with_output()
-                .map_err(|e| format!("wait_with_output: {}", e))?;
+        if let Some(status) = status_opt {
+            // child を state から外す（drop で resource 解放）
+            let _ = state.current_child.lock().unwrap().take();
             if state.is_cancelled() {
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
                 return Err("cancelled".into());
             }
-            return Ok(output);
+            let stdout = stdout_handle.join().unwrap_or_default();
+            let stderr = stderr_handle.join().unwrap_or_default();
+            return Ok(std::process::Output {
+                status,
+                stdout,
+                stderr,
+            });
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -262,6 +334,38 @@ fn save_template(id: String, json: String) -> Result<(), String> {
     let dir = templates_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
     let path = dir.join(format!("{id}.json"));
+
+    // 同一 id を持つ別名ファイルを掃除（一覧の重複表示を防ぐ）。
+    // curio-gen 由来の `template_<テーマ名>_*.json` 等を編集すると、auto-save が
+    // `<id>.json` を新たに作って同じ id のファイルが 2 個並ぶ問題があった。
+    // 書き出し前に「同じ id を持つ別名 JSON」を削除して、ファイル名 ↔ 内部id を
+    // 1 対 1 に正規化する（`<id>.json` 自身はこの後の write で上書きされる）。
+    if dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p == path {
+                    continue; // 本来書く先はスキップ（後段で上書き）
+                }
+                if p.extension().and_then(|s| s.to_str()) != Some("json") {
+                    continue;
+                }
+                let content = match std::fs::read_to_string(&p) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let matches = serde_json::from_str::<serde_json::Value>(&content)
+                    .ok()
+                    .and_then(|v| v.get("id").and_then(|i| i.as_str().map(String::from)))
+                    .map(|file_id| file_id == id)
+                    .unwrap_or(false);
+                if matches {
+                    let _ = std::fs::remove_file(&p);
+                }
+            }
+        }
+    }
+
     std::fs::write(&path, json).map_err(|e| format!("write: {e}"))?;
     Ok(())
 }
@@ -271,10 +375,46 @@ fn delete_template(id: String) -> Result<(), String> {
     if id.is_empty() || id.contains('/') || id.contains('\\') || id.contains("..") {
         return Err("invalid template id".into());
     }
-    let path = templates_dir().join(format!("{id}.json"));
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|e| format!("remove: {e}"))?;
+    let dir = templates_dir();
+
+    // 1) <id>.json を直接削除（アプリの save_template はこの名前で書き出す）。
+    let direct = dir.join(format!("{id}.json"));
+    if direct.exists() {
+        std::fs::remove_file(&direct).map_err(|e| format!("remove: {e}"))?;
     }
+
+    // 2) ファイル名が <id>.json でないテンプレも削除する。
+    //    curio-gen 生成 / パック取込のテンプレは `template_<テーマ名>_simple.json` の
+    //    ようにテーマ名ベースのファイル名で、内部 id（curiogen_xxxx 等）と一致しない。
+    //    list_templates は中身を返すだけなので id からファイル名を逆引きできず、
+    //    従来は <id>.json が無い → 無言で no-op → 「削除できないテンプレ」になっていた。
+    //    そこで全 .json を走査し、JSON 内の "id" が一致するファイルを消す。
+    if dir.exists() {
+        let entries = std::fs::read_dir(&dir).map_err(|e| format!("read_dir: {e}"))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path == direct {
+                continue; // 1) で処理済み
+            }
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let matches = serde_json::from_str::<serde_json::Value>(&content)
+                .ok()
+                .and_then(|v| v.get("id").and_then(|i| i.as_str().map(String::from)))
+                .map(|file_id| file_id == id)
+                .unwrap_or(false);
+            if matches {
+                std::fs::remove_file(&path)
+                    .map_err(|e| format!("remove {}: {e}", path.display()))?;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1443,12 +1583,47 @@ async fn edge_tts(
     Ok(wav_path.to_string_lossy().into_owned())
 }
 
+/// ffmpeg の stderr 1行から `time=HH:MM:SS.MS`（または `time=HH:MM:SS.MS\s` / 行末）
+/// を見つけて秒に変換して返す。見つからなければ None。
+fn parse_ffmpeg_time(line: &str) -> Option<f64> {
+    let idx = line.find("time=")?;
+    let rest = &line[idx + 5..];
+    // 値部分はスペース or 末尾まで
+    let end = rest.find(' ').unwrap_or(rest.len());
+    let t = rest[..end].trim();
+    // "N/A" のときもあるのでスキップ
+    if t.is_empty() || t == "N/A" {
+        return None;
+    }
+    let parts: Vec<&str> = t.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let h: f64 = parts[0].parse().ok()?;
+    let m: f64 = parts[1].parse().ok()?;
+    let s: f64 = parts[2].parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
+}
+
 fn escape_xml(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+/// ffmpeg の `movie=` フィルタ filename 引数用にパスをエスケープする。
+/// - Windows のバックスラッシュ区切りを `/` に変換（ffmpeg は `/` を受け付ける）
+/// - filtergraph は 2 段エスケープのため、ドライブの `:` は `\\:`（バックスラッシュ 2 個）
+///   にしないと movie フィルタのオプション区切りと衝突して `'C'` を開こうとして失敗する
+///   （Windows 実機 ffmpeg 8.1 で検証済み）。
+///
+/// 本アプリの static PNG は `Documents/生成動画/<session>/layer_<id>.png` に置かれ、
+/// パスに `,` `;` `[` `]` `'` 等の filtergraph 特殊文字は含まれない運用なので、
+/// ここでは `:` のエスケープのみ行う。
+fn escape_movie_path(path: &str) -> String {
+    path.replace('\\', "/").replace(':', "\\\\:")
 }
 
 fn gen_id() -> String {
@@ -1851,61 +2026,57 @@ fn compose_template_video_inner(
         ),
     ]);
 
-    // 入力 1..N: 各レイヤー（パス + ループ設定 + kind で dedup）
-    // 同じ video が複数 chunk で背景に使われると -i が重複して argv 肥大化 → Windows 32KB
-    // 制限超過。同一入力は ffmpeg 内で複数回参照できるので、入力自体は 1 回だけ追加し、
-    // filter_complex から複数回 [N:v] で参照する。
-    let mut vis_input_to_idx: HashMap<(String, bool, bool), usize> = HashMap::new();
-    let mut vis_layer_to_idx: Vec<usize> = Vec::with_capacity(n_layers);
+    // 入力 1..N: video レイヤーのみ -i で追加（同じ video が複数 chunk で背景に使われると
+    // -i が重複して argv 肥大化するので パス + loop で dedup）。
+    //
+    // static レイヤー（image/comment/text/color/shape を焼いた PNG）は -i に追加しない。
+    // 各 static は filter チェーン内の movie= 源で直接ファイルを読む（vis_layer_to_idx = None）。
+    // 理由: 数百個の static の長い絶対パスが `-loop 1 -framerate 30 -t XX -i <path>` として
+    // argv に並ぶと、Windows の CreateProcess 32767 char 制限を超えて spawn os error 206 に
+    // なる。movie= で読めばパスは（8KB 超で）ファイル経由になる filter_complex_script 側へ
+    // 移り、argv からは消える。PNG 自体は不変なのでプレビューとの一致は保たれる。
+    let mut vis_input_to_idx: HashMap<(String, bool), usize> = HashMap::new();
+    let mut vis_layer_to_idx: Vec<Option<usize>> = Vec::with_capacity(n_layers);
     let mut next_input_idx: usize = 1; // 0 は黒背景
+    let mut static_count: usize = 0;
 
     for layer in &layers_sorted {
-        let key = (
-            layer.path.clone(),
-            // video の場合のみ stream_loop の有無で別入力扱い
-            layer.video_loop,
-            layer.kind == "static",
-        );
-        let idx = if let Some(&existing) = vis_input_to_idx.get(&key) {
-            existing
-        } else {
-            let new_idx = next_input_idx;
-            next_input_idx += 1;
-            match layer.kind.as_str() {
-                "static" => {
-                    cmd.args([
-                        "-loop",
-                        "1",
-                        "-framerate",
-                        &FPS.to_string(),
-                        "-t",
-                        &format!("{:.3}", total_duration),
-                        "-i",
-                    ])
-                        .arg(&layer.path);
-                }
-                "video" => {
+        match layer.kind.as_str() {
+            "static" => {
+                // 入力には追加しない。filter チェーンで movie= から読む。
+                static_count += 1;
+                vis_layer_to_idx.push(None);
+            }
+            "video" => {
+                // ループ可否は呼び出し元（curio-gen の timeline_export 等）が
+                // layer.video_loop で指定する。curio-gen はループ感を避けるため
+                // playbackRate で尺合わせする設計（videoLoop=False が標準）。
+                // ループ要望時のみ stream_loop -1 を付与。
+                let key = (layer.path.clone(), layer.video_loop);
+                let idx = if let Some(&existing) = vis_input_to_idx.get(&key) {
+                    existing
+                } else {
+                    let new_idx = next_input_idx;
+                    next_input_idx += 1;
                     if layer.video_loop {
                         cmd.args(["-stream_loop", "-1"]);
                     }
                     cmd.args(["-i"]).arg(&layer.path);
-                }
-                other => {
-                    return Err(format!("unknown layer kind: {}", other));
-                }
+                    vis_input_to_idx.insert(key, new_idx);
+                    new_idx
+                };
+                vis_layer_to_idx.push(Some(idx));
             }
-            vis_input_to_idx.insert(key, new_idx);
-            new_idx
-        };
-        vis_layer_to_idx.push(idx);
+            other => {
+                return Err(format!("unknown layer kind: {}", other));
+            }
+        }
     }
 
     let total_visual_inputs = next_input_idx - 1;
     eprintln!(
-        "[compose_template_video] visual inputs: total layers={}, unique inputs={}, dedup saved={}",
-        n_layers,
-        total_visual_inputs,
-        n_layers - total_visual_inputs,
+        "[compose_template_video] visual inputs: layers={}, video -i inputs={}, static(movie filter)={}",
+        n_layers, total_visual_inputs, static_count,
     );
 
     // 入力 N+1..: オーディオレイヤー（同じ wav が複数 chunk で参照されることは少ないが
@@ -1941,20 +2112,42 @@ fn compose_template_video_inner(
     // ======== filter_complex ========
     let mut filter_parts: Vec<String> = Vec::new();
 
-    // ----- ビデオ: 背景 → 各レイヤー overlay -----
-    let mut current_bg = "[0:v]".to_string();
+    // 各レイヤーごとに、後段で overlay チェーンを組むのに必要な情報を集める。
+    // overlay チェーン構造（直列 or グループ並列）は最終ループで決める。
+    struct LayerOverlay {
+        label: String,
+        pos: String,
+        start_sec: f64,
+        end_sec: f64,
+    }
+    let mut overlays: Vec<LayerOverlay> = Vec::with_capacity(n_layers);
+
+    // ----- ビデオ: 各レイヤーの per-layer chain を構築 -----
     for (i, layer) in layers_sorted.iter().enumerate() {
         let input_idx = vis_layer_to_idx[i];
-        let is_last = i + 1 == n_layers;
-        let next_bg = if is_last {
-            "[vout]".to_string()
-        } else {
-            format!("[vbg{}]", i)
-        };
         let layer_label = format!("[lyr{}]", i);
 
-        // レイヤーのフィルタチェーン
-        let mut chain = format!("[{}:v]", input_idx);
+        // レイヤーのフィルタチェーン。
+        // video は -i で追加済みの入力 [idx:v] を起点にする。
+        // static は入力を持たず、movie= でファイルから読む。movie 内蔵 loop=0 は
+        // ffmpeg が終了しなくなるため使わず、standalone loop フィルタ(infinite) +
+        // trim=duration で尺を区切る（これで EOF が伝播し正常終了する）。fps で 30 CFR
+        // に揃え、setpts で PTS を 0 起点へ。これは旧 `-loop 1 -framerate 30 -t XX` と等価。
+        //
+        // trim=duration はレイヤーごとに **end_sec + 0.5秒（境界マージン）** で区切る。
+        // end_sec 以降は overlay 側の enable=0 で合成されないため、それ以上のフレームを
+        // 生成しても捨てるだけで filtergraph CPU の無駄。早く消えるレイヤーが多いと
+        // 全体の filtergraph 負荷が大きく下がる。total_duration を上限にクランプ。
+        let static_trim_dur = (layer.end_sec + 0.5).min(total_duration).max(0.1);
+        let mut chain = match input_idx {
+            Some(idx) => format!("[{}:v]", idx),
+            None => format!(
+                "movie={path},loop=loop=-1:size=1:start=0,fps={fps},trim=duration={dur:.3},setpts=PTS-STARTPTS,",
+                path = escape_movie_path(&layer.path),
+                fps = FPS,
+                dur = static_trim_dur,
+            ),
+        };
         // video は指定サイズに cover fit + 出力 fps へ揃える（素材が 24/60fps でも 30fps CFR に）
         // static は既にサイズ確定済みなので scale 不要、framerate も入力側で 30 指定済み
         if layer.kind == "video" {
@@ -1979,9 +2172,30 @@ fn compose_template_video_inner(
                 }
             }
             // 再生速度（1.0 以外なら setpts で PTS をスケール）。
-            let rate = layer.playback_rate.max(0.25).min(4.0);
+            // クランプ下限を 0.25 → 0.05 に緩和。
+            // curio-gen の timeline_export.py が「素材 < 表示尺」のとき src/target で
+            // playbackRate を計算する設計のため、極端な短尺差で 0.05〜0.25 の範囲に
+            // 入る値が来ることがある。0.25 で打ち切ると尺合わせが破綻して凍結する。
+            // 0.05（20倍スロー）まで許容して凍結を防ぐ。
+            let rate = layer.playback_rate.max(0.05).min(4.0);
             if (rate - 1.0).abs() > 0.01 {
                 chain.push_str(&format!("setpts=PTS/{:.4},", rate));
+            }
+            // ★ 真の凍結バグ修正: layer の PTS に startSec を加算して overlay の
+            // enable window と一致させる。
+            //
+            // overlay は PTS で frame をマッチするため、layer stream の PTS が
+            // [0, target_dur] のままだと、output_t=startSec のとき overlay は
+            // layer PTS=startSec のフレームを要求するが、layer stream は既に
+            // EOF（または stretched src の終わり）に達していて、最後の1フレームが
+            // repeat されてしまう。結果として「動画が最後のフレームで止まったまま
+            // enable window の間ずっと表示される」という症状になる。
+            //
+            // setpts=PTS+startSec/TB で layer PTS を [startSec, startSec+target_dur] に
+            // 揃えれば、output_t=startSec で layer の先頭フレームが再生される。
+            // startSec=0 のレイヤーには影響なし（既存挙動と同じ）。
+            if layer.start_sec.abs() > 0.001 {
+                chain.push_str(&format!("setpts=PTS+{:.4}/TB,", layer.start_sec));
             }
             chain.push_str(&format!(
                 "scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},fps={},",
@@ -2253,16 +2467,100 @@ fn compose_template_video_inner(
             format!("{}:{}", layer.x_px, layer.y_px)
         };
 
-        filter_parts.push(format!(
-            "{}{}overlay={}:enable='gte(t,{:.3})*lt(t,{:.3})'{}",
-            current_bg, layer_label, overlay_pos, layer.start_sec, layer.end_sec, next_bg
-        ));
-        current_bg = next_bg;
+        overlays.push(LayerOverlay {
+            label: layer_label,
+            pos: overlay_pos,
+            start_sec: layer.start_sec,
+            end_sec: layer.end_sec,
+        });
     }
 
-    // レイヤー 0 個のときは背景そのまま [vout] に
+    // ----- overlay チェーンを組む（直列 or グループ並列） -----
+    // SSG_FILTER_GROUPS 環境変数で切替:
+    //   1 or 未設定: 旧挙動（[0:v]→lyr0→lyr1→...→[vout] の単一直列）
+    //   2,4,8 等: 指定数のグループに分けて並列合成 → 最後に [0:v] へ統合
+    //
+    // overlay の "over" 演算子は結合則を持つので**理論上は同じ絵**になる。
+    // ただし 8bit YUVA の丸めで端の色が微差出る可能性あり。A/B 検証してから
+    // default を切替える運用。デフォルトは安全に旧挙動 (1)。
+    let num_groups: usize = std::env::var("SSG_FILTER_GROUPS")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1)
+        .min(16);
+
     if n_layers == 0 {
         filter_parts.push("[0:v]null[vout]".to_string());
+    } else if num_groups == 1 || n_layers < num_groups * 2 {
+        // 旧挙動: 単一直列チェーン
+        let mut current_bg = "[0:v]".to_string();
+        for (i, ov) in overlays.iter().enumerate() {
+            let next_bg = if i + 1 == n_layers {
+                "[vout]".to_string()
+            } else {
+                format!("[vbg{}]", i)
+            };
+            filter_parts.push(format!(
+                "{}{}overlay={}:enable='gte(t,{:.3})*lt(t,{:.3})'{}",
+                current_bg, ov.label, ov.pos, ov.start_sec, ov.end_sec, next_bg
+            ));
+            current_bg = next_bg;
+        }
+    } else {
+        // グループ並列: 各グループを透明 bg 上で合成 → 最後に [0:v] に統合
+        eprintln!(
+            "[compose_template_video] filter groups={} (overlay tree-mode)",
+            num_groups
+        );
+        let per_group = (n_layers + num_groups - 1) / num_groups;
+        let mut group_labels: Vec<String> = Vec::new();
+
+        for g in 0..num_groups {
+            let start = g * per_group;
+            let end = ((g + 1) * per_group).min(n_layers);
+            if start >= end {
+                continue;
+            }
+            // 透明 bg を生成（黒のアルファ 0 = 完全透過）。色情報も alpha も yuva420p で揃える
+            filter_parts.push(format!(
+                "color=c=black@0.0:size={}x{}:rate={}:duration={:.3},format=yuva420p[gbg{}_0]",
+                canvas_width, canvas_height, FPS, total_duration, g
+            ));
+            // グループ内 layer を直列合成
+            let mut current = format!("[gbg{}_0]", g);
+            let count = end - start;
+            for j in 0..count {
+                let i = start + j;
+                let ov = &overlays[i];
+                let next = if j + 1 == count {
+                    format!("[g{}]", g)
+                } else {
+                    format!("[gbg{}_{}]", g, j + 1)
+                };
+                filter_parts.push(format!(
+                    "{}{}overlay={}:enable='gte(t,{:.3})*lt(t,{:.3})'{}",
+                    current, ov.label, ov.pos, ov.start_sec, ov.end_sec, next
+                ));
+                current = next;
+            }
+            group_labels.push(format!("[g{}]", g));
+        }
+
+        // 最後に [0:v] に各グループを順次合成。z-index 順は維持される
+        let mut current = "[0:v]".to_string();
+        for (gi, g_label) in group_labels.iter().enumerate() {
+            let next = if gi + 1 == group_labels.len() {
+                "[vout]".to_string()
+            } else {
+                format!("[gout{}]", gi)
+            };
+            filter_parts.push(format!(
+                "{}{}overlay=0:0{}",
+                current, g_label, next
+            ));
+            current = next;
+        }
     }
 
     // ----- 音声: 各レイヤー + BGM を amix -----
@@ -2459,8 +2757,12 @@ fn compose_template_video_inner(
         let _ = std::fs::write(&log_path, &report);
     }
 
-    let output = run_ffmpeg_cancellable(cmd, state)
-        .map_err(|e| format!("ffmpeg compose_template: {}", e))?;
+    let output = run_ffmpeg_cancellable(
+        cmd,
+        state,
+        Some((app.clone(), total_duration)),
+    )
+    .map_err(|e| format!("ffmpeg compose_template: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

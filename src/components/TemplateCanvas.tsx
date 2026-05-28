@@ -1409,7 +1409,7 @@ function AudioLayerPlayer({
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+    const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
     let target = (currentTimeSec - layer.startSec) * rate;
     const dur = a.duration;
     if (layer.audioLoop && dur && isFinite(dur) && target > dur) {
@@ -1461,7 +1461,7 @@ function AudioLayerPlayer({
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+    const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
     a.playbackRate = rate;
     a.defaultPlaybackRate = rate;
     console.log(
@@ -1475,7 +1475,7 @@ function AudioLayerPlayer({
     const a = audioRef.current;
     if (!a) return;
     if (isPlaying) {
-      const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+      const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
       a.playbackRate = rate;
       a.play()
         .then(() => {
@@ -1501,7 +1501,7 @@ function AudioLayerPlayer({
       onLoadedMetadata={() => {
         const a = audioRef.current;
         if (!a) return;
-        const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+        const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
         a.playbackRate = rate;
       }}
       style={{ display: "none" }}
@@ -1526,7 +1526,7 @@ function VideoLayerContent({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    const rate = Math.max(0.25, Math.min(4, layer.playbackRate ?? 1));
+    const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
     let target = Math.max(0, (currentTimeSec - layer.startSec) * rate);
     // ループ ON で素材尺を超えたら、剰余を取って素材内に折り返す
     const loop = (layer.videoLoop ?? true) === true;
@@ -1561,7 +1561,7 @@ function VideoLayerContent({
     const v = videoRef.current;
     if (!v) return;
     const rate = layer.playbackRate ?? 1;
-    v.playbackRate = Math.max(0.25, Math.min(4, rate));
+    v.playbackRate = Math.max(0.05, Math.min(4, rate));
   }, [layer.playbackRate]);
 
   // src 変更時にメタデータロード後 seek を即反映

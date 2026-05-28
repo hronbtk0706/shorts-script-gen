@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { VideoTemplate, Layer } from "../types";
 import { templateDimensions } from "../types";
 import { loadSettings } from "./storage";
@@ -22,6 +23,8 @@ export interface ProgressUpdate {
   sceneIndex?: number;
   totalScenes: number;
   message: string;
+  /** ffmpeg 実行中の進捗 0.0〜1.0。Rust が `ffmpeg-progress` event で出す time= 比率 */
+  ratio?: number;
 }
 
 type ProgressCallback = (update: ProgressUpdate) => void;
@@ -413,21 +416,39 @@ export async function generateVideoFromTemplate(
     phase: "compose",
     totalScenes: visualLayers.length,
     message: "動画を合成中（ffmpeg）...",
+    ratio: 0,
   });
 
-  const outputPath = await invoke<string>("compose_template_video", {
-    sessionId,
-    totalDuration,
-    layers: rustLayers,
-    audioLayers: rustAudio,
-    bgmPath,
-    outputFilename: `${titleBase}_${sessionId}.mp4`,
-    videoCrf,
-    videoPreset,
-    videoEncoder: settings.videoEncoder || "libx264",
-    canvasWidth: canvasDims.width,
-    canvasHeight: canvasDims.height,
+  // Rust の run_ffmpeg_cancellable が stderr の time=... を拾って emit する
+  // ffmpeg-progress event を受けて UI のバーを更新する。0.0〜1.0 の比率。
+  const unlistenProgress = await listen<number>("ffmpeg-progress", (e) => {
+    const r = typeof e.payload === "number" ? e.payload : 0;
+    onProgress({
+      phase: "compose",
+      totalScenes: visualLayers.length,
+      message: "動画を合成中（ffmpeg）...",
+      ratio: Math.max(0, Math.min(1, r)),
+    });
   });
+
+  let outputPath: string;
+  try {
+    outputPath = await invoke<string>("compose_template_video", {
+      sessionId,
+      totalDuration,
+      layers: rustLayers,
+      audioLayers: rustAudio,
+      bgmPath,
+      outputFilename: `${titleBase}_${sessionId}.mp4`,
+      videoCrf,
+      videoPreset,
+      videoEncoder: settings.videoEncoder || "libx264",
+      canvasWidth: canvasDims.width,
+      canvasHeight: canvasDims.height,
+    });
+  } finally {
+    unlistenProgress();
+  }
 
   onProgress({
     phase: "done",
