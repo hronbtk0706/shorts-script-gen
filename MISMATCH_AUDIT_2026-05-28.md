@@ -125,3 +125,54 @@
 
 - 旧型残骸（`Motion` / `SceneEffects` / `BodySegment` / `Script`）が `types.ts:482-590` に残存。keyframe 実装に影響しないが「廃止済み」CLAUDE.md 記述と不一致。掃除は別タスク。
 - CLAUDE.md の「rotation は static のみ」は古い。現在は両系統で kf 対応済み。
+
+---
+
+# 追記 — 2026-05-29 ffmpeg 経路撤去後の再棚卸し
+
+**前提変化**: ffmpeg (Export A) を物理削除し **WebCodecs (Export B) に一本化**した。
+この監査の 🔴 の大半は「preview vs **ffmpeg**」の差異だったため、ffmpeg 撤去で **自動的に消滅**した。
+現在問うべきは「preview vs **WebCodecs (Canvas 合成)**」だけ。WebCodecs は preview ロジックを
+再利用 / 同式で移植しているため、残差は少ない。以下は再判定結果（A〜E の元番号で対応）。
+
+## ✅ ffmpeg 撤去 + 既存 fix で解消済み
+
+| 元# | 状態 | 根拠 |
+|---|---|---|
+| A1〜A3 slide/roll の単位・easing | ✅ | WebCodecs `computeCanvasAnim` は **layer w/h 基準 + ease-out `1-(1-p)²`** で preview と同式（layerAnimCanvas.ts で確認） |
+| A4 blur-in/out | ✅ | `computeCanvasAnim` が `blur` を出し `applyCanvasAnim` が `ctx.filter=blur()` を適用（CSS と同じ本物のぼかし） |
+| B2 glow-pulse | ✅ | `computeCanvasAnim` が `glowBlur`+`drop-shadow` filter を適用（preview と同経路） |
+| B3 pulse の static クランプ | ✅ | ffmpeg 固有の `min(1,…)` クランプが消滅。Canvas は overshoot 維持 |
+| C1〜C4 text decoration sweep | ✅ | Phase 3.3c で `drawAnimatedTextFrame` 経路に統一（時刻補間 + `drawAnimatedToken` の textAlign バグ修正） |
+| C7 fontFamily 未指定 | ✅ | preview/layerComposer 双方 `TEXT_DEFAULT_FONT_STACK` fallback |
+| D1 opacity キーフレーム | ✅ | WebCodecs は `applyKeyframesAtTime` で opacity を補間して `drawLayer` に反映 |
+| E1 static opacity 二重適用 | ✅ | ffmpeg の `colorchannelmixer` 二重適用が消滅。Canvas は `globalAlpha` 一箇所 |
+| E2 border strokeRect | ✅ | `drawBorder`/`drawAnimatedLayerStaticParts` が `inset=lw/2` で内側描画（preview の inset boxShadow と一致） |
+| E3 shape fillColor デフォルト | ✅ | 両系統 `#FFE600` で統一済み |
+| E4 audio volume クランプ | ✅ | preview を GainNode 化（100%超対応）、export `mixAudioLayers` も Web Audio GainNode |
+| E5 audio playbackRate 範囲 | ✅ | export は AudioBufferSourceNode.playbackRate（atempo の 0.5 下限なし）→ 0.05 まで一致 |
+| comment bubble 形状 (監査外) | ✅ | WebCodecs `drawLayer` で `drawBubbleShape` を描画（旧 fillRect のみを修正） |
+
+## 🔧 2026-05-29 に修正
+
+| 元# | 内容 | 変更 |
+|---|---|---|
+| B1 | ambient shake/bounce/float/glow の px 振幅が design(360) 基準で未スケール（preview と WebCodecs で frame 比がズレ、export は約 1/3 に減衰） | `computeCanvasAnim` に `pxScale=FINAL_W/360`、`computeLayerAmbientStyle` に `canvasWPx/360` を導入し両系統で px 振幅をスケール |
+| C8 | neon 白文字時、preview は白文字+白 glow（見えない）、export は #ffe600 | preview neon を「白/未指定 → #ffe600」に統一し、文字本体色 + glow 色を export と一致 |
+
+## ⚠️ 残存（preview vs WebCodecs。Canvas 2D の原理的制約 or 軽微）
+
+| 元# | 内容 | 扱い |
+|---|---|---|
+| A5 flip-in/out | preview は `perspective rotateY` の真 3D、WebCodecs は `scaleX` 2D 近似（Canvas 2D は 3D 不可） | **preview 専用差として許容**。完全一致は WebGL 化が必要 |
+| E6 character 物理 dt | preview は rAF 実 dt（可変）、export は固定 1/30 frame-step | **許容**（export の固定 dt のほうが決定的で正。実害は物理の僅かな揺れ差のみ） |
+| C6 plain multi-line 改行位置 | preview は DOM の折り返し、WebCodecs は Canvas `measureText` | フォントメトリクス差で稀に 1 文字ズレ。Canvas テキストの原理的限界。許容 |
+| C5/E7 comment box overflow | preview は `overflow:hidden` で box 内クリップ、WebCodecs は rect comment をクリップしない | テキストが box を超える稀なケースのみ。未対応（必要なら drawLayer の comment に矩形 clip 追加で対応可） |
+
+## 🟡 preview 専用（変わらず）
+
+- `Layer.physicsFps`: 両系統未参照のデッドプロパティ（型定義のみ）
+- `setpts` 系: ffmpeg 撤去で消滅（もはや存在しない）
+
+**結論**: 監査時 🔴 31 件のうち、**ffmpeg 撤去 + 既存 fix + 本日の B1/C8 で実害のある差異はほぼ解消**。
+残るのは Canvas 2D の原理的制約（A5 / C6）と決定論的に許容できる差（E6）、および稀なケース（C5/E7）のみ。

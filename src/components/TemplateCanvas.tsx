@@ -429,7 +429,9 @@ function LayerView({
   const baseOpacity = layer.opacity ?? 1;
   // 入退場アニメ / motion / ambient は内側ラッパーに集約して Moveable の外側矩形を安定させる
   const anim = computeLayerAnimStyle(layer, currentTimeSec);
-  const ambient = computeLayerAmbientStyle(layer, currentTimeSec);
+  // ambient の px 振幅は design(360) 基準 → プレビュー解像度 canvasWPx へ換算
+  // (export computeCanvasAnim の pxScale=FINAL_W/360 と一致させる)
+  const ambient = computeLayerAmbientStyle(layer, currentTimeSec, canvasWPx / 360);
   const effectiveOpacity =
     (dimmed ? baseOpacity * 0.25 : baseOpacity) *
     anim.opacity *
@@ -494,7 +496,7 @@ function LayerView({
     borderRadius,
     boxShadow: innerBoxShadow,
     transform: innerTransform || undefined,
-    transformOrigin: "center center",
+    transformOrigin: anim.transformOrigin ?? "center center",
     filter: innerFilter || undefined,
   };
 
@@ -647,7 +649,7 @@ function renderLayerContent(
   switch (layer.type) {
     case "color":
       if (layer.shape === "arc") {
-        return <ArcShapeSvg layer={layer} defaultFill="#333" />;
+        return <ArcShapeSvg layer={layer} defaultFill="#333" currentTimeSec={currentTimeSec} />;
       }
       return (
         <div
@@ -660,7 +662,7 @@ function renderLayerContent(
       );
     case "shape":
       if (layer.shape === "arc") {
-        return <ArcShapeSvg layer={layer} defaultFill="#FFE600" />;
+        return <ArcShapeSvg layer={layer} defaultFill="#FFE600" currentTimeSec={currentTimeSec} />;
       }
       return (
         <div
@@ -815,12 +817,32 @@ function renderLayerContent(
 function ArcShapeSvg({
   layer,
   defaultFill,
+  currentTimeSec,
 }: {
   layer: Layer;
   defaultFill: string;
+  currentTimeSec?: number;
 }) {
   const startDeg = layer.arcStart ?? 0;
-  const endDeg = layer.arcEnd ?? 360;
+  const rawEndDeg = layer.arcEnd ?? 360;
+  // arc-sweep: 「1 本のペン先が 0° → 360° を一定速度で進む」方式。
+  // 全ての arc-sweep layer は同じ startSec / entryDuration を共有し（curio-gen
+  // 側の責任）、それぞれが「ペン先が自分の arcStart～arcEnd を通過するとき」
+  // だけ徐々に塗られる。layer ごとに別ペンを持つ方式だとセグメント境界で
+  // 「前ペン完了 → 次ペン出現」の切替が見えてしまうが、ペン先方式なら
+  // ペン先は止まらず色だけが切り替わるのでシームレスに見える。
+  let endDeg = rawEndDeg;
+  if (layer.entryAnimation === "arc-sweep" && currentTimeSec !== undefined) {
+    const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
+    const entryEnd = layer.startSec + entryDur;
+    if (currentTimeSec < entryEnd) {
+      const raw = (currentTimeSec - layer.startSec) / entryDur;
+      const p = Math.max(0, Math.min(1, raw));
+      // ペン先の角度（0° → 360° linear）。自セグ範囲でクランプして effectiveEnd を決める
+      const penAngle = p * 360;
+      endDeg = Math.max(startDeg, Math.min(rawEndDeg, penAngle));
+    }
+  }
   const outerScale = layer.arcOuterRadius ?? 1.0;
   const innerScale = layer.arcInnerRadius ?? 0.0;
   const fill = layer.fillColor ?? defaultFill;
@@ -1048,7 +1070,12 @@ export function renderAnimatedText(
   }
 
   if (decoration === "neon") {
-    const color = layer.fontColor ?? "#ffe600";
+    // export (drawAnimatedToken/drawText) は白文字を #ffe600 に置換し、
+    // 文字本体も glow も neon 色で描く。preview もそれに揃える
+    // （白の text-shadow は背景次第で見えず不一致になるため）。
+    const color =
+      !layer.fontColor || layer.fontColor === "#fff" ? "#ffe600" : layer.fontColor;
+    textStyleExtra.color = color;
     textStyleExtra.textShadow = `0 0 4px ${color}, 0 0 8px ${color}, 0 0 16px ${color}`;
   } else if (decoration === "outline-reveal") {
     // 時間に応じて stroke 幅を 0→3 に
@@ -1250,7 +1277,7 @@ function renderKineticText(
 export function computeLayerAnimStyle(
   layer: Layer,
   currentTimeSec: number,
-): { opacity: number; transform: string; filter: string } {
+): { opacity: number; transform: string; filter: string; transformOrigin?: string } {
   const entryAnim = layer.entryAnimation ?? "none";
   const exitAnim = layer.exitAnimation ?? "none";
   const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
@@ -1259,6 +1286,7 @@ export function computeLayerAnimStyle(
   const exitStart = layer.endSec - exitDur;
 
   let opacity = 1;
+  let transformOrigin: string | undefined;
   const parts: string[] = [];
   const filters: string[] = [];
 
@@ -1321,6 +1349,27 @@ export function computeLayerAnimStyle(
         parts.push(`translateX(${(1 - e) * -100}%) rotate(${(1 - e) * -180}deg)`);
         opacity *= e;
         break;
+      // 「ちゃんと伸びる」: opacity を維持して端から伸ばす。棒グラフ用
+      case "grow-up":
+        parts.push(`scaleY(${Math.max(0.001, e)})`);
+        transformOrigin = "center bottom";
+        break;
+      case "grow-down":
+        parts.push(`scaleY(${Math.max(0.001, e)})`);
+        transformOrigin = "center top";
+        break;
+      case "grow-right":
+        parts.push(`scaleX(${Math.max(0.001, e)})`);
+        transformOrigin = "left center";
+        break;
+      case "grow-left":
+        parts.push(`scaleX(${Math.max(0.001, e)})`);
+        transformOrigin = "right center";
+        break;
+      case "arc-sweep":
+        // ArcShapeSvg 側で arcEnd を時間補間するため、ここでは transform を触らない。
+        // entry 中も opacity 1.0 維持で「描かれていく」ように見せる。
+        break;
     }
   }
 
@@ -1372,6 +1421,7 @@ export function computeLayerAnimStyle(
     opacity,
     transform: parts.join(" "),
     filter: filters.join(" "),
+    transformOrigin,
   };
 }
 
@@ -1381,6 +1431,10 @@ export function computeLayerAnimStyle(
 export function computeLayerAmbientStyle(
   layer: Layer,
   currentTimeSec: number,
+  // ambient の絶対 px 振幅 (shake/bounce/float/glow) を design 基準(360)から
+  // プレビュー描画解像度へ換算する係数 = canvasWPx/360 (= fontScale)。
+  // export 側 computeCanvasAnim の pxScale (FINAL_W/360) と一致させる。
+  pxScale = 1,
 ): { opacity: number; transform: string; filter: string } {
   const amb = layer.ambientAnimation ?? "none";
   if (amb === "none") return { opacity: 1, transform: "", filter: "" };
@@ -1396,8 +1450,8 @@ export function computeLayerAmbientStyle(
       break;
     }
     case "shake": {
-      const x = Math.sin(t * 30) * 2 * k;
-      const y = Math.cos(t * 33) * 1.5 * k;
+      const x = Math.sin(t * 30) * 2 * k * pxScale;
+      const y = Math.cos(t * 33) * 1.5 * k * pxScale;
       parts.push(`translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`);
       break;
     }
@@ -1407,7 +1461,7 @@ export function computeLayerAmbientStyle(
       break;
     }
     case "bounce": {
-      const y = -Math.abs(Math.sin(t * Math.PI * 2)) * 4 * k;
+      const y = -Math.abs(Math.sin(t * Math.PI * 2)) * 4 * k * pxScale;
       parts.push(`translateY(${y.toFixed(2)}px)`);
       break;
     }
@@ -1416,7 +1470,7 @@ export function computeLayerAmbientStyle(
       break;
     }
     case "glow-pulse": {
-      const g = 4 + Math.sin(t * Math.PI * 2) * 4 * k;
+      const g = (4 + Math.sin(t * Math.PI * 2) * 4 * k) * pxScale;
       filters.push(`drop-shadow(0 0 ${g.toFixed(1)}px rgba(255,230,0,0.9))`);
       break;
     }
@@ -1426,7 +1480,7 @@ export function computeLayerAmbientStyle(
       break;
     }
     case "float": {
-      const y = Math.sin(t * Math.PI) * 3 * k;
+      const y = Math.sin(t * Math.PI) * 3 * k * pxScale;
       parts.push(`translateY(${y.toFixed(2)}px)`);
       break;
     }
@@ -1582,14 +1636,19 @@ function AudioLayerPlayer({
       gain *= Math.max(0, Math.min(1, toEnd / fadeOut));
     }
     const volumeFinal = Math.max(0, gain);
-    const gainNode = ensureAudioGraph();
+    // 0..1 の通常音量は HTMLAudioElement 直結で鳴らす（Web Audio に通すと
+    // AudioContext が suspended のままだと無音になる事故が起きるため）。
+    // 100% 超が必要なときだけ Web Audio グラフを構築する。一度グラフを作ると
+    // 要素出力は恒久的に Web Audio 経由になるので、既存グラフがある場合も Web Audio を使う。
+    const needsWebAudio = volumeFinal > 1 || gainNodeRef.current != null;
+    const gainNode = needsWebAudio ? ensureAudioGraph() : null;
     if (gainNode) {
       // Web Audio 経路: GainNode で実音量、HTMLAudioElement.volume は素通し
       gainNode.gain.value = volumeFinal;
       a.volume = 1;
       a.muted = volumeFinal === 0;
     } else {
-      // フォールバック: AudioContext 不可。0..1 にクランプして HTMLAudioElement に直接
+      // 通常経路 / フォールバック: 0..1 にクランプして HTMLAudioElement に直接
       const clamped = Math.min(1, volumeFinal);
       a.volume = clamped;
       a.muted = clamped === 0;
@@ -1619,9 +1678,12 @@ function AudioLayerPlayer({
     const a = audioRef.current;
     if (!a) return;
     if (isPlaying) {
-      // Web Audio Context は autoplay policy で suspended 状態のことがあるため resume
-      ensureAudioGraph();
-      audioCtxRef.current?.resume().catch(() => {});
+      // Web Audio グラフを既に構築済み（volume>1）の場合のみ resume。
+      // autoplay policy で suspended になっている可能性があるため。
+      // 通常音量レイヤーは直結なのでグラフを作らない（無音事故防止）。
+      if (gainNodeRef.current) {
+        audioCtxRef.current?.resume().catch(() => {});
+      }
       const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
       a.playbackRate = rate;
       a.play()

@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { VideoTemplate } from "../types";
-import {
-  cancelTemplateExport,
-  exportTemplateToVideo,
-} from "../lib/exportTemplate";
 import type { ProgressUpdate, VideoQualityPreset } from "../lib/video";
 import { exportTemplateWebCodecs } from "../lib/exportTemplateWebCodecs";
 import { buildCreditText } from "../lib/buildCreditText";
@@ -18,8 +14,6 @@ const QUALITY_PRESET_LABEL: Record<
   high: { label: "高画質（投稿用）", desc: "CRF 18 / slow（時間かかる）" },
 };
 const QUALITY_STORAGE_KEY = "video-quality-preset";
-const FILTER_GROUPS_STORAGE_KEY = "video-filter-groups";
-const WEBCODECS_STORAGE_KEY = "video-use-webcodecs";
 
 interface Props {
   open: boolean;
@@ -36,7 +30,7 @@ const PHASE_LABEL: Record<string, string> = {
   image: "画像・レイヤー合成中…",
   tts: "音声合成中…",
   overlay: "テロップ生成中…",
-  compose: "動画を結合中（FFmpeg）…",
+  compose: "動画を書き出し中…",
   done: "完了",
   error: "エラー",
 };
@@ -56,23 +50,6 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
     return "standard";
   });
   const [title, setTitle] = useState(template.name);
-  // overlay 並列グループ数（1 = 旧挙動・直列、4 = 並列）。実験的設定で時短狙い
-  const [filterGroups, setFilterGroups] = useState<number>(() => {
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem(FILTER_GROUPS_STORAGE_KEY)
-        : null;
-    const n = saved ? parseInt(saved, 10) : NaN;
-    return Number.isFinite(n) && n >= 1 ? n : 1;
-  });
-  // WebCodecs 経路 (実験的・Phase 1: 映像のみ)
-  const [useWebCodecs, setUseWebCodecs] = useState<boolean>(() => {
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem(WEBCODECS_STORAGE_KEY)
-        : null;
-    return saved === "true";
-  });
   const webCodecsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -93,89 +70,36 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
     if (phase === "running") return;
     try {
       localStorage.setItem(QUALITY_STORAGE_KEY, quality);
-      localStorage.setItem(FILTER_GROUPS_STORAGE_KEY, String(filterGroups));
-      localStorage.setItem(WEBCODECS_STORAGE_KEY, String(useWebCodecs));
     } catch {
       /* localStorage が使えない環境なら無視 */
     }
     setPhase("running");
-    setLog([
-      `エクスポート開始: ${template.name}${useWebCodecs ? " (WebCodecs 経路)" : ""}`,
-    ]);
+    setLog([`エクスポート開始: ${template.name}`]);
     setOutputPath(null);
     setErrorMsg(null);
 
-    if (useWebCodecs) {
-      // WebCodecs 経路: filter_complex を完全に経由しない
-      const abortController = new AbortController();
-      webCodecsAbortRef.current = abortController;
-      exportTemplateWebCodecs({
-        template,
-        title,
-        signal: abortController.signal,
-        onProgress: (p) => {
-          setProgress({
-            phase:
-              p.phase === "encoding"
-                ? "compose"
-                : p.phase === "saving"
-                  ? "compose"
-                  : "prompt",
-            totalScenes: p.totalFrames ?? 0,
-            sceneIndex: p.frame !== undefined ? p.frame - 1 : undefined,
-            ratio: p.ratio,
-            message: p.message ?? "",
-          });
-          if (p.message) {
-            setLog((prev) => [...prev, p.message!]);
-          }
-        },
-      })
-        .then(async (result) => {
-          setOutputPath(result.outputPath);
-          setPhase("success");
-          setLog((prev) => [...prev, `完成: ${result.outputPath}`]);
-          if (onAutoSave) {
-            try {
-              await onAutoSave();
-              setLog((prev) => [...prev, "テンプレを自動保存しました"]);
-            } catch (e) {
-              setLog((prev) => [
-                ...prev,
-                `テンプレ自動保存に失敗: ${e instanceof Error ? e.message : String(e)}`,
-              ]);
-            }
-          }
-        })
-        .catch((e: unknown) => {
-          const msg = e instanceof Error ? e.message : String(e);
-          const stack = e instanceof Error ? e.stack ?? "" : "";
-          if (msg.includes("cancelled")) {
-            setPhase("cancelled");
-            setLog((prev) => [...prev, "エクスポートをキャンセルしました"]);
-          } else {
-            // スタックトレースまで含めて UI に表示 (release ビルドだと devtools 効かないため)
-            setErrorMsg(stack ? `${msg}\n\n${stack}` : msg);
-            setPhase("error");
-            setLog((prev) => [...prev, `失敗: ${msg}`]);
-          }
-        })
-        .finally(() => {
-          webCodecsAbortRef.current = null;
-        });
-      return;
-    }
-
-    exportTemplateToVideo({
+    // WebCodecs 経路: Canvas 合成 + h264/AAC encode（filter_complex を経由しない）
+    const abortController = new AbortController();
+    webCodecsAbortRef.current = abortController;
+    exportTemplateWebCodecs({
       template,
-      quality,
       title,
-      // 1 のときは payload 無指定にして従来通り env もしくは default を効かせる
-      filterGroups: filterGroups > 1 ? filterGroups : undefined,
+      signal: abortController.signal,
       onProgress: (p) => {
-        setProgress(p);
+        setProgress({
+          phase:
+            p.phase === "encoding"
+              ? "compose"
+              : p.phase === "saving"
+                ? "compose"
+                : "prompt",
+          totalScenes: p.totalFrames ?? 0,
+          sceneIndex: p.frame !== undefined ? p.frame - 1 : undefined,
+          ratio: p.ratio,
+          message: p.message ?? "",
+        });
         if (p.message) {
-          setLog((prev) => [...prev, p.message]);
+          setLog((prev) => [...prev, p.message!]);
         }
       },
     })
@@ -183,7 +107,6 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
         setOutputPath(result.outputPath);
         setPhase("success");
         setLog((prev) => [...prev, `完成: ${result.outputPath}`]);
-        // エクスポート成功 → テンプレを自動保存 (失敗してもエラー扱いにはしない)
         if (onAutoSave) {
           try {
             await onAutoSave();
@@ -198,14 +121,19 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
       })
       .catch((e: unknown) => {
         const msg = e instanceof Error ? e.message : String(e);
+        const stack = e instanceof Error ? e.stack ?? "" : "";
         if (msg.includes("cancelled")) {
           setPhase("cancelled");
           setLog((prev) => [...prev, "エクスポートをキャンセルしました"]);
         } else {
-          setErrorMsg(msg);
+          // スタックトレースまで含めて UI に表示 (release ビルドだと devtools 効かないため)
+          setErrorMsg(stack ? `${msg}\n\n${stack}` : msg);
           setPhase("error");
           setLog((prev) => [...prev, `失敗: ${msg}`]);
         }
+      })
+      .finally(() => {
+        webCodecsAbortRef.current = null;
       });
   };
 
@@ -213,11 +141,7 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
     if (phase !== "running") return;
     setPhase("cancelling");
     setLog((prev) => [...prev, "キャンセル中…"]);
-    if (webCodecsAbortRef.current) {
-      webCodecsAbortRef.current.abort();
-    } else {
-      await cancelTemplateExport();
-    }
+    webCodecsAbortRef.current?.abort();
   };
 
   const handleOpenFolder = async () => {
@@ -345,63 +269,6 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
               </label>
             ))}
           </div>
-        </div>
-
-        {/* 並列 overlay（実験的） */}
-        <div
-          className={`rounded border border-gray-200 dark:border-gray-700 p-2 space-y-1 ${
-            phase !== "idle" || useWebCodecs
-              ? "opacity-60 pointer-events-none"
-              : ""
-          }`}
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
-                並列 overlay（実験的・時短）
-              </div>
-              <div className="text-[10px] text-gray-500">
-                filtergraph をグループ並列化。WebCodecs 経路では無効
-              </div>
-            </div>
-            <select
-              value={filterGroups}
-              onChange={(e) => setFilterGroups(parseInt(e.target.value, 10))}
-              disabled={useWebCodecs}
-              className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-            >
-              <option value={1}>1（直列・従来）</option>
-              <option value={2}>2 グループ</option>
-              <option value={4}>4 グループ</option>
-              <option value={8}>8 グループ</option>
-            </select>
-          </div>
-        </div>
-
-        {/* WebCodecs 経路 (実験的・Phase 1: 映像のみ) */}
-        <div
-          className={`rounded border border-amber-300 dark:border-amber-700 p-2 space-y-1 bg-amber-50/40 dark:bg-amber-900/10 ${
-            phase !== "idle" ? "opacity-60 pointer-events-none" : ""
-          }`}
-        >
-          <label className="flex items-start gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useWebCodecs}
-              onChange={(e) => setUseWebCodecs(e.target.checked)}
-              className="mt-0.5"
-            />
-            <div className="flex-1">
-              <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
-                WebCodecs 経路を使う（実験的）
-              </div>
-              <div className="text-[10px] text-gray-500">
-                filter_complex を経由せず Canvas + h264 で焼く。preview と完全一致・大幅高速化見込み。
-                <br />
-                <strong>Phase 1 現状の制限</strong>: 映像レイヤー / 音声 / Live2D キャラ は未対応（無視されます）
-              </div>
-            </div>
-          </label>
         </div>
 
         {/* 開始ボタン（idle 状態のみ） */}

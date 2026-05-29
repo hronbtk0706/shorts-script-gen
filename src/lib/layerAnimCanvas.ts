@@ -17,10 +17,14 @@ export interface CanvasAnimTransform {
   /** 平行移動 (px、レイヤー w/h のスケール) */
   tx: number;
   ty: number;
-  /** スケール (中心基準) */
+  /** スケール */
   sx: number;
   sy: number;
-  /** 回転 (radians、中心基準) */
+  /** scale/rotate の原点 (レイヤー w/h に対する 0..1 の割合、デフォルト 0.5 = 中心)。
+   * grow-* の CSS transform-origin (端から伸びる) を Canvas で再現するために使う。 */
+  originX: number;
+  originY: number;
+  /** 回転 (radians) */
   rot: number;
   /** ぼかし (px) */
   blur: number;
@@ -38,6 +42,8 @@ const IDENTITY: CanvasAnimTransform = {
   ty: 0,
   sx: 1,
   sy: 1,
+  originX: 0.5,
+  originY: 0.5,
   rot: 0,
   blur: 0,
   hueDeg: 0,
@@ -48,12 +54,16 @@ const IDENTITY: CanvasAnimTransform = {
 /**
  * 入退場アニメーション + Ambient エフェクトを合成した変換を返す。
  * w/h はレイヤーピクセル寸法 (% の slide を実 px に変換するため必要)。
+ * pxScale は ambient の絶対 px 振幅 (shake/bounce/float/glow) を design 基準(360)から
+ * 描画解像度へ換算する係数 = 描画幅/360。preview の computeLayerAmbientStyle に
+ * 渡す fontScale (canvasWPx/360) と一致させること（frame 比で同じ揺れ幅にする）。
  */
 export function computeCanvasAnim(
   layer: Layer,
   t: number,
   w: number,
   h: number,
+  pxScale = 1,
 ): CanvasAnimTransform {
   const entryAnim = layer.entryAnimation ?? "none";
   const exitAnim = layer.exitAnimation ?? "none";
@@ -67,6 +77,8 @@ export function computeCanvasAnim(
   let ty = 0;
   let sx = 1;
   let sy = 1;
+  let originX = 0.5;
+  let originY = 0.5;
   let rot = 0;
   let blur = 0;
   let hueDeg = 0;
@@ -135,6 +147,28 @@ export function computeCanvasAnim(
         rot = ((1 - e) * -180 * Math.PI) / 180;
         opacity *= e;
         break;
+      // 「ちゃんと伸びる」: opacity を維持して端から伸ばす（棒グラフ用）。
+      // preview computeLayerAnimStyle の transform-origin と一致させる。
+      case "grow-up": // transform-origin: center bottom
+        sy = Math.max(0.001, e);
+        originY = 1;
+        break;
+      case "grow-down": // transform-origin: center top
+        sy = Math.max(0.001, e);
+        originY = 0;
+        break;
+      case "grow-right": // transform-origin: left center
+        sx = Math.max(0.001, e);
+        originX = 0;
+        break;
+      case "grow-left": // transform-origin: right center
+        sx = Math.max(0.001, e);
+        originX = 1;
+        break;
+      case "arc-sweep":
+        // arcEnd の補間は drawArcShape 側で行う（shape:"arc" 専用）。
+        // ここでは transform 無し / opacity 1 維持で「描かれていく」ように見せる。
+        break;
     }
   }
 
@@ -197,8 +231,9 @@ export function computeCanvasAnim(
         break;
       }
       case "shake": {
-        tx += Math.sin(t * 30) * 2 * k;
-        ty += Math.cos(t * 33) * 1.5 * k;
+        // 絶対 px 振幅は design(360) 基準 → 描画解像度へ pxScale 換算
+        tx += Math.sin(t * 30) * 2 * k * pxScale;
+        ty += Math.cos(t * 33) * 1.5 * k * pxScale;
         break;
       }
       case "wiggle": {
@@ -206,7 +241,7 @@ export function computeCanvasAnim(
         break;
       }
       case "bounce": {
-        ty += -Math.abs(Math.sin(t * Math.PI * 2)) * 4 * k;
+        ty += -Math.abs(Math.sin(t * Math.PI * 2)) * 4 * k * pxScale;
         break;
       }
       case "blink": {
@@ -214,7 +249,7 @@ export function computeCanvasAnim(
         break;
       }
       case "float": {
-        ty += Math.sin(t * Math.PI) * 3 * k;
+        ty += Math.sin(t * Math.PI) * 3 * k * pxScale;
         break;
       }
       case "rainbow": {
@@ -222,7 +257,7 @@ export function computeCanvasAnim(
         break;
       }
       case "glow-pulse": {
-        glowBlur = 4 + Math.sin(t * Math.PI * 2) * 4 * k;
+        glowBlur = (4 + Math.sin(t * Math.PI * 2) * 4 * k) * pxScale;
         glowColor = "rgba(255,230,0,0.9)";
         break;
       }
@@ -242,7 +277,20 @@ export function computeCanvasAnim(
   ) {
     return IDENTITY;
   }
-  return { opacity, tx, ty, sx, sy, rot, blur, hueDeg, glowBlur, glowColor };
+  return {
+    opacity,
+    tx,
+    ty,
+    sx,
+    sy,
+    originX,
+    originY,
+    rot,
+    blur,
+    hueDeg,
+    glowBlur,
+    glowColor,
+  };
 }
 
 /**
@@ -263,10 +311,13 @@ export function applyCanvasAnim(
   if (anim.opacity !== 1) ctx.globalAlpha *= anim.opacity;
   if (anim.tx !== 0 || anim.ty !== 0) ctx.translate(anim.tx, anim.ty);
   if (anim.sx !== 1 || anim.sy !== 1 || anim.rot !== 0) {
-    ctx.translate(w / 2, h / 2);
+    // transform-origin (デフォルト中心 0.5/0.5、grow-* は端) を基準に scale/rotate
+    const ox = anim.originX * w;
+    const oy = anim.originY * h;
+    ctx.translate(ox, oy);
     if (anim.rot !== 0) ctx.rotate(anim.rot);
     if (anim.sx !== 1 || anim.sy !== 1) ctx.scale(anim.sx, anim.sy);
-    ctx.translate(-w / 2, -h / 2);
+    ctx.translate(-ox, -oy);
   }
   // ctx.filter は blur + hue-rotate を 1 つの string で複数指定できる
   const filterParts: string[] = [];

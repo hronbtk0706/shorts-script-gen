@@ -30,7 +30,14 @@ export type EntryAnimation =
   | "elastic-pop"
   | "flip-in"
   | "stretch-in"
-  | "roll-in";
+  | "roll-in"
+  // 棒の「ちゃんと伸びる」用。scale + transform-origin で端から伸びる（opacity 1 維持）
+  | "grow-up"
+  | "grow-down"
+  | "grow-right"
+  | "grow-left"
+  // shape:"arc" 専用。entry 中 arcEnd を arcStart→arcEnd まで補間して時計回りに描画
+  | "arc-sweep";
 
 export type ExitAnimation =
   | "none"

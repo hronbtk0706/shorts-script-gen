@@ -364,22 +364,31 @@ async function drawLayer(
 
   // 入退場アニメ (WebCodecs エクスポート経路でのみ animAtTimeSec が渡る)
   if (animAtTimeSec !== undefined) {
-    const anim = computeCanvasAnim(layer, animAtTimeSec, w, h);
+    // ambient の絶対 px 振幅を design(360) → 出力解像度へ換算する係数
+    const anim = computeCanvasAnim(layer, animAtTimeSec, w, h, FINAL_W / 360);
     applyCanvasAnim(ctx, anim, w, h);
   }
 
-  // 形状クリップ
-  applyShapeClip(ctx, layer, w, h);
+  // 形状クリップ（吹き出しは独自パスで描き、しっぽが枠外に出るのでクリップしない）
+  const isBubble = layer.type === "comment" && !!layer.bubble;
+  if (!isBubble) {
+    applyShapeClip(ctx, layer, w, h);
+  }
 
   // 中身描画
   try {
     switch (layer.type) {
       case "image":
-      case "video": {
-        // 動画レイヤーで videoFrameSources に登録があれば、HTMLVideoElement 等の
-        // 現在フレームを直接 drawImage する (WebCodecs エクスポート経路)
+      case "video":
+      case "character": {
+        // 動画 / キャラレイヤーで videoFrameSources に登録があれば、現在フレームを
+        // 直接 drawImage する (WebCodecs エクスポート経路)。
+        // character は事前に composeCharacterLayerVideo で焼いた .webm を
+        // video と同じ VideoSampleSink 経路で流すので、ここでは frameSource として届く。
         const frameSource =
-          layer.type === "video" ? videoFrameSources?.get(layer.id) : undefined;
+          layer.type === "video" || layer.type === "character"
+            ? videoFrameSources?.get(layer.id)
+            : undefined;
         if (frameSource) {
           // VideoFrame (WebCodecs): displayWidth/codedWidth を見る
           // HTMLVideoElement: videoWidth
@@ -424,6 +433,9 @@ async function drawLayer(
           ctx.drawImage(frameSource, sx, sy, sw, sh, dx, dy, drawW, drawH);
           break;
         }
+        // character は事前焼き webm が frameSource として来る前提。
+        // 無い場合（焼き失敗等）は画像ロード経路に乗せず透過のままにする。
+        if (layer.type === "character") break;
         const src = await resolveSrc(layer);
         if (src) {
           const img = await loadImage(src);
@@ -448,7 +460,7 @@ async function drawLayer(
       case "color":
       case "shape":
         if (layer.shape === "arc") {
-          drawArcShape(ctx, layer, w, h);
+          drawArcShape(ctx, layer, w, h, animAtTimeSec);
         } else {
           // preview と合わせるため shape 既定は #FFE600、color 既定は #333
           const def = layer.type === "shape" ? "#FFE600" : "#333";
@@ -457,11 +469,22 @@ async function drawLayer(
         }
         break;
       case "comment":
-        if (layer.fillColor) {
+        if (layer.bubble) {
+          // 吹き出し: 独自パスで塗り + 枠を描く（preview の BubbleSvg と一致）
+          drawBubbleShape(ctx, layer, w, h);
+        } else if (layer.fillColor) {
           ctx.fillStyle = parseRgba(layer.fillColor);
           ctx.fillRect(0, 0, w, h);
         }
-        drawText(ctx, layer, w, h);
+        // WebCodecs 経路（animAtTimeSec あり）でテキスト演出（char/kinetic/装飾）を
+        // 持つレイヤーは、時刻対応版でフレームごとに描画する（preview の
+        // renderAnimatedText / HighlightBar / UnderlineSweep 等と一致させる）。
+        // 演出なし、または PNG 焼き経路（animAtTimeSec 未指定）は静的版 drawText。
+        if (animAtTimeSec !== undefined && commentHasAnimatedText(layer)) {
+          drawAnimatedTextFrame(ctx, layer, w, h, animAtTimeSec);
+        } else {
+          drawText(ctx, layer, w, h);
+        }
         break;
     }
   } catch (e) {
@@ -470,8 +493,9 @@ async function drawLayer(
 
   ctx.restore();
 
-  // Border（クリップの外に描く必要があるため restore 後）
-  if (layer.border && layer.border.width > 0) {
+  // Border（クリップの外に描く必要があるため restore 後）。
+  // 吹き出しの枠は drawBubbleShape が描くので、矩形 drawBorder はスキップする。
+  if (layer.border && layer.border.width > 0 && !isBubble) {
     drawBorder(ctx, layer, x, y, w, h);
   }
 }
@@ -513,14 +537,33 @@ function drawArcShape(
   layer: Layer,
   w: number,
   h: number,
+  animAtTimeSec?: number,
 ): void {
   const cx = w / 2;
   const cy = h / 2;
   const maxR = Math.min(w, h) / 2;
   const outerR = (layer.arcOuterRadius ?? 1.0) * maxR;
   const innerR = (layer.arcInnerRadius ?? 0.0) * maxR;
-  const startRad = ((layer.arcStart ?? 0) * Math.PI) / 180 - Math.PI / 2;
-  const endRad = ((layer.arcEnd ?? 360) * Math.PI) / 180 - Math.PI / 2;
+  const startDeg = layer.arcStart ?? 0;
+  const rawEndDeg = layer.arcEnd ?? 360;
+  // arc-sweep:「1 本のペン先が 0° → 360° を一定速度(linear)で進む」方式。
+  // 全 arc-sweep レイヤーが同じ startSec / entryDuration を共有し（curio-gen 側責任）、
+  // 各セグメントはペン先が自分の arcStart〜arcEnd を通過するときだけ徐々に塗られる。
+  // preview ArcShapeSvg と式を完全一致させること（レイヤー毎 ease-out にしない）。
+  let endDeg = rawEndDeg;
+  if (layer.entryAnimation === "arc-sweep" && animAtTimeSec !== undefined) {
+    const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
+    const entryEnd = layer.startSec + entryDur;
+    if (animAtTimeSec < entryEnd) {
+      const raw = (animAtTimeSec - layer.startSec) / entryDur;
+      const p = Math.max(0, Math.min(1, raw));
+      // ペン先の角度（0° → 360° linear）。自セグ範囲でクランプして effectiveEnd を決める
+      const penAngle = p * 360;
+      endDeg = Math.max(startDeg, Math.min(rawEndDeg, penAngle));
+    }
+  }
+  const startRad = (startDeg * Math.PI) / 180 - Math.PI / 2;
+  const endRad = (endDeg * Math.PI) / 180 - Math.PI / 2;
   ctx.beginPath();
   if (innerR > 0) {
     // ドーナツセグメント: 外周を時計回り → 内周を反時計回りで穴を空ける
@@ -1151,7 +1194,10 @@ function drawAnimatedTextFrame(
   const linesAsStrings = charLines.map((l) => l.chars.map((c) => c.ch).join(""));
   const totalH = linesAsStrings.length * lineHeight;
   const startY = h / 2 - totalH / 2 + lineHeight / 2;
-  ctx.textAlign = "center";
+  // drawAnimatedToken は left 基準で translate するため textAlign も left に揃える
+  // （x に `w/2 - lineWidth/2` を渡すことでセンタリングしている）。
+  // ここを "center" にすると二重センタリングで左にズレる。
+  ctx.textAlign = "left";
   for (let li = 0; li < linesAsStrings.length; li++) {
     const lineText = linesAsStrings[li];
     const lineY = startY + li * lineHeight;
@@ -1176,6 +1222,35 @@ function drawAnimatedTextFrame(
   }
 }
 
+/**
+ * comment + bubble の吹き出し形状（塗り + 枠）を Canvas に描く。
+ * preview の BubbleSvg と同じ bubbleFullPath を使い、WebCodecs drawLayer と
+ * ffmpeg 焼き経路 drawAnimatedLayerStaticParts の両方で共有する。
+ * w/h はレイヤーピクセル寸法。ctx はレイヤー左上に translate 済みであること。
+ */
+function drawBubbleShape(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+): void {
+  if (!layer.bubble) return;
+  const path2d = new Path2D(
+    bubbleFullPath(w, h, layer.bubble, (layer.borderRadius ?? 12) * (FINAL_W / 360)),
+  );
+  ctx.fillStyle = layer.fillColor
+    ? parseRgba(layer.fillColor)
+    : "rgba(255,255,255,0.95)";
+  ctx.fill(path2d);
+  if (layer.border && layer.border.width > 0) {
+    ctx.save();
+    ctx.strokeStyle = layer.border.color;
+    ctx.lineWidth = layer.border.width * (FINAL_W / 360);
+    ctx.stroke(path2d);
+    ctx.restore();
+  }
+}
+
 /** 静的レイヤー中身（fillColor / bubble shape / border）を 1 フレーム分描く */
 function drawAnimatedLayerStaticParts(
   ctx: CanvasRenderingContext2D,
@@ -1188,25 +1263,7 @@ function drawAnimatedLayerStaticParts(
     applyShapeClip(ctx, layer, w, h);
   }
   if (layer.type === "comment" && layer.bubble) {
-    const path2d = new Path2D(
-      bubbleFullPath(
-        w,
-        h,
-        layer.bubble,
-        (layer.borderRadius ?? 12) * (FINAL_W / 360),
-      ),
-    );
-    ctx.fillStyle = layer.fillColor
-      ? parseRgba(layer.fillColor)
-      : "rgba(255,255,255,0.95)";
-    ctx.fill(path2d);
-    if (layer.border && layer.border.width > 0) {
-      ctx.save();
-      ctx.strokeStyle = layer.border.color;
-      ctx.lineWidth = layer.border.width * (FINAL_W / 360);
-      ctx.stroke(path2d);
-      ctx.restore();
-    }
+    drawBubbleShape(ctx, layer, w, h);
   } else if (layer.fillColor) {
     ctx.fillStyle = parseRgba(layer.fillColor);
     ctx.fillRect(0, 0, w, h);
@@ -1234,6 +1291,25 @@ function drawAnimatedLayerStaticParts(
     }
     ctx.restore();
   }
+}
+
+/**
+ * comment レイヤーが「フレームごとに時刻描画すべきテキスト演出」を持つか。
+ * char/kinetic アニメに加え、時刻依存の装飾（highlight-bar 等のスイープ、
+ * outline-reveal / shadow-drop の補間）も対象にする。
+ * WebCodecs 経路（drawLayer）で drawText（静的）と drawAnimatedTextFrame（時刻）の
+ * どちらを使うかの判定に使用。ffmpeg 経路の layerNeedsAnimatedTextVideo より広い。
+ */
+function commentHasAnimatedText(layer: Layer): boolean {
+  if (layer.type !== "comment") return false;
+  const ca = layer.charAnimation;
+  const ka = layer.kineticAnimation;
+  const dec = layer.textDecoration;
+  return (
+    (typeof ca === "string" && ca !== "none") ||
+    (typeof ka === "string" && ka !== "none") ||
+    (typeof dec === "string" && dec !== "none")
+  );
 }
 
 /** comment/text 系で charAnimation または kineticAnimation を持つレイヤーかを判定 */

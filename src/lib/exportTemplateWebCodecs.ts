@@ -39,10 +39,93 @@ import {
   renderLayersOnContext,
   setCompositionCanvasDimensions,
 } from "./layerComposer";
+import { composeCharacterLayerVideo } from "./characterRender";
 
 const FPS = 30;
 const AUDIO_SAMPLE_RATE = 48000;
 const AUDIO_BITRATE = 128_000;
+
+/** 1 本の動画 / 焼き上げキャラ webm を「フレーム順次デコードする stream」として保持 */
+interface VideoStream {
+  layer: Layer;
+  iter: AsyncIterator<VideoSample | null>;
+  /** 各フレームでこのレイヤーが可視か (visibleByFrame[f] = true なら iter.next() を呼ぶ) */
+  visibleByFrame: boolean[];
+}
+
+/**
+ * 動画ファイル / 焼き上げ webm（sourcePath = 絶対パス or URL）を VideoSampleSink で
+ * 「各フレームの local time に対応する sample」を順次デコードする stream に変換する。
+ * video レイヤーとキャラ事前焼き webm の両方で共有する。
+ * 失敗時 / 可視フレーム 0 のときは null。
+ */
+async function buildVideoStream(
+  layer: Layer,
+  sourcePath: string,
+  totalFrames: number,
+): Promise<VideoStream | null> {
+  try {
+    const url =
+      sourcePath.startsWith("http://") ||
+      sourcePath.startsWith("https://") ||
+      sourcePath.startsWith("data:") ||
+      sourcePath.startsWith("blob:")
+        ? sourcePath
+        : convertFileSrc(sourcePath);
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn(
+        `[WebCodecs] layer ${layer.id} fetch failed: ${response.status}`,
+      );
+      return null;
+    }
+    const blob = await response.blob();
+    const input = new Input({
+      source: new BlobSource(blob),
+      formats: [
+        new Mp4InputFormat(),
+        new QuickTimeInputFormat(),
+        new WebMInputFormat(),
+        new MatroskaInputFormat(),
+      ],
+    });
+    const videoTrack = await input.getPrimaryVideoTrack();
+    if (!videoTrack) {
+      console.warn(`[WebCodecs] layer ${layer.id}: no video track`);
+      return null;
+    }
+    const videoDuration = await videoTrack.computeDuration();
+    const sink = new VideoSampleSink(videoTrack);
+
+    // 各フレームで「このレイヤーが可視か」と対応する local time を計算
+    const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
+    const timestamps: number[] = [];
+    const visibleByFrame: boolean[] = new Array(totalFrames).fill(false);
+    for (let f = 0; f < totalFrames; f++) {
+      const t = f / FPS;
+      if (t < layer.startSec || t >= layer.endSec) continue;
+      let localT = (t - layer.startSec) * rate;
+      if (videoDuration > 0 && isFinite(videoDuration) && layer.videoLoop) {
+        localT = localT % videoDuration;
+      } else if (videoDuration > 0 && isFinite(videoDuration)) {
+        // ループしない場合、動画長を超えたら最終フレーム手前で固定
+        if (localT > videoDuration - 1 / FPS) {
+          localT = Math.max(0, videoDuration - 1 / FPS);
+        }
+      }
+      if (localT < 0) localT = 0;
+      timestamps.push(localT);
+      visibleByFrame[f] = true;
+    }
+    if (timestamps.length === 0) return null;
+
+    const iter = sink.samplesAtTimestamps(timestamps)[Symbol.asyncIterator]();
+    return { layer, iter, visibleByFrame };
+  } catch (e) {
+    console.warn(`[WebCodecs] layer ${layer.id} stream setup failed:`, e);
+    return null;
+  }
+}
 
 export interface WebCodecsExportProgress {
   phase: "preparing" | "encoding" | "finalizing" | "saving" | "done";
@@ -150,78 +233,82 @@ export async function exportTemplateWebCodecs(
       l.source !== "user",
   );
 
-  interface VideoStream {
-    layer: Layer;
-    iter: AsyncIterator<VideoSample | null>;
-    /** 各フレームでこのレイヤーが可視か (visibleByFrame[f] = true なら iter.next() を呼ぶ) */
-    visibleByFrame: boolean[];
-  }
   const videoStreams: VideoStream[] = [];
   for (const layer of videoLayerInfos) {
     if (!layer.source) continue;
-    try {
-      const url =
-        layer.source.startsWith("http://") ||
-        layer.source.startsWith("https://") ||
-        layer.source.startsWith("data:") ||
-        layer.source.startsWith("blob:")
-          ? layer.source
-          : convertFileSrc(layer.source);
-      const response = await fetch(url);
-      if (!response.ok) {
-        console.warn(
-          `[WebCodecs] video layer ${layer.id} fetch failed: ${response.status}`,
-        );
-        continue;
-      }
-      const blob = await response.blob();
-      const input = new Input({
-        source: new BlobSource(blob),
-        formats: [
-          new Mp4InputFormat(),
-          new QuickTimeInputFormat(),
-          new WebMInputFormat(),
-          new MatroskaInputFormat(),
-        ],
+    const stream = await buildVideoStream(layer, layer.source, totalFrames);
+    if (stream) videoStreams.push(stream);
+  }
+
+  // character (Live2D) レイヤー: エクスポート開始時に各キャラを VP9+alpha WebM に
+  // 事前焼き (composeCharacterLayerVideo) し、video と同じ VideoSampleSink 経路で流す。
+  // 焼き上がった webm はちょうどレイヤー尺・等倍・ループ無しなので、layer をそのまま
+  // (playbackRate=1 / videoLoop=false 相当で) buildVideoStream に渡せる。
+  const characterLayers = visibleLayers.filter(
+    (l) => l.type === "character" && l.modelPath,
+  );
+  if (characterLayers.length > 0) {
+    // 中間 webm の保存先セッション (ffmpeg 経路と同じ timestamp 形式)
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const charSessionId = `wc_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    let charIdx = 0;
+    for (const layer of characterLayers) {
+      charIdx++;
+      onProgress?.({
+        phase: "preparing",
+        message: `キャラ動画を生成中 (${charIdx}/${characterLayers.length})...`,
       });
-      const videoTrack = await input.getPrimaryVideoTrack();
-      if (!videoTrack) {
-        console.warn(`[WebCodecs] video layer ${layer.id}: no video track`);
-        continue;
+      // リップシンク候補音声 (video.ts と同じロジック)
+      const explicitIds: string[] =
+        layer.linkedAudioLayerIds && layer.linkedAudioLayerIds.length > 0
+          ? layer.linkedAudioLayerIds
+          : layer.linkedAudioLayerId
+            ? [layer.linkedAudioLayerId]
+            : [];
+      const idSet = explicitIds.length > 0 ? new Set(explicitIds) : null;
+      const audiosForLipsync = template.layers.filter(
+        (l) =>
+          l.type === "audio" &&
+          !l.hidden &&
+          (idSet ? idSet.has(l.id) : true),
+      );
+      const outW = Math.max(2, Math.round((layer.width / 100) * dims.width));
+      const outH = Math.max(2, Math.round((layer.height / 100) * dims.height));
+      try {
+        const charResult = await composeCharacterLayerVideo({
+          layer,
+          audiosForLipsync,
+          outputWidth: outW,
+          outputHeight: outH,
+          fps: FPS,
+          sessionId: charSessionId,
+          baseName: `character_${layer.id}`,
+          onProgress: (cur, total) => {
+            onProgress?.({
+              phase: "preparing",
+              message: `キャラ描画 ${charIdx}/${characterLayers.length}: ${cur}/${total} frame`,
+            });
+          },
+        });
+        // 焼き上がり webm はレイヤー尺ぴったり・等倍・ループ無し
+        const bakedLayer: Layer = {
+          ...layer,
+          playbackRate: 1,
+          videoLoop: false,
+        };
+        const stream = await buildVideoStream(
+          bakedLayer,
+          charResult.outputPath,
+          totalFrames,
+        );
+        if (stream) videoStreams.push(stream);
+      } catch (e) {
+        console.warn(
+          `[WebCodecs] character layer ${layer.id} pre-render failed:`,
+          e,
+        );
       }
-      const videoDuration = await videoTrack.computeDuration();
-      const sink = new VideoSampleSink(videoTrack);
-
-      // 各フレームで「このレイヤーが可視か」と対応する local time を計算
-      const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
-      const timestamps: number[] = [];
-      const visibleByFrame: boolean[] = new Array(totalFrames).fill(false);
-      for (let f = 0; f < totalFrames; f++) {
-        const t = f / FPS;
-        if (t < layer.startSec || t >= layer.endSec) continue;
-        let localT = (t - layer.startSec) * rate;
-        if (
-          videoDuration > 0 &&
-          isFinite(videoDuration) &&
-          layer.videoLoop
-        ) {
-          localT = localT % videoDuration;
-        } else if (videoDuration > 0 && isFinite(videoDuration)) {
-          // ループしない場合、動画長を超えたら最終フレーム手前で固定
-          if (localT > videoDuration - 1 / FPS) {
-            localT = Math.max(0, videoDuration - 1 / FPS);
-          }
-        }
-        if (localT < 0) localT = 0;
-        timestamps.push(localT);
-        visibleByFrame[f] = true;
-      }
-      if (timestamps.length === 0) continue;
-
-      const iter = sink.samplesAtTimestamps(timestamps)[Symbol.asyncIterator]();
-      videoStreams.push({ layer, iter, visibleByFrame });
-    } catch (e) {
-      console.warn(`[WebCodecs] video layer ${layer.id} setup failed:`, e);
     }
   }
 
