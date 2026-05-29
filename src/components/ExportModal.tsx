@@ -1,19 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { VideoTemplate } from "../types";
-import type { ProgressUpdate, VideoQualityPreset } from "../lib/video";
+import type { ProgressUpdate } from "../lib/video";
 import { exportTemplateWebCodecs } from "../lib/exportTemplateWebCodecs";
 import { buildCreditText } from "../lib/buildCreditText";
 
-const QUALITY_PRESET_LABEL: Record<
-  VideoQualityPreset,
-  { label: string; desc: string }
-> = {
-  low: { label: "低画質（テスト用）", desc: "CRF 28 / faster" },
-  standard: { label: "標準（推奨）", desc: "CRF 23 / medium" },
-  high: { label: "高画質（投稿用）", desc: "CRF 18 / slow（時間かかる）" },
-};
-const QUALITY_STORAGE_KEY = "video-quality-preset";
+// 画質プリセットは廃止: WebCodecs はビットレート指定のため画質を変えても
+// エンコード速度はほぼ変わらず（所要時間は Canvas 合成が支配的）、常に高画質
+// (QUALITY_HIGH) で書き出す。投稿用に十分な品質。
 
 interface Props {
   open: boolean;
@@ -41,14 +35,6 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
   const [log, setLog] = useState<string[]>([]);
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [quality, setQuality] = useState<VideoQualityPreset>(() => {
-    const saved =
-      typeof window !== "undefined"
-        ? localStorage.getItem(QUALITY_STORAGE_KEY)
-        : null;
-    if (saved === "low" || saved === "standard" || saved === "high") return saved;
-    return "standard";
-  });
   const [title, setTitle] = useState(template.name);
   const webCodecsAbortRef = useRef<AbortController | null>(null);
 
@@ -68,11 +54,6 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
 
   const handleStart = () => {
     if (phase === "running") return;
-    try {
-      localStorage.setItem(QUALITY_STORAGE_KEY, quality);
-    } catch {
-      /* localStorage が使えない環境なら無視 */
-    }
     setPhase("running");
     setLog([`エクスポート開始: ${template.name}`]);
     setOutputPath(null);
@@ -229,45 +210,6 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
           />
           <div className="text-[10px] text-gray-500">
             最終的なファイル名: <code>{title.trim() ? title.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 64) || "video" : "video"}_YYYYMMDD_HHMMSS.mp4</code>
-          </div>
-        </div>
-
-        {/* 画質選択（idle 状態のみ操作可能） */}
-        <div
-          className={`rounded border border-gray-200 dark:border-gray-700 p-2 space-y-1.5 ${
-            phase !== "idle" ? "opacity-60 pointer-events-none" : ""
-          }`}
-        >
-          <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
-            画質
-          </div>
-          <div className="grid grid-cols-1 gap-1">
-            {(["low", "standard", "high"] as VideoQualityPreset[]).map((q) => (
-              <label
-                key={q}
-                className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer text-[11px] ${
-                  quality === q
-                    ? "bg-blue-50 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700"
-                    : "border border-transparent hover:bg-gray-50 dark:hover:bg-gray-800"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="quality"
-                  value={q}
-                  checked={quality === q}
-                  onChange={() => setQuality(q)}
-                />
-                <div className="flex-1">
-                  <div className="font-medium">
-                    {QUALITY_PRESET_LABEL[q].label}
-                  </div>
-                  <div className="text-[10px] text-gray-500">
-                    {QUALITY_PRESET_LABEL[q].desc}
-                  </div>
-                </div>
-              </label>
-            ))}
           </div>
         </div>
 

@@ -4,9 +4,15 @@
 
 ## 🎯 最重要: プレビューとエクスポートをセットで変更する
 
-このアプリは **編集画面のプレビュー (React / Canvas / HTMLAudioElement 等)** と
-**エクスポート (Rust + FFmpeg filter_complex)** の **2 系統** で同じ映像を再現している。
+このアプリは **編集画面のプレビュー (React / CSS / HTMLAudioElement)** と
+**エクスポート (WebCodecs 経路: Canvas 合成 + mediabunny で h264/AAC encode)** の
+**2 系統** で同じ映像を再現している。
 **どちらか片方だけ変更すると「見た目と出力が違う」という不整合バグ**が発生しやすい。
+
+> **2026-05-29 以降**: 旧 ffmpeg + filter_complex の動画合成経路 (`compose_template_video`) は
+> **撤去済み**。エクスポートは WebCodecs に一本化された（`exportTemplateWebCodecs.ts`）。
+> ffmpeg.exe 自体は音声系（TTS / BGM / 尺取得）でまだ使うが、**動画合成には使わない**。
+> エクスポート側の編集は Rust ではなく **TS の Canvas 描画コード** を触ること。
 
 レイヤーのプロパティ追加 / 既存プロパティの挙動変更 / アニメ追加などを行うときは、
 必ず **両系統を同時に変更する** こと。片側だけ実装してコミットしない。
@@ -20,13 +26,19 @@
    - [src/components/TemplateCanvas.tsx](src/components/TemplateCanvas.tsx) の `LayerView` / `AudioLayerPlayer` / `computeLayer*` 系
    - [src/lib/layerComposer.ts](src/lib/layerComposer.ts) の `drawLayer` / `applyKeyframesAtTime`
    - [src/lib/keyframes.ts](src/lib/keyframes.ts) の `sampleLayerAt`（キーフレーム対応プロパティなら）
-3. **エクスポート側**（Rust + FFmpeg）
-   - [src/lib/video.ts](src/lib/video.ts) の `RustTemplateLayerInput` / `RustTemplateAudioInput` に field 追加、送信する値をセット
-   - [src-tauri/src/lib.rs](src-tauri/src/lib.rs) の `TemplateLayerInput` / `TemplateAudioInput` に `#[serde(default = ...)]` で追加
-   - `compose_template_video_inner` 内の filter_complex 構築処理で実際に使う
-     - ビデオ系: overlay / scale / rotate / fade 等のチェーンに反映
-     - 音声系: `atempo` / `volume` / `afade` / `adelay` 等のチェーンに反映
-   - キーフレーム対応プロパティなら `keyframe_expr` + ffmpeg 式に組み込み
+3. **エクスポート側**（WebCodecs / Canvas — Rust ではない）
+   - [src/lib/layerComposer.ts](src/lib/layerComposer.ts) の `drawLayer`（レイヤー中身の Canvas 描画。
+     image/video/character/color/shape/comment の分岐）に反映
+   - 入退場 / Ambient アニメは [src/lib/layerAnimCanvas.ts](src/lib/layerAnimCanvas.ts) の
+     `computeCanvasAnim` / `applyCanvasAnim`（**プレビューの `computeLayerAnimStyle` /
+     `computeLayerAmbientStyle` と数式を完全一致させる**）
+   - テキスト演出は `drawAnimatedTextFrame` / `drawAnimatedToken`（プレビュー `renderAnimatedText` と一致）
+   - 音声は [src/lib/exportTemplateWebCodecs.ts](src/lib/exportTemplateWebCodecs.ts) の `mixAudioLayers`
+     （OfflineAudioContext + GainNode で volume / fade / playbackRate を反映）
+   - 動画レイヤーは同ファイルの `buildVideoStream`（mediabunny VideoSampleSink）、
+     character は `composeCharacterLayerVideo` で事前焼き → video と同経路
+   - キーフレーム対応プロパティなら `renderLayersOnContext` の `applyKeyframesAtTime` が
+     毎フレーム補間値を反映する（`sampleLayerAt` 経由）。新プロパティを kf 対応にするならそこに追加
 4. **UI 編集**: [src/components/LayerPropertyPanel.tsx](src/components/LayerPropertyPanel.tsx)
    - 上部バー（常時表示）or タブ内セクションに編集 UI を追加
    - 必要なら `numInput` / `sliderInput` / `colorInput` ヘルパを使う
@@ -44,7 +56,9 @@
 ### 「どちらか片方だけ」が許される例外
 
 - プレビュー専用の UI（選択枠 / グリッド線 / ドラッグ中のガイド線）
-- エクスポート専用の調整（faststart / GOP / CRF などのエンコード設定）
+- エクスポート専用の調整（mediabunny の codec / bitrate / fps などの encode 設定）
+- 動画ファイルの原理上どうしても再現できない差（例: キャラ物理のリアルタイム揺らぎ＝固定 fps で焼くと毎回同じ結果になる）
+  ※ flip の 3D perspective は「preview 専用」ではなく、列スライス warp (`drawFlipWarp`) で export でも厳密再現済み
 - それ以外は**基本セット変更**と考える
 
 ## その他のプロジェクト固有ルール
@@ -57,7 +71,8 @@
 
 ### シーン・セグメント概念は廃止済み
 - `segments` / `TemplateSegment` / `Script` / `hook/body/cta` は旧方式。もう使わない
-- 動画はレイヤーだけで構成され、1 回の `compose_template_video` 呼び出しで合成される
+- 動画はレイヤーだけで構成され、1 回の WebCodecs エクスポート（`exportTemplateWebCodecs`）で
+  全フレームを Canvas 合成して書き出す
 
 ### Undo 挙動
 - マウス押下中（ドラッグ / リサイズ）は history push を抑制して、pointer up で 1 件だけ commit する方式
@@ -67,5 +82,6 @@
 - 対応プロパティ: `x` / `y` / `scale` / `opacity` / `rotation`
 - 補間は **linear のみ**（将来 easing 追加予定）
 - プレビュー: [src/components/TemplateCanvas.tsx](src/components/TemplateCanvas.tsx) の LayerView で **再生中のみ** 補間値を適用（編集中は静的値でドラッグを妨げない）
-- エクスポート: [src-tauri/src/lib.rs](src-tauri/src/lib.rs) の `keyframe_expr` で ffmpeg if 式に展開
-- opacity のエクスポート時キーフレーム補間は**未対応**（プレビューのみ動く）
+- エクスポート: [src/lib/layerComposer.ts](src/lib/layerComposer.ts) の `renderLayersOnContext` が
+  毎フレーム `applyKeyframesAtTime`（`sampleLayerAt` 経由）で補間値を `drawLayer` に渡す
+- **opacity のキーフレーム補間も WebCodecs では対応済み**（旧 ffmpeg 経路では未対応だったが撤去済み）

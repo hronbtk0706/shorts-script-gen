@@ -26,6 +26,9 @@ export interface CanvasAnimTransform {
   originY: number;
   /** 回転 (radians) */
   rot: number;
+  /** flip (Y軸回り) の回転角 (度)。0 = flat。!=0 のとき呼び出し側が perspective rotateY を
+   * 列スライス warp で正確に再現する（Canvas 2D の scale では 2D 近似になるため別扱い）。 */
+  flipDeg: number;
   /** ぼかし (px) */
   blur: number;
   /** hue-rotate (degrees) — rainbow ambient 用 */
@@ -45,6 +48,7 @@ const IDENTITY: CanvasAnimTransform = {
   originX: 0.5,
   originY: 0.5,
   rot: 0,
+  flipDeg: 0,
   blur: 0,
   hueDeg: 0,
   glowBlur: 0,
@@ -80,6 +84,7 @@ export function computeCanvasAnim(
   let originX = 0.5;
   let originY = 0.5;
   let rot = 0;
+  let flipDeg = 0;
   let blur = 0;
   let hueDeg = 0;
   let glowBlur = 0;
@@ -133,9 +138,9 @@ export function computeCanvasAnim(
         break;
       }
       case "flip-in":
-        // preview は perspective(500px) rotateY だが Canvas 2D は 3D 不可。
-        // ffmpeg 側と同じく scaleX で近似 (audit の既知事項)
-        sx = Math.max(0.001, e);
+        // preview の perspective(500px) rotateY((1-e)*90deg) を flipDeg で表現し、
+        // 呼び出し側 (drawLayer) が列スライス warp で正確に再現する。
+        flipDeg = (1 - e) * 90;
         opacity *= e;
         break;
       case "stretch-in":
@@ -202,8 +207,8 @@ export function computeCanvasAnim(
         opacity *= 1 - e;
         break;
       case "flip-out":
-        // preview は 3D rotateY だが Canvas 2D は 3D 不可。scaleX で近似
-        sx *= Math.max(0.001, 1 - e);
+        // preview の perspective(500px) rotateY(e*90deg) を flipDeg で表現（warp で再現）
+        flipDeg = e * 90;
         opacity *= 1 - e;
         break;
       case "stretch-out":
@@ -271,6 +276,7 @@ export function computeCanvasAnim(
     sx === 1 &&
     sy === 1 &&
     rot === 0 &&
+    flipDeg === 0 &&
     blur === 0 &&
     hueDeg === 0 &&
     glowBlur === 0
@@ -286,6 +292,7 @@ export function computeCanvasAnim(
     originX,
     originY,
     rot,
+    flipDeg,
     blur,
     hueDeg,
     glowBlur,

@@ -89,28 +89,6 @@ export type TextDecoration =
   | "outline-reveal"
   | "shadow-drop";
 
-/** @deprecated v1 互換用。新コードは Layer を使用 */
-export interface LayerV1 {
-  id: string;
-  type: LayerType;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation?: number;
-  opacity?: number;
-  zIndex: number;
-  shape?: LayerShape;
-  borderRadius?: number;
-  border?: LayerBorder;
-  source?: "auto" | "user" | string;
-  fillColor?: string;
-  text?: string;
-  fontSize?: number;
-  fontColor?: string;
-  motion?: Motion;
-}
-
 /** 吹き出し（comment レイヤーに紐づく）の形状・しっぽ指定 */
 export type BubbleShape = "rect" | "rounded" | "ellipse" | "cloud";
 
@@ -461,31 +439,6 @@ export interface CommentBundle {
   comments: ExtractedComment[];
 }
 
-export interface ScriptInput {
-  topic: string;
-  platform: Platform;
-  duration: Duration;
-  audience?: string;
-  tone?: string;
-  goal?: string;
-  reference?: string;
-  trendInsights?: string;
-  performanceInsights?: string;
-  referenceBundle?: ReferenceBundle;
-  template?: VideoTemplate;
-  selectedComments?: ExtractedComment[];
-  manualMode?: boolean;
-}
-
-export interface SubtitleStyle {
-  primary_color: string;
-  outline_color: string;
-  font_size: "md" | "lg" | "xl";
-  emoji: string;
-  background: "none" | "dark" | "highlight";
-  emphasis_keyword: string;
-}
-
 export type Motion =
   | "static"
   | "zoom_in"
@@ -499,99 +452,3 @@ export type Motion =
   | "zoom_punch"
   | "shake";
 
-export type ColorGrade =
-  | "none"
-  | "sepia"
-  | "bw"
-  | "vintage"
-  | "vivid"
-  | "cool"
-  | "warm"
-  | "vignette"
-  | "neon"
-  | "high_contrast"
-  | "soft_glow"
-  | "film_grain";
-
-export type TransitionType =
-  | "cut"
-  | "fade"
-  | "fadeblack"
-  | "fadewhite"
-  | "fadegrays"
-  | "flash"
-  | "slideleft"
-  | "slideright"
-  | "slideup"
-  | "slidedown"
-  | "dissolve"
-  | "zoomin"
-  | "circleopen"
-  | "circleclose"
-  | "wipeleft"
-  | "wiperight"
-  | "wipeup"
-  | "wipedown"
-  | "pixelize"
-  | "smoothleft"
-  | "radial"
-  | "hblur"
-  | "squeezev"
-  | "squeezeh"
-  | "coverleft"
-  | "coverright"
-  | "coverup"
-  | "coverdown"
-  | "revealleft"
-  | "revealright"
-  | "revealup"
-  | "revealdown"
-  | "diagtl"
-  | "diagtr"
-  | "diagbl"
-  | "diagbr";
-
-export interface SceneEffects {
-  motion: Motion;
-  color: ColorGrade;
-  audio_fade_in: boolean;
-  audio_fade_out: boolean;
-  transition_to_next: TransitionType;
-  transition_duration: number;
-}
-
-export interface BodySegment {
-  seconds: string;
-  narration: string;
-  visual: string;
-  image_prompt: string;
-  text_overlay: string;
-  subtitle_style: SubtitleStyle;
-  effects: SceneEffects;
-  image_path?: string;
-}
-
-export interface Script {
-  title: string;
-  theme_vibe: string;
-  hook: {
-    seconds: string;
-    text: string;
-    visual: string;
-    image_prompt: string;
-    subtitle_style: SubtitleStyle;
-    effects: SceneEffects;
-    image_path?: string;
-  };
-  body: BodySegment[];
-  cta: {
-    seconds: string;
-    text: string;
-    image_prompt: string;
-    subtitle_style: SubtitleStyle;
-    effects: SceneEffects;
-    image_path?: string;
-  };
-  hashtags: string[];
-  bgm_mood: string;
-}

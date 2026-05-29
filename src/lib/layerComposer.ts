@@ -363,19 +363,86 @@ async function drawLayer(
   }
 
   // 入退場アニメ (WebCodecs エクスポート経路でのみ animAtTimeSec が渡る)
+  let flipDeg = 0;
   if (animAtTimeSec !== undefined) {
     // ambient の絶対 px 振幅を design(360) → 出力解像度へ換算する係数
     const anim = computeCanvasAnim(layer, animAtTimeSec, w, h, FINAL_W / 360);
     applyCanvasAnim(ctx, anim, w, h);
+    flipDeg = anim.flipDeg;
+  }
+
+  const isBubble = layer.type === "comment" && !!layer.bubble;
+
+  // flip (perspective rotateY) は Canvas 2D の scale では 2D 近似になるため、
+  // 中身を一旦平面でオフスクリーンに描き、列スライス warp で本物の 3D 見えを再現する。
+  if (flipDeg !== 0) {
+    const tw = Math.max(1, Math.ceil(w));
+    const th = Math.max(1, Math.ceil(h));
+    const temp = new OffscreenCanvas(tw, th);
+    const tctx = temp.getContext("2d") as CanvasRenderingContext2D | null;
+    if (tctx) {
+      if (!isBubble) applyShapeClip(tctx, layer, w, h);
+      await drawLayerContentInBox(
+        tctx,
+        layer,
+        w,
+        h,
+        resolveSrc,
+        videoFrameSources,
+        animAtTimeSec,
+      );
+      if (!isBubble) {
+        // perspective で枠外にはみ出す分は箱でクリップ（preview の outer overflow:hidden 相当）
+        ctx.beginPath();
+        ctx.rect(0, 0, w, h);
+        ctx.clip();
+      }
+      drawFlipWarp(ctx, temp, w, h, flipDeg, 500 * (FINAL_W / 360));
+    }
+    ctx.restore();
+    if (layer.border && layer.border.width > 0 && !isBubble) {
+      drawBorder(ctx, layer, x, y, w, h);
+    }
+    return;
   }
 
   // 形状クリップ（吹き出しは独自パスで描き、しっぽが枠外に出るのでクリップしない）
-  const isBubble = layer.type === "comment" && !!layer.bubble;
   if (!isBubble) {
     applyShapeClip(ctx, layer, w, h);
   }
+  await drawLayerContentInBox(
+    ctx,
+    layer,
+    w,
+    h,
+    resolveSrc,
+    videoFrameSources,
+    animAtTimeSec,
+  );
 
-  // 中身描画
+  ctx.restore();
+
+  // Border（クリップの外に描く必要があるため restore 後）。
+  // 吹き出しの枠は drawBubbleShape が描くので、矩形 drawBorder はスキップする。
+  if (layer.border && layer.border.width > 0 && !isBubble) {
+    drawBorder(ctx, layer, x, y, w, h);
+  }
+}
+
+/**
+ * レイヤーの「中身」だけを ctx の現在原点 (= レイヤー左上) に [0,w]×[0,h] で描く。
+ * 位置・回転・入退場 transform・クリップは呼び出し側の責務。
+ * flip warp では一旦オフスクリーンへ平面描画するために切り出した。
+ */
+async function drawLayerContentInBox(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  resolveSrc: LayerSourceResolver,
+  videoFrameSources?: Map<string, CanvasImageSource>,
+  animAtTimeSec?: number,
+): Promise<void> {
   try {
     switch (layer.type) {
       case "image":
@@ -490,14 +557,6 @@ async function drawLayer(
   } catch (e) {
     console.warn("[layerComposer] layer draw failed:", layer.id, e);
   }
-
-  ctx.restore();
-
-  // Border（クリップの外に描く必要があるため restore 後）。
-  // 吹き出しの枠は drawBubbleShape が描くので、矩形 drawBorder はスキップする。
-  if (layer.border && layer.border.width > 0 && !isBubble) {
-    drawBorder(ctx, layer, x, y, w, h);
-  }
 }
 
 function applyShapeClip(
@@ -522,6 +581,58 @@ function applyShapeClip(
     ctx.beginPath();
     ctx.rect(0, 0, w, h);
     ctx.clip();
+  }
+}
+
+/**
+ * CSS の `perspective(P px) rotateY(flipDeg)` を Canvas 2D で **厳密に** 再現する。
+ *
+ * rotateY は「ソース画像の各縦列 (lx 一定) を、画面上で固定 X 位置・一定縦スケールの
+ * 縦線に写す」変換なので、列スライスを perspective 係数で並べれば近似でなく数学的に正確。
+ * CSS 行列から導出: 点 (lx, ly) → w' = 1 + lx·sinθ/P, screenX = lx·cosθ/w', screenY = ly/w'。
+ *
+ * src は w×h（レイヤー実寸 px）に平面描画済みのオフスクリーン。
+ * ctx はレイヤー左上を原点にした状態で呼ぶこと（描画は [0,w]×[0,h] 周辺に出る）。
+ */
+function drawFlipWarp(
+  ctx: CanvasRenderingContext2D,
+  src: CanvasImageSource,
+  w: number,
+  h: number,
+  flipDeg: number,
+  perspectivePx: number,
+): void {
+  const theta = (flipDeg * Math.PI) / 180;
+  const sin = Math.sin(theta);
+  const cos = Math.cos(theta);
+  const cx = w / 2;
+  const cy = h / 2;
+  const sw = (src as unknown as { width: number }).width;
+  const sh = (src as unknown as { height: number }).height;
+  if (!sw || !sh) return;
+  // ソース px s → element 空間 lx（中心原点, [-w/2, w/2]）
+  const screenX = (lx: number): number => {
+    const f = 1 / (1 + (lx * sin) / perspectivePx);
+    return cx + lx * cos * f;
+  };
+  for (let s = 0; s < sw; s++) {
+    const lxL = (s / sw - 0.5) * w;
+    const lxR = ((s + 1) / sw - 0.5) * w;
+    const sxL = screenX(lxL);
+    const sxR = screenX(lxR);
+    let destX = sxL;
+    let destW = sxR - sxL;
+    if (destW < 0) {
+      destX = sxR;
+      destW = -destW;
+    }
+    if (destW <= 0) continue;
+    const lxC = (lxL + lxR) / 2;
+    const fC = 1 / (1 + (lxC * sin) / perspectivePx);
+    const destH = h * fC;
+    const destY = cy - destH / 2;
+    // 隣接スライスと僅かに重ねてサブピクセル境界のシームを防ぐ
+    ctx.drawImage(src, s, 0, 1, sh, destX, destY, destW + 0.6, destH);
   }
 }
 
