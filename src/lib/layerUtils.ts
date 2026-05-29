@@ -86,6 +86,19 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
           seed: Math.floor(Math.random() * 0x7fffffff),
         },
       };
+    case "effect":
+      return {
+        ...base,
+        // 実体なし（pixel 出力しない）。座標は無視されるので 0 固定
+        x: 0,
+        y: 0,
+        width: 0,
+        height: 0,
+        effectKind: "shake",
+        effectIntensity: 1,
+        // 衝撃演出はごく短く
+        endSec: (defaults.startSec ?? 0) + 0.4,
+      };
   }
 }
 

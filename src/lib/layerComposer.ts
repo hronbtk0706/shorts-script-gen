@@ -345,6 +345,9 @@ async function drawLayer(
   videoFrameSources?: Map<string, CanvasImageSource>,
   animAtTimeSec?: number,
 ): Promise<void> {
+  // effect レイヤーは pixel を出力しない（最終合成段階で画面全体に適用する）
+  if (layer.type === "effect") return;
+
   const w = (layer.width / 100) * FINAL_W;
   const h = (layer.height / 100) * FINAL_H;
   const x = (layer.x / 100) * FINAL_W;

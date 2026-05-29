@@ -14,6 +14,7 @@ import type {
   LayerKeyframes,
   BubbleShape,
   ExpressionKeyframe,
+  ScreenEffectKind,
 } from "../types";
 import {
   VOICEVOX_SPEAKERS,
@@ -420,7 +421,8 @@ type SectionId =
   | "keyframes"
   | "crop"
   | "bubble"
-  | "decoration";
+  | "decoration"
+  | "effect";
 
 type PropTab = "basic" | "style" | "motion" | "detail";
 
@@ -440,6 +442,7 @@ const TAB_OF_SECTION: Record<SectionId, PropTab> = {
   character: "detail",
   crop: "style",
   bubble: "style",
+  effect: "detail",
 };
 
 const TABS: Array<{ id: PropTab; label: string }> = [
@@ -789,6 +792,7 @@ export function LayerPropertyPanel({
   const showSource = allHaveType(["image", "video"]);
   const showAudio = allHaveType(["audio"]);
   const showCharacter = allHaveType(["character"]);
+  const showEffect = allHaveType(["effect"]);
   // 音声のみ選択中は「位置・サイズ / 形状 / 枠線」は意味がないので非表示
   const allAudio = showAudio;
 
@@ -800,6 +804,7 @@ export function LayerPropertyPanel({
     shape: "⬜",
     audio: "🎵",
     character: "🎭",
+    effect: "💥",
   };
   const headerLabel = multi ? (
     <span className="text-blue-600 dark:text-blue-400">
@@ -1893,6 +1898,45 @@ export function LayerPropertyPanel({
               </div>
             );
           })()}
+        </Section>
+      )}
+
+      {showEffect && !multi && primary && (
+        <Section
+          id="effect"
+          title="画面エフェクト"
+          open={isOpen("effect")}
+          onToggle={toggle}
+          currentTab={activeTab}
+        >
+          <div className="text-[10px] text-gray-500">
+            画面全体に時間限定で効果を適用（実体なし）。表示期間 (startSec〜endSec)
+            の間だけ効く。
+          </div>
+          <label className="flex flex-col gap-0.5 text-[11px]">
+            種類
+            <select
+              value={primary.effectKind ?? "shake"}
+              onChange={(e) =>
+                onChange({ effectKind: e.target.value as ScreenEffectKind })
+              }
+              className="px-1.5 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-[11px]"
+            >
+              <option value="shake">shake（全画面シェイク）</option>
+              <option value="flash">flash（白フラッシュ）※未実装</option>
+              <option value="vignette-pulse">vignette-pulse ※未実装</option>
+              <option value="zoom-punch">zoom-punch ※未実装</option>
+              <option value="blur-burst">blur-burst ※未実装</option>
+            </select>
+          </label>
+          {sliderInput(
+            "強度",
+            common("effectIntensity") ?? 1,
+            (v) => onChange({ effectIntensity: Math.max(0, Math.min(2, v)) }),
+            0,
+            2,
+            0.1,
+          )}
         </Section>
       )}
 

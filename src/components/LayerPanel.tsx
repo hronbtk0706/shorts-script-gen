@@ -135,6 +135,7 @@ const LAYER_TYPE_LABELS: Record<LayerType, { icon: string; label: string }> = {
   comment: { icon: "📝", label: "テキスト" },
   audio: { icon: "🎵", label: "音声" },
   character: { icon: "🎭", label: "キャラ" },
+  effect: { icon: "💥", label: "画面エフェクト" },
 };
 
 export function LayerPanel({

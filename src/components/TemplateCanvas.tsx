@@ -5,6 +5,7 @@ import type { Layer } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
 import { computeDuckMultiplier } from "../lib/ducking";
+import { computeScreenShake } from "../lib/screenEffect";
 import { bubbleFullPath } from "../lib/bubble";
 import { TEXT_DEFAULT_FONT_STACK } from "../lib/layerComposer";
 import { CharacterLayerContent } from "./CharacterLayerContent";
@@ -170,6 +171,21 @@ export function TemplateCanvas({
     }
   };
 
+  // 画面全体エフェクト（type === "effect" の shake）。再生中のみ適用（編集中は
+  // Moveable とのズレを避けるため静止）。export 側 (computeScreenShake) と同式・同 seed。
+  const screenShake = isPlaying
+    ? computeScreenShake(layers, currentTimeSec ?? 0, CANVAS_W_PX / 360)
+    : { dx: 0, dy: 0 };
+  const hasShake = screenShake.dx !== 0 || screenShake.dy !== 0;
+  const screenShakeStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    transform: hasShake
+      ? `translate(${screenShake.dx.toFixed(2)}px, ${screenShake.dy.toFixed(2)}px)`
+      : undefined,
+    willChange: hasShake ? "transform" : undefined,
+  };
+
   return (
     <div
       ref={wrapperRef}
@@ -198,37 +214,43 @@ export function TemplateCanvas({
           }}
         />
       )}
-      {sortedLayers(layers)
-        .filter(
-          (layer) =>
-            isInTime(layer) && !layer.hidden && layer.type !== "audio",
-        )
-        .map((layer) => (
-          <LayerView
-            key={layer.id}
-            layer={layer}
-            isSelected={selectedSet.has(layer.id)}
-            isPrimary={layer.id === selectedLayerId}
-            dimmed={false}
-            canvasWPx={CANVAS_W_PX}
-            canvasHPx={CANVAS_H_PX}
-            currentTimeSec={currentTimeSec ?? 0}
-            isPlaying={isPlaying}
-            cssFilter=""
-            allLayers={layers}
-            editingLayerId={editingLayerId}
-            onSelect={(modifier) => onLayerSelect(layer.id, modifier)}
-            onUpdate={(patch) => onLayerUpdate(layer.id, patch)}
-            onRefReady={(el) => {
-              if (layer.id === selectedLayerId) {
-                targetRef.current = el;
-                forceRerender((n) => n + 1);
-              }
-            }}
-            onEditStart={(id) => setEditingLayerId(id)}
-            onEditEnd={() => setEditingLayerId(null)}
-          />
-        ))}
+      {/* レイヤー群は shake 用 inner div でラップ（グリッド/Moveable は揺らさない） */}
+      <div style={screenShakeStyle}>
+        {sortedLayers(layers)
+          .filter(
+            (layer) =>
+              isInTime(layer) &&
+              !layer.hidden &&
+              layer.type !== "audio" &&
+              layer.type !== "effect",
+          )
+          .map((layer) => (
+            <LayerView
+              key={layer.id}
+              layer={layer}
+              isSelected={selectedSet.has(layer.id)}
+              isPrimary={layer.id === selectedLayerId}
+              dimmed={false}
+              canvasWPx={CANVAS_W_PX}
+              canvasHPx={CANVAS_H_PX}
+              currentTimeSec={currentTimeSec ?? 0}
+              isPlaying={isPlaying}
+              cssFilter=""
+              allLayers={layers}
+              editingLayerId={editingLayerId}
+              onSelect={(modifier) => onLayerSelect(layer.id, modifier)}
+              onUpdate={(patch) => onLayerUpdate(layer.id, patch)}
+              onRefReady={(el) => {
+                if (layer.id === selectedLayerId) {
+                  targetRef.current = el;
+                  forceRerender((n) => n + 1);
+                }
+              }}
+              onEditStart={(id) => setEditingLayerId(id)}
+              onEditEnd={() => setEditingLayerId(null)}
+            />
+          ))}
+      </div>
 
       {/* 音声レイヤー（視覚なし、<audio> を playhead 同期） */}
       {layers

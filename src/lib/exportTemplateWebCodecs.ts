@@ -41,6 +41,7 @@ import {
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
 import { computeDuckMultiplier, layerHasDucking } from "./ducking";
+import { computeScreenShake } from "./screenEffect";
 
 const FPS = 30;
 const AUDIO_SAMPLE_RATE = 48000;
@@ -353,6 +354,17 @@ export async function exportTemplateWebCodecs(
       }
 
       // フレーム合成 (preview と同じ drawLayer 経路 + 入退場アニメ)
+      // 画面全体エフェクト（shake）: 最終合成フレームを translate する。
+      // 露出する端が前フレームの残像にならないよう、先に黒で全面塗ってから translate。
+      // preview (computeScreenShake) と同式・同 seed。
+      const shake = computeScreenShake(template.layers, t, dims.width / 360);
+      const shaking = shake.dx !== 0 || shake.dy !== 0;
+      ctx.save();
+      if (shaking) {
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, dims.width, dims.height);
+        ctx.translate(shake.dx, shake.dy);
+      }
       await renderLayersOnContext(ctx, visibleLayers, resolveSrc, {
         skipVideoLayers: false,
         atTimeSec: t,
@@ -360,6 +372,7 @@ export async function exportTemplateWebCodecs(
           videoFrameSources.size > 0 ? videoFrameSources : undefined,
         applyAnim: true,
       });
+      ctx.restore();
 
       // mediabunny にフレーム追加 (backpressure を尊重するため await)
       const tFrame = f / FPS;

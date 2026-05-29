@@ -8,9 +8,19 @@ export type LayerType =
   | "shape"
   | "comment"
   | "audio"
-  | "character";
+  | "character"
+  | "effect";
 
 export type LayerShape = "rect" | "circle" | "rounded" | "arc";
+
+/** 画面全体エフェクトの種類（type === "effect" の layer.effectKind で指定）。
+ *  effect layer は pixel を出力せず、[startSec, endSec] の間 最終合成フレーム全体に効果を適用する。 */
+export type ScreenEffectKind =
+  | "shake" // 全画面シェイク（地震風の微小 translate）
+  | "flash" // 白フラッシュ（章切替・カット感）— Phase 2
+  | "vignette-pulse" // 画面端を一瞬暗く — Phase 2
+  | "zoom-punch" // 全画面 1 瞬拡大 — Phase 2
+  | "blur-burst"; // 全画面 1 瞬 blur — Phase 2
 
 export interface LayerBorder {
   width: number;
@@ -281,6 +291,11 @@ export interface Layer {
   duckAttackMs?: number;
   /** 戻す応答時間 ms (default 800) */
   duckReleaseMs?: number;
+  /** type === "effect" 専用: 画面全体エフェクトの種類 */
+  effectKind?: ScreenEffectKind;
+  /** type === "effect" 専用: 強度 (0..2, default 1.0)。
+   *  shake の translate 幅などを共通制御する。 */
+  effectIntensity?: number;
   /** 音声/動画レイヤー: 再生速度倍率。1.0 = 等速、0.5 = 半分、2.0 = 倍速 */
   playbackRate?: number;
   /** 動画レイヤー専用: 素材が短いときにループ再生するか（default: true） */
