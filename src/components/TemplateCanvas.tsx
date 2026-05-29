@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
+import { computeDuckMultiplier } from "../lib/ducking";
 import { bubbleFullPath } from "../lib/bubble";
 import { TEXT_DEFAULT_FONT_STACK } from "../lib/layerComposer";
 import { CharacterLayerContent } from "./CharacterLayerContent";
@@ -238,6 +239,7 @@ export function TemplateCanvas({
             layer={layer}
             currentTimeSec={currentTimeSec ?? 0}
             isPlaying={isPlaying}
+            allLayers={layers}
           />
         ))}
 
@@ -1543,10 +1545,12 @@ function AudioLayerPlayer({
   layer,
   currentTimeSec,
   isPlaying,
+  allLayers = [],
 }: {
   layer: Layer;
   currentTimeSec: number;
   isPlaying: boolean;
+  allLayers?: Layer[];
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   // HTMLAudioElement.volume は 0..1 にクランプされるため、100% 超のボリュームは
@@ -1635,6 +1639,9 @@ function AudioLayerPlayer({
     if (fadeOut > 0 && toEnd < fadeOut) {
       gain *= Math.max(0, Math.min(1, toEnd / fadeOut));
     }
+    // ダッキング: duckBy の layer が鳴っている時間帯は volume を下げる
+    // （fade とは独立に積算）。export 側 mixAudioLayers と同じ computeDuckMultiplier を共有。
+    gain *= computeDuckMultiplier(layer, allLayers, currentTimeSec);
     const volumeFinal = Math.max(0, gain);
     // 0..1 の通常音量は HTMLAudioElement 直結で鳴らす（Web Audio に通すと
     // AudioContext が suspended のままだと無音になる事故が起きるため）。
@@ -1661,6 +1668,11 @@ function AudioLayerPlayer({
     layer.startSec,
     layer.endSec,
     layer.id,
+    layer.duckBy,
+    layer.duckAmount,
+    layer.duckAttackMs,
+    layer.duckReleaseMs,
+    allLayers,
   ]);
 
   // 再生速度

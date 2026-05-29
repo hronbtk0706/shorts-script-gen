@@ -1821,6 +1821,78 @@ export function LayerPropertyPanel({
             />
             短いときループ再生
           </label>
+
+          {/* ダッキング: 他の音声（ナレーション等）が鳴っている間だけ音量を下げる */}
+          {!multi && primary && (() => {
+            const otherAudioIds = (allLayers ?? [])
+              .filter((l) => l.type === "audio" && l.id !== primary.id)
+              .map((l) => l.id);
+            const duckEnabled = !!(primary.duckBy && primary.duckBy.length > 0);
+            return (
+              <div className="flex flex-col gap-1 border-t border-gray-200 dark:border-gray-700 pt-1.5 mt-1">
+                <label className="flex items-center gap-1 text-[11px]">
+                  <input
+                    type="checkbox"
+                    checked={duckEnabled}
+                    onChange={(e) =>
+                      onChange(
+                        e.target.checked
+                          ? {
+                              duckBy: otherAudioIds,
+                              duckAmount: primary.duckAmount ?? 0.3,
+                              duckAttackMs: primary.duckAttackMs ?? 250,
+                              duckReleaseMs: primary.duckReleaseMs ?? 800,
+                            }
+                          : { duckBy: undefined },
+                      )
+                    }
+                    className="h-3 w-3"
+                  />
+                  ダッキング（他の音声中に下げる）
+                </label>
+                {duckEnabled && (
+                  <>
+                    <div className="text-[10px] text-gray-500">
+                      対象: {primary.duckBy?.length ?? 0} 本の音声
+                      {otherAudioIds.length !== (primary.duckBy?.length ?? 0) && (
+                        <button
+                          type="button"
+                          onClick={() => onChange({ duckBy: otherAudioIds })}
+                          className="ml-1 text-blue-600 hover:underline"
+                          title="現在の全音声を対象にし直す"
+                        >
+                          全音声に更新
+                        </button>
+                      )}
+                    </div>
+                    {sliderInput(
+                      "下げ後音量",
+                      common("duckAmount") ?? 0.3,
+                      (v) =>
+                        onChange({ duckAmount: Math.max(0, Math.min(1, v)) }),
+                      0,
+                      1,
+                      0.05,
+                    )}
+                    {numInput(
+                      "Attack",
+                      common("duckAttackMs") ?? 250,
+                      (v) => onChange({ duckAttackMs: Math.max(0, v) }),
+                      10,
+                      "ms",
+                    )}
+                    {numInput(
+                      "Release",
+                      common("duckReleaseMs") ?? 800,
+                      (v) => onChange({ duckReleaseMs: Math.max(0, v) }),
+                      10,
+                      "ms",
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })()}
         </Section>
       )}
 

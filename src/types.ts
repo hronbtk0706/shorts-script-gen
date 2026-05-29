@@ -270,6 +270,17 @@ export interface Layer {
   audioFadeOut?: number;
   /** 音声レイヤー専用: 素材が短いときにループ再生するか */
   audioLoop?: boolean;
+  /** 音声レイヤー専用: ダッキング（BGM 自動低音量化）。
+   *  duckBy に列挙した layer の表示期間中、この layer の volume を duckAmount 倍に下げる。
+   *  attack/release ms で線形補間して急な切替を避ける。複数 layer が同時に鳴る場合は
+   *  最大下げを 1 回だけ適用（多重 duck しない）。audioFadeIn/Out とは独立に積算。 */
+  duckBy?: string[];
+  /** 下げ後の音量倍率 (0..1)、default 0.3 ≒ -10.5dB */
+  duckAmount?: number;
+  /** 下げ始める応答時間 ms (default 250) */
+  duckAttackMs?: number;
+  /** 戻す応答時間 ms (default 800) */
+  duckReleaseMs?: number;
   /** 音声/動画レイヤー: 再生速度倍率。1.0 = 等速、0.5 = 半分、2.0 = 倍速 */
   playbackRate?: number;
   /** 動画レイヤー専用: 素材が短いときにループ再生するか（default: true） */

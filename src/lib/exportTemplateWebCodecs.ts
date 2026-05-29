@@ -40,6 +40,7 @@ import {
   setCompositionCanvasDimensions,
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
+import { computeDuckMultiplier, layerHasDucking } from "./ducking";
 
 const FPS = 30;
 const AUDIO_SAMPLE_RATE = 48000;
@@ -212,10 +213,12 @@ export async function exportTemplateWebCodecs(
   // 音声ミックスは時間がかかるので、video の encode と並行で進める
   const audioPromise: Promise<AudioBuffer | null> =
     audioSource && audioLayers.length > 0
-      ? mixAudioLayers(audioLayers, totalDuration, signal).catch((e) => {
-          console.warn("[WebCodecs] audio mix failed, skipping audio:", e);
-          return null;
-        })
+      ? mixAudioLayers(audioLayers, totalDuration, signal, template.layers).catch(
+          (e) => {
+            console.warn("[WebCodecs] audio mix failed, skipping audio:", e);
+            return null;
+          },
+        )
       : Promise.resolve(null);
 
   const visibleLayers = template.layers.filter((l) => !l.hidden);
@@ -495,6 +498,8 @@ async function mixAudioLayers(
   audioLayers: Layer[],
   totalDuration: number,
   signal: AbortSignal | undefined,
+  // ダッキングの duckBy id 解決用（区間を引くため）。preview の allLayers と揃える。
+  allLayers: Layer[],
 ): Promise<AudioBuffer | null> {
   if (audioLayers.length === 0) return null;
   const ctx = new OfflineAudioContext(
@@ -564,7 +569,25 @@ async function mixAudioLayers(
       }
 
       sourceNode.connect(gainNode);
-      gainNode.connect(ctx.destination);
+
+      // ダッキング: duckBy がある layer は、fade 用 gainNode の後段に duck 用 GainNode を
+      // 直列に挿す（fade と独立に積算）。preview と同じ computeDuckMultiplier で時刻別の
+      // 倍率を算出し、setValueCurveAtTime で滑らかなカーブとして適用する。
+      let outNode: AudioNode = gainNode;
+      if (layerHasDucking(layer)) {
+        const duckGain = ctx.createGain();
+        const STEP = 0.05; // 50ms 解像度（duck の attack/release 250〜800ms に十分）
+        const n = Math.max(2, Math.ceil(visibleDur / STEP) + 1);
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const tt = startT + (i / (n - 1)) * visibleDur;
+          curve[i] = computeDuckMultiplier(layer, allLayers, tt);
+        }
+        duckGain.gain.setValueCurveAtTime(curve, startT, visibleDur);
+        gainNode.connect(duckGain);
+        outNode = duckGain;
+      }
+      outNode.connect(ctx.destination);
 
       // 再生スケジュール: when=startT, offset=0, duration=visibleDur
       // loop=true のときは visibleDur 経過後に自動停止 (sourceNode.stop)
