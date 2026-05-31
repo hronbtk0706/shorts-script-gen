@@ -11,16 +11,30 @@ export type LayerType =
   | "character"
   | "effect";
 
-export type LayerShape = "rect" | "circle" | "rounded" | "arc";
+export type LayerShape =
+  | "rect"
+  | "circle"
+  | "rounded"
+  | "arc"
+  // 手書き風マーカー注釈（背景の一点を指す）。box 内に内接 / 描画。draw-on で描き進む。
+  | "marker-circle" // 丸囲み（楕円ループ）
+  | "marker-arrow" // 矢印（markerFrom→markerTo + ヘッド）
+  | "marker-line" // 線（markerFrom→markerTo。ヘッドは markerHead 既定 none。引き出し線に流用）
+  | "marker-underline" // 下線（横ラフ線）
+  | "marker-strike" // 取り消し線（中央を横切る）
+  | "marker-check" // レ点
+  | "marker-cross" // バツ
+  | "marker-brackets" // フォーカスブラケット（四隅の [ ]）
+  | "marker-burst"; // 集中線（焦点へ放射状）
 
 /** 画面全体エフェクトの種類（type === "effect" の layer.effectKind で指定）。
  *  effect layer は pixel を出力せず、[startSec, endSec] の間 最終合成フレーム全体に効果を適用する。 */
 export type ScreenEffectKind =
   | "shake" // 全画面シェイク（地震風の微小 translate）
-  | "flash" // 白フラッシュ（章切替・カット感）— Phase 2
-  | "vignette-pulse" // 画面端を一瞬暗く — Phase 2
-  | "zoom-punch" // 全画面 1 瞬拡大 — Phase 2
-  | "blur-burst"; // 全画面 1 瞬 blur — Phase 2
+  | "flash" // 白フラッシュ（章切替・カット感）
+  | "vignette-pulse" // 画面端を一瞬暗く（クライマックス）
+  | "zoom-punch" // 全画面 1 瞬拡大（強調）
+  | "blur-burst"; // 全画面 1 瞬 blur（衝撃直前の予感）
 
 export interface LayerBorder {
   width: number;
@@ -47,7 +61,9 @@ export type EntryAnimation =
   | "grow-right"
   | "grow-left"
   // shape:"arc" 専用。entry 中 arcEnd を arcStart→arcEnd まで補間して時計回りに描画
-  | "arc-sweep";
+  | "arc-sweep"
+  // marker-* 専用。ペン先が entryDuration で進み、その進捗ぶんだけストロークが現れる
+  | "draw-on";
 
 export type ExitAnimation =
   | "none"
@@ -244,6 +260,16 @@ export interface Layer {
   arcEnd?: number;
   arcInnerRadius?: number;
   arcOuterRadius?: number;
+  /**
+   * shape === "marker-*" のときのみ使用（手書き風マーカー注釈）。
+   * 線色は fillColor（既定 赤 #FF3B30）。preview/export で同一 jitter（seed = layer.id）。
+   */
+  markerWidth?: number; // 線の太さ px（design 360 基準。描画時 *pxScale）。既定 6
+  markerRoughness?: number; // 手書き揺れ量 0..2。既定 1.0
+  markerFrom?: { x: number; y: number }; // marker-arrow/line 始点（box 内 %）。既定 左下
+  markerTo?: { x: number; y: number }; // marker-arrow/line 終点（box 内 %）。既定 右上
+  markerHead?: "none" | "triangle"; // marker-arrow/line の先端ヘッド。既定 arrow=triangle / line=none
+  markerCount?: number; // marker-burst の集中線本数。既定 12
   source?: "auto" | "user" | string;
   fillColor?: string;
   text?: string;
@@ -422,6 +448,23 @@ export interface VideoTemplate {
   };
   /** テンプレにインポート済みの YouTube コメント（複数動画分を保持） */
   importedCommentBundles?: CommentBundle[];
+  /**
+   * エクスポート時のラウドネス正規化設定。
+   * 全 audio レイヤーをミックスダウンした最終バッファ全体に対し 1 回だけゲイン補正をかけ、
+   * 動画間で体感音量を揃える（YouTube は約 -14 LUFS 基準）。
+   * 未指定（旧テンプレ）は正規化なし＝従来挙動（前方互換）。
+   * preview には適用しない（最終成果物の音量統一が目的のためエクスポート専用）。
+   */
+  audioNormalize?: AudioNormalizeSettings;
+}
+
+export interface AudioNormalizeSettings {
+  /** 正規化を行うか。既定 true */
+  enabled: boolean;
+  /** 目標積分ラウドネス（LUFS）。既定 -14（YouTube 推奨） */
+  targetLufs: number;
+  /** トゥルーピーク（サンプルピーク）上限（dBTP）。既定 -1.0。これを超えないようゲインを頭打ち */
+  truePeakCeilingDb: number;
 }
 
 export interface ReferenceVideo {

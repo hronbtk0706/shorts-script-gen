@@ -41,7 +41,12 @@ import {
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
 import { computeDuckMultiplier, layerHasDucking } from "./ducking";
-import { computeScreenShake } from "./screenEffect";
+import { computeScreenEffects } from "./screenEffect";
+import {
+  normalizeLoudness,
+  DEFAULT_TARGET_LUFS,
+  DEFAULT_TRUE_PEAK_CEILING_DB,
+} from "./loudness";
 
 const FPS = 30;
 const AUDIO_SAMPLE_RATE = 48000;
@@ -107,7 +112,8 @@ async function buildVideoStream(
       const t = f / FPS;
       if (t < layer.startSec || t >= layer.endSec) continue;
       let localT = (t - layer.startSec) * rate;
-      if (videoDuration > 0 && isFinite(videoDuration) && layer.videoLoop) {
+      // videoLoop 未指定は preview と同じく既定ループ ON (TemplateCanvas は `?? true`)。
+      if (videoDuration > 0 && isFinite(videoDuration) && (layer.videoLoop ?? true)) {
         localT = localT % videoDuration;
       } else if (videoDuration > 0 && isFinite(videoDuration)) {
         // ループしない場合、動画長を超えたら最終フレーム手前で固定
@@ -354,16 +360,29 @@ export async function exportTemplateWebCodecs(
       }
 
       // フレーム合成 (preview と同じ drawLayer 経路 + 入退場アニメ)
-      // 画面全体エフェクト（shake）: 最終合成フレームを translate する。
-      // 露出する端が前フレームの残像にならないよう、先に黒で全面塗ってから translate。
-      // preview (computeScreenShake) と同式・同 seed。
-      const shake = computeScreenShake(template.layers, t, dims.width / 360);
-      const shaking = shake.dx !== 0 || shake.dy !== 0;
+      // 画面全体エフェクト: shake(translate) / zoom-punch(scale) / blur-burst は
+      // 「最終合成フレームの変換」として layer 描画前に ctx に適用し、
+      // flash(白被せ) / vignette-pulse は layer 描画後に上塗りする。
+      // preview (computeScreenEffects) と同式・同 seed。
+      const fx = computeScreenEffects(template.layers, t, dims.width / 360);
+      const cx = dims.width / 2;
+      const cy = dims.height / 2;
+      const shaking = fx.dx !== 0 || fx.dy !== 0;
       ctx.save();
+      // shake は端が露出するので、先に黒で全面塗ってから変換（残像防止）。
+      // zoom は拡大方向なので端は出ない（§6.2）。
       if (shaking) {
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, dims.width, dims.height);
-        ctx.translate(shake.dx, shake.dy);
+        ctx.translate(fx.dx, fx.dy);
+      }
+      if (fx.scale !== 1) {
+        ctx.translate(cx, cy);
+        ctx.scale(fx.scale, fx.scale);
+        ctx.translate(-cx, -cy);
+      }
+      if (fx.blurPx > 0) {
+        ctx.filter = `blur(${fx.blurPx.toFixed(2)}px)`;
       }
       await renderLayersOnContext(ctx, visibleLayers, resolveSrc, {
         skipVideoLayers: false,
@@ -372,7 +391,30 @@ export async function exportTemplateWebCodecs(
           videoFrameSources.size > 0 ? videoFrameSources : undefined,
         applyAnim: true,
       });
+      ctx.filter = "none";
       ctx.restore();
+
+      // flash: 画面全体に白を alpha で被せる（変換を受けない screen 空間）
+      if (fx.flashAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, fx.flashAlpha);
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, dims.width, dims.height);
+        ctx.restore();
+      }
+      // vignette: 中心 0 → 端 alpha の径方向グラデの黒を被せる
+      if (fx.vignetteAlpha > 0) {
+        const a = Math.min(1, fx.vignetteAlpha);
+        const outerR = Math.hypot(cx, cy);
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, outerR);
+        grad.addColorStop(0, "rgba(0,0,0,0)");
+        grad.addColorStop(0.5, "rgba(0,0,0,0)");
+        grad.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
+        ctx.save();
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, dims.width, dims.height);
+        ctx.restore();
+      }
 
       // mediabunny にフレーム追加 (backpressure を尊重するため await)
       const tFrame = f / FPS;
@@ -406,6 +448,30 @@ export async function exportTemplateWebCodecs(
     } catch (e) {
       throw wrapError(e, "audio mix await");
     }
+
+    // ラウドネス正規化（エクスポート専用）: ミックス済み最終バッファ全体に -14 LUFS で
+    // ゲイン補正をかける。テンプレに audioNormalize があり enabled なら実行（前方互換: 未指定はスキップ）。
+    // duck / fade は各レイヤーで適用済みなので、順序は「各レイヤー処理 → ミックス → 正規化」。
+    if (audioBuffer && template.audioNormalize?.enabled) {
+      try {
+        const result = normalizeLoudness(audioBuffer, {
+          enabled: true,
+          targetLufs: template.audioNormalize.targetLufs ?? DEFAULT_TARGET_LUFS,
+          truePeakCeilingDb:
+            template.audioNormalize.truePeakCeilingDb ??
+            DEFAULT_TRUE_PEAK_CEILING_DB,
+        });
+        console.log(
+          `[WebCodecs] loudness: measured ${result.measuredLufs.toFixed(1)} LUFS, ` +
+            `gain ${result.appliedGainDb >= 0 ? "+" : ""}${result.appliedGainDb.toFixed(1)} dB` +
+            (result.peakLimited ? " (peak-limited)" : "") +
+            (result.applied ? "" : " (skipped)"),
+        );
+      } catch (e) {
+        console.warn("[WebCodecs] loudness normalization failed, skipping:", e);
+      }
+    }
+
     if (audioSource && audioBuffer) {
       try {
         await audioSource.add(audioBuffer);

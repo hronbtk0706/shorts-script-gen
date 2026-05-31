@@ -1,13 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
+import { templateDimensions } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
 import { computeDuckMultiplier } from "../lib/ducking";
-import { computeScreenShake } from "../lib/screenEffect";
+import { computeScreenEffects } from "../lib/screenEffect";
+import { computeMotion } from "../lib/layerAnimCanvas";
+import {
+  computeMarker,
+  isMarkerShape,
+  markerColor,
+  strokeToPath,
+} from "../lib/markerShape";
 import { bubbleFullPath } from "../lib/bubble";
-import { TEXT_DEFAULT_FONT_STACK } from "../lib/layerComposer";
+import {
+  TEXT_DEFAULT_FONT_STACK,
+  wrapTextLines,
+  renderLayersOnContext,
+  setCompositionCanvasDimensions,
+} from "../lib/layerComposer";
 import { CharacterLayerContent } from "./CharacterLayerContent";
 import { LayerErrorBoundary } from "./LayerErrorBoundary";
 
@@ -85,6 +98,38 @@ export function TemplateCanvas({
   const containerRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement | null>(null);
   const [, forceRerender] = useState(0);
+  // 書き出しプレビュー: 実 export 経路 (renderLayersOnContext/drawLayer) で現在時刻を 1 枚描き、
+  // プレビューと切り替え表示する。ちらつき防止のため OffscreenCanvas に完成させてから一括 blit。
+  // ※ video/character は async デコードが要るためここには出ない（黒背景に text/shape/色/marker/
+  //   bubble/image を描画。位置・サイズ・行間・折り返し・クリップ・アニメの確認用）。
+  const exportCanvasRef = useRef<HTMLCanvasElement>(null);
+  const offscreenRef = useRef<OffscreenCanvas | null>(null);
+  const renderingRef = useRef(false);
+  // 単一レンダラ化（CapCut 型）完了: 常に書き出し基準(Canvas)で表示・編集する。
+  // DOM レイヤーは裏で操作専用。インライン編集中だけ Canvas を一時的に隠す（下の条件参照）。
+  // ※ 巨大テンプレで編集が重い場合に素 DOM プレビューへ戻す退避が要るなら、ここを state 化して
+  //   トグルを復活できる（DOM 描画経路は温存してある）。
+  const showExport = true;
+  // ドラッグ/リサイズ/回転の最中、掴んだレイヤーの「暫定 位置/サイズ/回転」を保持。
+  // Canvas は隠さず（DOM に切り替えると見た目が変わるため）、この override を反映して
+  // 掴んだレイヤーだけ追従描画する。pointer up で state を確定して override を消す。
+  const dragOverrideRef = useRef<
+    | {
+        id: string;
+        x?: number;
+        y?: number;
+        width?: number;
+        height?: number;
+        rotation?: number;
+      }
+    | null
+  >(null);
+  // rAF ループ用に最新の時刻/レイヤーを ref で保持（ループを再生成せず参照）
+  const timeRef = useRef(currentTimeSec ?? 0);
+  timeRef.current = currentTimeSec ?? 0;
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
+  // 編集中レイヤーは Canvas 描画から除外（DOM textarea を重ねて二重描画を避ける）
   const initW = Math.round(Math.min(CANVAS_MAX_W_PX, 360));
   const [canvasSize, setCanvasSize] = useState({
     w: initW,
@@ -94,6 +139,8 @@ export function TemplateCanvas({
   const [shiftHeld, setShiftHeld] = useState(false);
   // キャンバス上のテキスト編集中のレイヤー id (ダブルクリックで開始)
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  const editingLayerIdRef = useRef<string | null>(null);
+  editingLayerIdRef.current = editingLayerId; // renderExportFrame で編集中レイヤーを除外するため
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
       if (e.key === "Shift") setShiftHeld(true);
@@ -171,20 +218,174 @@ export function TemplateCanvas({
     }
   };
 
-  // 画面全体エフェクト（type === "effect" の shake）。再生中のみ適用（編集中は
-  // Moveable とのズレを避けるため静止）。export 側 (computeScreenShake) と同式・同 seed。
-  const screenShake = isPlaying
-    ? computeScreenShake(layers, currentTimeSec ?? 0, CANVAS_W_PX / 360)
-    : { dx: 0, dy: 0 };
-  const hasShake = screenShake.dx !== 0 || screenShake.dy !== 0;
+  // 画面全体エフェクト（type === "effect"）。再生中のみ適用（編集中は Moveable との
+  // ズレを避けるため静止）。export 側 (computeScreenEffects) と同式・同 seed。
+  // shake(translate)/zoom-punch(scale)/blur-burst は layer をラップする inner div に、
+  // flash/vignette-pulse は overlay div で上に重ねる。
+  const fx = isPlaying
+    ? computeScreenEffects(layers, currentTimeSec ?? 0, CANVAS_W_PX / 360)
+    : { dx: 0, dy: 0, scale: 1, flashAlpha: 0, vignetteAlpha: 0, blurPx: 0 };
+  const fxTransforms: string[] = [];
+  if (fx.dx !== 0 || fx.dy !== 0) {
+    fxTransforms.push(`translate(${fx.dx.toFixed(2)}px, ${fx.dy.toFixed(2)}px)`);
+  }
+  if (fx.scale !== 1) {
+    fxTransforms.push(`scale(${fx.scale.toFixed(4)})`);
+  }
+  const hasTransform = fxTransforms.length > 0;
+  const hasBlur = fx.blurPx > 0;
   const screenShakeStyle: React.CSSProperties = {
     position: "absolute",
     inset: 0,
-    transform: hasShake
-      ? `translate(${screenShake.dx.toFixed(2)}px, ${screenShake.dy.toFixed(2)}px)`
-      : undefined,
-    willChange: hasShake ? "transform" : undefined,
+    transformOrigin: "center",
+    transform: hasTransform ? fxTransforms.join(" ") : undefined,
+    filter: hasBlur ? `blur(${fx.blurPx.toFixed(2)}px)` : undefined,
+    willChange: hasTransform || hasBlur ? "transform, filter" : undefined,
   };
+
+  // 書き出しフレームを OffscreenCanvas に完成させてから可視 Canvas に一括描画（ちらつき防止）。
+  // 動画/キャラはプレビューの実 <video>/<canvas> 要素を videoFrameSources として流用し、
+  // ネイティブ再生のまま毎フレーム合成する（バッファ不要のリアルタイム書き出しプレビュー）。
+  const renderExportFrame = useCallback(async () => {
+    const visible = exportCanvasRef.current;
+    const container = containerRef.current;
+    if (!visible || !container) return;
+    if (renderingRef.current) return; // 直列化（rAF が await するので通常は重ならない）
+    renderingRef.current = true;
+    try {
+      const dims = templateDimensions({ aspect });
+      if (
+        !offscreenRef.current ||
+        offscreenRef.current.width !== dims.width ||
+        offscreenRef.current.height !== dims.height
+      ) {
+        offscreenRef.current = new OffscreenCanvas(dims.width, dims.height);
+      }
+      const off = offscreenRef.current;
+      const octx = off.getContext("2d");
+      if (!octx) return;
+      const t = timeRef.current;
+      const ov = dragOverrideRef.current;
+      const editId = editingLayerIdRef.current;
+      const curLayers = layersRef.current
+        // 編集中レイヤーは Canvas から除外（DOM textarea を重ねる）
+        .filter((l) => !l.hidden && l.id !== editId)
+        // ドラッグ中の掴んだレイヤーは暫定値で描く（Canvas を隠さず追従）
+        .map((l) => (ov && l.id === ov.id ? { ...l, ...ov } : l));
+      // 動画/キャラの現在フレーム: プレビューの DOM 内 <video>/<canvas> をそのまま使う
+      const frameSources = new Map<string, CanvasImageSource>();
+      for (const l of curLayers) {
+        if (l.type !== "video" && l.type !== "character") continue;
+        if (t < l.startSec || t >= l.endSec) continue;
+        const el = container.querySelector<HTMLElement>(
+          `[data-layer-id="${l.id}"] video, [data-layer-id="${l.id}"] canvas`,
+        );
+        if (el instanceof HTMLVideoElement && el.readyState >= 2) {
+          frameSources.set(l.id, el);
+        } else if (el instanceof HTMLCanvasElement && el.width > 0) {
+          frameSources.set(l.id, el);
+        }
+      }
+      const resolveSrc = async (l: Layer): Promise<string | null> => {
+        const s = l.source;
+        if (!s || s === "auto" || s === "user" || s === "") return null;
+        if (
+          s.startsWith("http://") ||
+          s.startsWith("https://") ||
+          s.startsWith("data:") ||
+          s.startsWith("blob:")
+        )
+          return s;
+        return convertFileSrc(s);
+      };
+      setCompositionCanvasDimensions(dims.width, dims.height);
+      // 画面全体エフェクト（shake/zoom-punch/blur-burst/flash/vignette）も本物の書き出しと
+      // 同じ順序で適用し、書き出し表示を export と一致させる（exportTemplateWebCodecs と同コード）。
+      const fx = computeScreenEffects(layersRef.current, t, dims.width / 360);
+      const cx = dims.width / 2;
+      const cy = dims.height / 2;
+      octx.save();
+      if (fx.dx !== 0 || fx.dy !== 0) {
+        octx.fillStyle = "#000";
+        octx.fillRect(0, 0, dims.width, dims.height);
+        octx.translate(fx.dx, fx.dy);
+      }
+      if (fx.scale !== 1) {
+        octx.translate(cx, cy);
+        octx.scale(fx.scale, fx.scale);
+        octx.translate(-cx, -cy);
+      }
+      if (fx.blurPx > 0) octx.filter = `blur(${fx.blurPx.toFixed(2)}px)`;
+      await renderLayersOnContext(octx, curLayers, resolveSrc, {
+        atTimeSec: t,
+        applyAnim: true,
+        transparent: false,
+        videoFrameSources: frameSources.size > 0 ? frameSources : undefined,
+      });
+      octx.filter = "none";
+      octx.restore();
+      if (fx.flashAlpha > 0) {
+        octx.save();
+        octx.globalAlpha = Math.min(1, fx.flashAlpha);
+        octx.fillStyle = "#fff";
+        octx.fillRect(0, 0, dims.width, dims.height);
+        octx.restore();
+      }
+      if (fx.vignetteAlpha > 0) {
+        const a = Math.min(1, fx.vignetteAlpha);
+        const grad = octx.createRadialGradient(
+          cx,
+          cy,
+          0,
+          cx,
+          cy,
+          Math.hypot(cx, cy),
+        );
+        grad.addColorStop(0, "rgba(0,0,0,0)");
+        grad.addColorStop(0.5, "rgba(0,0,0,0)");
+        grad.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
+        octx.save();
+        octx.fillStyle = grad;
+        octx.fillRect(0, 0, dims.width, dims.height);
+        octx.restore();
+      }
+      // 一括 blit（途中状態を可視 Canvas に出さない）
+      if (visible.width !== dims.width) visible.width = dims.width;
+      if (visible.height !== dims.height) visible.height = dims.height;
+      const vctx = visible.getContext("2d");
+      if (vctx) {
+        vctx.clearRect(0, 0, dims.width, dims.height);
+        vctx.drawImage(off, 0, 0);
+      }
+    } catch (e) {
+      console.warn("[export-preview] render failed", e);
+    } finally {
+      renderingRef.current = false;
+    }
+  }, [aspect]);
+
+  // 再生中: rAF ループで動画も含めて毎フレーム合成（ネイティブ再生を借りるのでバッファ不要）
+  useEffect(() => {
+    if (!showExport || !isPlaying) return;
+    let active = true;
+    let raf = 0;
+    const tick = async () => {
+      if (!active) return;
+      await renderExportFrame();
+      if (active) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      active = false;
+      cancelAnimationFrame(raf);
+    };
+  }, [showExport, isPlaying, renderExportFrame]);
+
+  // 停止中: 時刻/レイヤー変更時に 1 度だけ合成（編集も即反映。idle で CPU を回さない）
+  useEffect(() => {
+    if (!showExport || isPlaying) return;
+    void renderExportFrame();
+  }, [showExport, isPlaying, currentTimeSec, layers, editingLayerId, renderExportFrame]);
 
   return (
     <div
@@ -252,6 +453,84 @@ export function TemplateCanvas({
           ))}
       </div>
 
+      {/* 書き出し表示: 実 export 経路の 1 フレームを前面に表示。クリックは透過（pointer 透過）して
+          裏の DOM レイヤーに届くので、ON のまま選択・ドラッグ・リサイズができる（ハンドルは CSS で前面）。
+          インライン文字編集中は編集レイヤーだけ Canvas から除外し、DOM textarea を前面に重ねる。 */}
+      {showExport && (
+        <canvas
+          ref={exportCanvasRef}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: CANVAS_W_PX,
+            height: CANVAS_H_PX,
+            pointerEvents: "none",
+            background: "#000",
+            zIndex: 9995,
+          }}
+        />
+      )}
+
+      {/* 書き出し表示中は DOM レイヤーが Canvas の裏に隠れるので、複数選択（プライマリ以外）の
+          選択枠を Canvas の上に重ねて見せる。プライマリは Moveable が前面に出すので不要。 */}
+      {showExport &&
+        !editingLayerId &&
+        layers
+          .filter(
+            (l) =>
+              selectedSet.has(l.id) &&
+              l.id !== selectedLayerId &&
+              isInTime(l) &&
+              !l.hidden,
+          )
+          .map((l) => (
+            <div
+              key={`selbox_${l.id}`}
+              style={{
+                position: "absolute",
+                left: (l.x / 100) * CANVAS_W_PX,
+                top: (l.y / 100) * CANVAS_H_PX,
+                width: (l.width / 100) * CANVAS_W_PX,
+                height: (l.height / 100) * CANVAS_H_PX,
+                transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
+                outline: "2px solid rgba(59, 130, 246, 0.9)",
+                outlineOffset: "-2px",
+                pointerEvents: "none",
+                zIndex: 9996,
+              }}
+            />
+          ))}
+
+
+      {/* 画面全体エフェクト overlay: flash(白) / vignette-pulse(径方向の黒)。
+          layer ラップ(inner div)の上、グリッド(zIndex 9999)の下に重ねる。 */}
+      {fx.flashAlpha > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 9998,
+            background: "#fff",
+            opacity: Math.min(1, fx.flashAlpha),
+          }}
+        />
+      )}
+      {fx.vignetteAlpha > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 9998,
+            background: `radial-gradient(circle at center, rgba(0,0,0,0) 50%, rgba(0,0,0,${Math.min(
+              1,
+              fx.vignetteAlpha,
+            ).toFixed(3)}) 100%)`,
+          }}
+        />
+      )}
+
       {/* 音声レイヤー（視覚なし、<audio> を playhead 同期） */}
       {layers
         .filter((l) => l.type === "audio" && !l.hidden && isInTime(l))
@@ -311,6 +590,15 @@ export function TemplateCanvas({
           }
           onDrag={(e) => {
             e.target.style.transform = e.transform;
+            // 掴んだレイヤーの暫定位置を Canvas に反映して追従（DOM へ切り替えない）
+            const baseLeft = (selected.x / 100) * CANVAS_W_PX;
+            const baseTop = (selected.y / 100) * CANVAS_H_PX;
+            dragOverrideRef.current = {
+              id: selected.id,
+              x: pxToPercent(baseLeft + (e.translate?.[0] ?? 0), "w"),
+              y: pxToPercent(baseTop + (e.translate?.[1] ?? 0), "h"),
+            };
+            void renderExportFrame();
           }}
           onDragEnd={(e) => {
             const el = e.target as HTMLElement;
@@ -324,6 +612,7 @@ export function TemplateCanvas({
             el.style.transform = selected.rotation
               ? `rotate(${selected.rotation}deg)`
               : "";
+            dragOverrideRef.current = null;
             onLayerUpdate(selected.id, {
               x: pxToPercent(finalX, "w"),
               y: pxToPercent(finalY, "h"),
@@ -333,6 +622,16 @@ export function TemplateCanvas({
             e.target.style.width = `${e.width}px`;
             e.target.style.height = `${e.height}px`;
             e.target.style.transform = e.drag.transform;
+            const baseLeft = (selected.x / 100) * CANVAS_W_PX;
+            const baseTop = (selected.y / 100) * CANVAS_H_PX;
+            dragOverrideRef.current = {
+              id: selected.id,
+              x: pxToPercent(baseLeft + (e.drag?.translate?.[0] ?? 0), "w"),
+              y: pxToPercent(baseTop + (e.drag?.translate?.[1] ?? 0), "h"),
+              width: pxToPercent(e.width, "w"),
+              height: pxToPercent(e.height, "h"),
+            };
+            void renderExportFrame();
           }}
           onResizeEnd={(e) => {
             const el = e.target as HTMLElement;
@@ -347,6 +646,7 @@ export function TemplateCanvas({
             el.style.transform = selected.rotation
               ? `rotate(${selected.rotation}deg)`
               : "";
+            dragOverrideRef.current = null;
             onLayerUpdate(selected.id, {
               x: pxToPercent(finalX, "w"),
               y: pxToPercent(finalY, "h"),
@@ -356,8 +656,14 @@ export function TemplateCanvas({
           }}
           onRotate={(e) => {
             e.target.style.transform = e.drag.transform;
+            dragOverrideRef.current = {
+              id: selected.id,
+              rotation: e.rotate ?? selected.rotation ?? 0,
+            };
+            void renderExportFrame();
           }}
           onRotateEnd={(e) => {
+            dragOverrideRef.current = null;
             onLayerUpdate(selected.id, {
               rotation: e.lastEvent?.rotate ?? 0,
             });
@@ -487,14 +793,26 @@ function LayerView({
     cursor: "pointer",
     userSelect: "none",
     overflow: isBubbleLayer ? "visible" : "hidden",
-    zIndex: layer.zIndex,
+    // 編集中レイヤーは Canvas(9995) より前面に出して textarea を見せる
+    zIndex:
+      editingLayerId === layer.id && layer.type === "comment"
+        ? 9997
+        : layer.zIndex,
     ...outerStyle,
   };
 
   // エクスポート側（layerComposer.drawText）が fontSize * (FINAL_W/360) = fontSize * 3 で
   // 1080×1920 に描画するため、プレビューも同じ係数 (canvasWPx / 360) を掛けないと見た目が一致しない。
   const fontScale = canvasWPx / 360;
-  const inner = renderLayerContent(layer, currentTimeSec, isPlaying, fontScale, allLayers);
+  const inner = renderLayerContent(
+    layer,
+    currentTimeSec,
+    isPlaying,
+    fontScale,
+    allLayers,
+    widthPx,
+    heightPx,
+  );
   const motionTransform = computeLayerMotionTransform(layer, currentTimeSec);
   // 入退場 / motion / ambient の transform / filter を合成した内側 style
   const innerTransformParts: string[] = [];
@@ -656,7 +974,8 @@ function CanvasTextEditor({
         border: "2px solid #3b82f6",
         outline: "none",
         resize: "none",
-        padding: 4,
+        // renderAnimatedText と同じく design(360) 基準でスケール（export と改行位置を揃える）
+        padding: 4 * fontScale,
         boxSizing: "border-box",
       }}
     />
@@ -669,11 +988,25 @@ function renderLayerContent(
   isPlaying: boolean,
   fontScale?: number,
   allLayers?: Layer[],
+  widthPx?: number,
+  heightPx?: number,
 ): React.ReactNode {
   switch (layer.type) {
     case "color":
       if (layer.shape === "arc") {
         return <ArcShapeSvg layer={layer} defaultFill="#333" currentTimeSec={currentTimeSec} />;
+      }
+      if (isMarkerShape(layer.shape)) {
+        return (
+          <MarkerShapeSvg
+            layer={layer}
+            currentTimeSec={currentTimeSec}
+            isPlaying={isPlaying}
+            fontScale={fontScale ?? 0.25}
+            widthPx={widthPx}
+            heightPx={heightPx}
+          />
+        );
       }
       return (
         <div
@@ -687,6 +1020,18 @@ function renderLayerContent(
     case "shape":
       if (layer.shape === "arc") {
         return <ArcShapeSvg layer={layer} defaultFill="#FFE600" currentTimeSec={currentTimeSec} />;
+      }
+      if (isMarkerShape(layer.shape)) {
+        return (
+          <MarkerShapeSvg
+            layer={layer}
+            currentTimeSec={currentTimeSec}
+            isPlaying={isPlaying}
+            fontScale={fontScale ?? 0.25}
+            widthPx={widthPx}
+            heightPx={heightPx}
+          />
+        );
       }
       return (
         <div
@@ -762,12 +1107,19 @@ function renderLayerContent(
     }
     case "comment":
       if (layer.bubble) {
-        // 吹き出しモード: SVG で背景と枠を描画し、その上にテキストを重ねる
+        // 吹き出しモード: SVG で背景と枠を描画し、その上にテキストを重ねる。
+        // padding は内側 renderAnimatedText が design 基準で 1 回適用するため、ここでは付けない
+        // （export は textInnerPadding を 1 回のみ。二重 padding を避ける）。
         return (
           <div
             style={{ width: "100%", height: "100%", position: "relative" }}
           >
-            <BubbleSvg layer={layer} />
+            <BubbleSvg
+              layer={layer}
+              fontScale={fontScale ?? 0.25}
+              widthPx={widthPx}
+              heightPx={heightPx}
+            />
             <div
               style={{
                 position: "absolute",
@@ -775,7 +1127,6 @@ function renderLayerContent(
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                padding: 4,
                 pointerEvents: "none",
               }}
             >
@@ -783,12 +1134,20 @@ function renderLayerContent(
                 { ...layer, fillColor: undefined, border: undefined },
                 currentTimeSec,
                 fontScale ?? 0.25,
+                widthPx,
+                heightPx,
               )}
             </div>
           </div>
         );
       }
-      return renderAnimatedText(layer, currentTimeSec, fontScale ?? 0.25);
+      return renderAnimatedText(
+        layer,
+        currentTimeSec,
+        fontScale ?? 0.25,
+        widthPx,
+        heightPx,
+      );
     case "audio":
       return null;
     case "character": {
@@ -933,14 +1292,96 @@ function ArcShapeSvg({
   );
 }
 
-function BubbleSvg({ layer }: { layer: Layer }) {
+/** 手書き風マーカー注釈（shape: "marker-*"）の preview。export drawMarkerShape と式一致。
+ *  draw-on は再生中のみ進捗 p で描き、編集中(停止時)は p=1（フル表示）でドラッグを妨げない。 */
+function MarkerShapeSvg({
+  layer,
+  currentTimeSec,
+  isPlaying,
+  fontScale,
+  widthPx,
+  heightPx,
+}: {
+  layer: Layer;
+  currentTimeSec?: number;
+  isPlaying: boolean;
+  fontScale: number;
+  widthPx?: number;
+  heightPx?: number;
+}) {
+  // box px が不明なときは design 比のフォールバック寸法（形は比率依存なので破綻しない）
+  const w = widthPx && widthPx > 0 ? widthPx : (layer.width / 100) * fontScale * 360;
+  const h = heightPx && heightPx > 0 ? heightPx : (layer.height / 100) * fontScale * 360;
+  let p = 1;
+  if (
+    layer.entryAnimation === "draw-on" &&
+    isPlaying &&
+    currentTimeSec !== undefined
+  ) {
+    const entryDur = Math.max(0.01, layer.entryDuration ?? 0.5);
+    const raw = (currentTimeSec - layer.startSec) / entryDur;
+    p = Math.max(0, Math.min(1, raw));
+  }
+  const { strokes, arrowHead } = computeMarker(layer, w, h, p, fontScale);
+  const color = markerColor(layer);
+  const lineW = (layer.markerWidth ?? 6) * fontScale;
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${h}`}
+      preserveAspectRatio="none"
+      width="100%"
+      height="100%"
+      style={{ display: "block", overflow: "visible" }}
+    >
+      <g
+        fill="none"
+        stroke={color}
+        strokeWidth={lineW}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity={0.85}
+      >
+        {strokes.map((s, i) => (
+          <path key={i} d={strokeToPath(s)} />
+        ))}
+      </g>
+      {arrowHead && arrowHead.length === 3 && (
+        <polygon
+          points={arrowHead.map((pt) => `${pt.x},${pt.y}`).join(" ")}
+          fill={color}
+          opacity={0.85}
+        />
+      )}
+    </svg>
+  );
+}
+
+function BubbleSvg({
+  layer,
+  fontScale = 0.25,
+  widthPx,
+  heightPx,
+}: {
+  layer: Layer;
+  fontScale?: number;
+  widthPx?: number;
+  heightPx?: number;
+}) {
   const bubble = layer.bubble;
   if (!bubble) return null;
-  const d = bubbleFullPath(100, 100, bubble, 12);
+  // export (layerComposer.drawBubbleShape) と一致させるため、実ピクセル寸法の viewBox で
+  // パスを生成する（旧実装は 100×100 を preserveAspectRatio="none" で歪ませており、
+  // 角丸半径・枠線太さが export と食い違っていた）。寸法不明時のみ 100×100 にフォールバック。
+  const vw = widthPx && widthPx > 0 ? widthPx : 100;
+  const vh = heightPx && heightPx > 0 ? heightPx : 100;
+  // export: radius = (borderRadius ?? 12) * (FINAL_W/360) / lineWidth = border.width * (FINAL_W/360)
+  // preview の design 係数は fontScale = canvasWPx/360 なので同じ基準でスケール
+  const radius = (layer.borderRadius ?? 12) * fontScale;
+  const d = bubbleFullPath(vw, vh, bubble, radius);
   const stroke = layer.border;
   return (
     <svg
-      viewBox="0 0 100 100"
+      viewBox={`0 0 ${vw} ${vh}`}
       preserveAspectRatio="none"
       width="100%"
       height="100%"
@@ -955,8 +1396,7 @@ function BubbleSvg({ layer }: { layer: Layer }) {
         d={d}
         fill={layer.fillColor || "rgba(255,255,255,0.95)"}
         stroke={stroke?.color || "transparent"}
-        strokeWidth={stroke && stroke.width > 0 ? stroke.width * 0.5 : 0}
-        vectorEffect="non-scaling-stroke"
+        strokeWidth={stroke && stroke.width > 0 ? stroke.width * fontScale : 0}
       />
     </svg>
   );
@@ -1033,19 +1473,88 @@ function TailHandle({
   );
 }
 
+/** export の wrapTextLines を preview スケールの font で呼び、折り返し後の行リストを返す。
+ * これを preview のプレーンテキスト描画にも使うことで、改行位置を export と完全一致させる
+ * （DOM 任せの折り返しだとフォントメトリクス差で 1 文字ズレる = C6）。 */
+let _measureCtx: CanvasRenderingContext2D | null = null;
+function previewWrapLines(
+  layer: Layer,
+  fontSizePx: number,
+  maxWidthPx: number,
+): string[] {
+  const text = layer.text ?? "";
+  if (!text) return [""];
+  if (!_measureCtx) {
+    _measureCtx = document.createElement("canvas").getContext("2d");
+  }
+  if (!_measureCtx) return text.split(/\n/);
+  const family = layer.fontFamily
+    ? `${layer.fontFamily}, ${TEXT_DEFAULT_FONT_STACK}`
+    : TEXT_DEFAULT_FONT_STACK;
+  _measureCtx.font = `bold ${fontSizePx}px ${family}`;
+  return wrapTextLines(_measureCtx, text, Math.max(1, maxWidthPx));
+}
+function countWrappedLines(
+  layer: Layer,
+  fontSizePx: number,
+  maxWidthPx: number,
+): number {
+  return previewWrapLines(layer, fontSizePx, maxWidthPx).length;
+}
+
+/** highlight-bar / underline-sweep の縦位置（px）を export(drawText) と同式で算出。
+ * box(heightPx) 内で中央寄せされたテキストブロックの上端/高さ・最終行下端を返す。 */
+interface DecoGeom {
+  blockTop: number;
+  blockH: number;
+  padY: number;
+  underlineY: number;
+}
+function computeDecoGeom(
+  layer: Layer,
+  fontScale: number,
+  widthPx: number,
+  heightPx: number,
+): DecoGeom {
+  const fontSizePx = (layer.fontSize ?? 48) * fontScale;
+  const paddingPx = 4 * fontScale; // export textInnerPadding = 4*(FINAL_W/360) と同基準
+  const n = countWrappedLines(layer, fontSizePx, widthPx - paddingPx * 2);
+  const lineHeight = fontSizePx * 1.2;
+  const totalH = n * lineHeight;
+  const startY = heightPx / 2 - totalH / 2 + lineHeight / 2; // 各行の中心 (textBaseline middle)
+  const blockTop = startY - lineHeight / 2;
+  const lastLineCenterY = startY + (n - 1) * lineHeight;
+  const underlineY = Math.min(
+    lastLineCenterY + fontSizePx * 0.6,
+    heightPx - 4 * fontScale,
+  );
+  return { blockTop, blockH: totalH, padY: fontSizePx * 0.1, underlineY };
+}
+
 /**
  * テキスト / コメントレイヤーを、文字単位アニメ・単語キネティック・装飾付きで描画する。
  * fontScale は プレビュー時等に縮小表示する場合の係数（キャンバス 1.0 / プレビュー 0.25 等）
+ * widthPx/heightPx はレイヤーボックスの実 px（装飾を行位置に合わせるため。未指定は従来の % 配置）
  */
 export function renderAnimatedText(
   layer: Layer,
   currentTimeSec: number,
   fontScale: number = 1,
+  widthPx?: number,
+  heightPx?: number,
 ): React.ReactNode {
   const text = layer.text ?? "テキスト";
   const baseFontSize = Math.max(8, (layer.fontSize ?? 48) * fontScale);
   const localTime = currentTimeSec - layer.startSec;
   const layerDur = Math.max(0.1, layer.endSec - layer.startSec);
+  const decoration = layer.textDecoration ?? "none";
+  // highlight-bar / underline-sweep の縦位置（box px が分かるときのみ行位置基準に）
+  const decoGeom =
+    (decoration === "highlight-bar" || decoration === "underline-sweep") &&
+    widthPx &&
+    heightPx
+      ? computeDecoGeom(layer, fontScale, widthPx, heightPx)
+      : null;
 
   // fillColor 背景がある場合、inset box-shadow（innerStyle 側）が背景に隠れるため
   // border をここのコンテナに直接適用する
@@ -1063,7 +1572,14 @@ export function renderAnimatedText(
     background: layer.fillColor ?? "transparent",
     color: layer.fontColor ?? "#fff",
     fontSize: baseFontSize,
-    padding: 4,
+    // 行間は export (drawText/drawAnimatedTextFrame の lineHeight = fontSize*1.2) と一致させる。
+    // 未指定だと CSS line-height:normal（フォント依存・和文で約1.2〜1.4）になり、複数行の
+    // 行間・縦位置・ブロック高さが export とズレる。
+    lineHeight: 1.2,
+    // export (layerComposer.textInnerPadding = 4*(FINAL_W/360)) と同じく design(360)
+    // 基準でスケールする。固定 4px だと表示キャンバスが広いほど相対パディングが小さくなり、
+    // 可用テキスト幅がズレて改行位置が export と食い違う（C6）。
+    padding: 4 * fontScale,
     textAlign: "center",
     fontWeight: "bold",
     wordBreak: "break-word",
@@ -1077,7 +1593,6 @@ export function renderAnimatedText(
   };
 
   // 装飾：ネオン / アウトライン / 影ドロップ は text-shadow / -webkit-text-stroke で表現
-  const decoration = layer.textDecoration ?? "none";
   const textStyleExtra: React.CSSProperties = {};
 
   // ユーザー設定の文字縁取り（textDecoration が none 系のときに適用。シャドウ/アウトライン装飾時はそちらを優先）
@@ -1100,18 +1615,20 @@ export function renderAnimatedText(
     const color =
       !layer.fontColor || layer.fontColor === "#fff" ? "#ffe600" : layer.fontColor;
     textStyleExtra.color = color;
-    textStyleExtra.textShadow = `0 0 4px ${color}, 0 0 8px ${color}, 0 0 16px ${color}`;
+    // glow 半径は export (drawAnimatedToken: blur*scalePx) と同じく design(360) 基準でスケール
+    textStyleExtra.textShadow = `0 0 ${(4 * fontScale).toFixed(2)}px ${color}, 0 0 ${(8 * fontScale).toFixed(2)}px ${color}, 0 0 ${(16 * fontScale).toFixed(2)}px ${color}`;
   } else if (decoration === "outline-reveal") {
-    // 時間に応じて stroke 幅を 0→3 に
+    // 時間に応じて stroke 幅を 0→3 に。線幅は export (strokeP*3*scalePx) と同じく fontScale でスケール
     const strokeP = Math.min(1, localTime / Math.max(0.01, layer.entryDuration ?? 0.3));
-    textStyleExtra.WebkitTextStroke = `${(strokeP * 3).toFixed(2)}px ${layer.fontColor ?? "#fff"}`;
+    textStyleExtra.WebkitTextStroke = `${(strokeP * 3 * fontScale).toFixed(2)}px ${layer.fontColor ?? "#fff"}`;
     textStyleExtra.WebkitTextFillColor = "transparent";
   } else if (decoration === "shadow-drop") {
     const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
     const p = Math.min(1, Math.max(0, localTime / entryDur));
-    const dx = (1 - p) * -6 + p * 4;
-    const dy = (1 - p) * -6 + p * 4;
-    textStyleExtra.textShadow = `${dx.toFixed(1)}px ${dy.toFixed(1)}px 0 rgba(0,0,0,0.6)`;
+    // 影 offset は export (dxS=(...)*scalePx) と同じく design 基準でスケール
+    const dx = ((1 - p) * -6 + p * 4) * fontScale;
+    const dy = ((1 - p) * -6 + p * 4) * fontScale;
+    textStyleExtra.textShadow = `${dx.toFixed(2)}px ${dy.toFixed(2)}px 0 rgba(0,0,0,0.6)`;
   }
 
   // 描画ノード（本文部分）
@@ -1121,21 +1638,32 @@ export function renderAnimatedText(
   const charAnim = layer.charAnimation ?? "none";
 
   if (kinetic !== "none") {
-    contentNode = renderKineticText(layer, text, localTime, layerDur);
+    contentNode = renderKineticText(layer, text, localTime, layerDur, fontScale);
   } else if (charAnim !== "none") {
-    contentNode = renderCharAnimatedText(layer, text, localTime);
+    contentNode = renderCharAnimatedText(layer, text, localTime, fontScale);
+  } else if (widthPx) {
+    // プレーンテキスト: DOM 任せの折り返しだと export(Canvas measureText)と改行位置が
+    // ズレる（C6）。export と同じ wrapTextLines で行を確定し、明示的な改行で描画する。
+    const fontSizePx = (layer.fontSize ?? 48) * fontScale;
+    const maxW = widthPx - 4 * fontScale * 2;
+    contentNode = previewWrapLines(layer, fontSizePx, maxW).join("\n");
   } else {
     contentNode = text;
   }
 
   return (
     <div style={baseStyle}>
-      {/* 装飾レイヤー（背景系） */}
+      {/* 装飾レイヤー（背景系）。box px が分かれば行位置基準、無ければ従来の % 配置 */}
       {decoration === "highlight-bar" && (
-        <HighlightBar layer={layer} localTime={localTime} />
+        <HighlightBar layer={layer} localTime={localTime} geom={decoGeom} />
       )}
       {decoration === "underline-sweep" && (
-        <UnderlineSweep layer={layer} localTime={localTime} />
+        <UnderlineSweep
+          layer={layer}
+          localTime={localTime}
+          geom={decoGeom}
+          fontScale={fontScale}
+        />
       )}
       <span style={{ position: "relative", ...textStyleExtra }}>
         {contentNode}
@@ -1144,20 +1672,31 @@ export function renderAnimatedText(
   );
 }
 
-function HighlightBar({ layer, localTime }: { layer: Layer; localTime: number }) {
+function HighlightBar({
+  layer,
+  localTime,
+  geom,
+}: {
+  layer: Layer;
+  localTime: number;
+  geom: DecoGeom | null;
+}) {
   const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
   const p = Math.min(1, Math.max(0, localTime / entryDur));
+  // geom があればテキストブロックの実高さ基準（複数行で文字を覆う）、無ければ従来 % 配置
+  const vertical: React.CSSProperties = geom
+    ? { top: geom.blockTop - geom.padY, height: geom.blockH + geom.padY * 2 }
+    : { top: "10%", bottom: "10%" };
   return (
     <div
       style={{
         position: "absolute",
-        top: "10%",
-        bottom: "10%",
         left: "5%",
         width: `${p * 90}%`,
         background: "rgba(255, 220, 0, 0.85)",
         zIndex: 0,
         transition: "none",
+        ...vertical,
       }}
     />
   );
@@ -1166,22 +1705,29 @@ function HighlightBar({ layer, localTime }: { layer: Layer; localTime: number })
 function UnderlineSweep({
   layer,
   localTime,
+  geom,
+  fontScale = 1,
 }: {
   layer: Layer;
   localTime: number;
+  geom: DecoGeom | null;
+  fontScale?: number;
 }) {
   const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
   const p = Math.min(1, Math.max(0, localTime / entryDur));
+  // geom があれば最終行直下に引く（複数行で 2 行目に重ならない）、無ければ従来 % 配置
+  const vertical: React.CSSProperties = geom
+    ? { top: geom.underlineY, height: 3 * fontScale }
+    : { bottom: "12%", height: 3 };
   return (
     <div
       style={{
         position: "absolute",
-        bottom: "12%",
         left: "5%",
         width: `${p * 90}%`,
-        height: 3,
         background: layer.fontColor ?? "#fff",
         zIndex: 0,
+        ...vertical,
       }}
     />
   );
@@ -1191,6 +1737,7 @@ function renderCharAnimatedText(
   layer: Layer,
   text: string,
   localTime: number,
+  fontScale: number = 1,
 ): React.ReactNode {
   const anim = layer.charAnimation ?? "none";
   const chars = Array.from(text);
@@ -1212,11 +1759,12 @@ function renderCharAnimatedText(
             const appearAt = i * 0.05;
             const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
             style.opacity = p;
-            style.transform = `translateY(${(1 - p) * 6}px)`;
+            // dy は export (drawAnimatedToken: dy*scalePx) と同じく design 基準で fontScale 倍
+            style.transform = `translateY(${((1 - p) * 6 * fontScale).toFixed(2)}px)`;
             break;
           }
           case "wave": {
-            const dy = Math.sin(localTime * Math.PI * 2 + i * 0.35) * 4;
+            const dy = Math.sin(localTime * Math.PI * 2 + i * 0.35) * 4 * fontScale;
             style.transform = `translateY(${dy.toFixed(2)}px)`;
             break;
           }
@@ -1240,6 +1788,7 @@ function renderKineticText(
   text: string,
   localTime: number,
   _layerDur: number,
+  fontScale: number = 1,
 ): React.ReactNode {
   const kinetic = layer.kineticAnimation ?? "none";
   const words = text.split(/(\s+)/); // スペースを保ったまま分割
@@ -1266,7 +1815,7 @@ function renderKineticText(
           case "keyword-color": {
             // i 番目が偶数ならベース、奇数なら keywordColor
             style.opacity = p;
-            style.transform = `translateY(${(1 - p) * 6}px)`;
+            style.transform = `translateY(${((1 - p) * 6 * fontScale).toFixed(2)}px)`;
             if (i % 2 === 1) {
               style.color = layer.keywordColor ?? "#ffe600";
             }
@@ -1274,7 +1823,7 @@ function renderKineticText(
           }
           case "slide-stack": {
             style.opacity = p;
-            style.transform = `translateY(${(1 - p) * -16}px)`;
+            style.transform = `translateY(${((1 - p) * -16 * fontScale).toFixed(2)}px)`;
             break;
           }
           case "zoom-talk": {
@@ -1520,46 +2069,16 @@ export function computeLayerMotionTransform(
   layer: Layer,
   currentTimeSec: number,
 ): string {
-  const motion = layer.motion;
-  if (!motion || motion === "static") return "";
-
-  const dur = Math.max(0.01, layer.endSec - layer.startSec);
-  const tRaw = (currentTimeSec - layer.startSec) / dur;
-  const t = Math.max(0, Math.min(1, tRaw));
-
-  switch (motion) {
-    case "zoom_in":
-      return `scale(${1 + 0.2 * t})`;
-    case "zoom_out":
-      return `scale(${1.2 - 0.2 * t})`;
-    case "pan_left":
-      // コンテンツを拡大してから横方向に流す
-      return `scale(1.15) translateX(${(0.5 - t) * 8}%)`;
-    case "pan_right":
-      return `scale(1.15) translateX(${(t - 0.5) * 8}%)`;
-    case "pan_up":
-      return `scale(1.15) translateY(${(0.5 - t) * 8}%)`;
-    case "pan_down":
-      return `scale(1.15) translateY(${(t - 0.5) * 8}%)`;
-    case "ken_burns":
-      return `scale(${1 + 0.15 * t}) translate(${(t - 0.5) * 4}%, ${(t - 0.5) * 4}%)`;
-    case "push_in":
-      return `scale(${1 + 0.25 * t * t})`;
-    case "zoom_punch": {
-      // 序盤に一瞬膨らむパルス
-      const phase = Math.min(1, tRaw * 3);
-      const pulse = Math.sin(phase * Math.PI) * 0.1;
-      return `scale(${1 + pulse})`;
-    }
-    case "shake": {
-      const f = currentTimeSec * 30;
-      const x = Math.sin(f) * 0.5;
-      const y = Math.cos(f * 1.3) * 0.5;
-      return `translate(${x}%, ${y}%)`;
-    }
-    default:
-      return "";
+  // 数式は export と共有 (layerAnimCanvas.computeMotion)。CSS `scale() translate()` に整形する。
+  // export drawLayer は applyMotion で同じ合成を ctx に適用する。
+  const m = computeMotion(layer, currentTimeSec);
+  if (m.scale === 1 && m.txFrac === 0 && m.tyFrac === 0) return "";
+  const parts: string[] = [];
+  if (m.scale !== 1) parts.push(`scale(${m.scale})`);
+  if (m.txFrac !== 0 || m.tyFrac !== 0) {
+    parts.push(`translate(${(m.txFrac * 100).toFixed(4)}%, ${(m.tyFrac * 100).toFixed(4)}%)`);
   }
+  return parts.join(" ");
 }
 
 /** 音声レイヤーを <audio> で playhead 同期再生（視覚表示なし） */

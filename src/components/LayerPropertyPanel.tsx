@@ -22,6 +22,7 @@ import {
   SOFTALK_VOICES,
 } from "../lib/providers/tts";
 import { loadSettings } from "../lib/storage";
+import { isMarkerShape } from "../lib/markerShape";
 import { ColorSwatches, recordColorUsed } from "./ColorSwatches";
 
 const SAY_VOICES = [
@@ -129,6 +130,15 @@ const SHAPES: { id: LayerShape; label: string }[] = [
   { id: "rect", label: "長方形" },
   { id: "rounded", label: "角丸" },
   { id: "circle", label: "円形" },
+  { id: "marker-circle", label: "丸囲み" },
+  { id: "marker-arrow", label: "矢印" },
+  { id: "marker-line", label: "線" },
+  { id: "marker-underline", label: "下線" },
+  { id: "marker-strike", label: "取消線" },
+  { id: "marker-check", label: "レ点" },
+  { id: "marker-cross", label: "バツ" },
+  { id: "marker-brackets", label: "囲み枠" },
+  { id: "marker-burst", label: "集中線" },
 ];
 
 const ENTRY_ANIMATIONS: { id: EntryAnimation; label: string }[] = [
@@ -145,6 +155,7 @@ const ENTRY_ANIMATIONS: { id: EntryAnimation; label: string }[] = [
   { id: "flip-in", label: "フリップ（3D）" },
   { id: "stretch-in", label: "横伸び" },
   { id: "roll-in", label: "ロール" },
+  { id: "draw-on", label: "描き進む（マーカー）" },
 ];
 
 const EXIT_ANIMATIONS: { id: ExitAnimation; label: string }[] = [
@@ -1375,7 +1386,7 @@ export function LayerPropertyPanel({
 
       {!allAudio && (
       <Section id="shape" title="形状" open={isOpen("shape")} onToggle={toggle} currentTab={activeTab}>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {SHAPES.map((s) => {
             const sel = common("shape");
             return (
@@ -1383,7 +1394,7 @@ export function LayerPropertyPanel({
                 key={s.id}
                 type="button"
                 onClick={() => onChange({ shape: s.id })}
-                className={`flex-1 px-1.5 py-1 rounded border text-[10px] ${
+                className={`px-1.5 py-1 rounded border text-[10px] ${
                   sel === s.id
                     ? "bg-blue-100 dark:bg-blue-900/40 border-blue-500"
                     : "bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600"
@@ -1396,6 +1407,117 @@ export function LayerPropertyPanel({
         </div>
         {common("shape") === "rounded" &&
           sliderInput("角丸 px", common("borderRadius") ?? 12, (v) => onChange({ borderRadius: v }), 0, 60, 1, "px")}
+        {isMarkerShape(common("shape")) && (
+          <div className="space-y-1 border-t border-gray-200 dark:border-gray-700 pt-1.5 mt-1.5">
+            <div className="text-[10px] text-gray-500">
+              手書き風マーカー注釈（線色は塗り色で指定）
+            </div>
+            {sliderInput(
+              "線の太さ",
+              common("markerWidth") ?? 6,
+              (v) => onChange({ markerWidth: Math.max(1, v) }),
+              1,
+              20,
+              1,
+              "px",
+            )}
+            {sliderInput(
+              "手書き揺れ",
+              common("markerRoughness") ?? 1,
+              (v) => onChange({ markerRoughness: Math.max(0, Math.min(2, v)) }),
+              0,
+              2,
+              0.1,
+            )}
+            {common("shape") === "marker-burst" &&
+              sliderInput(
+                "集中線の本数",
+                common("markerCount") ?? 12,
+                (v) => onChange({ markerCount: Math.max(3, Math.round(v)) }),
+                3,
+                40,
+                1,
+                "本",
+              )}
+            {(common("shape") === "marker-arrow" ||
+              common("shape") === "marker-line") && (
+              <label className="flex items-center gap-1 text-[11px]">
+                <input
+                  type="checkbox"
+                  checked={
+                    (common("markerHead") ??
+                      (common("shape") === "marker-arrow"
+                        ? "triangle"
+                        : "none")) === "triangle"
+                  }
+                  onChange={(e) =>
+                    onChange({ markerHead: e.target.checked ? "triangle" : "none" })
+                  }
+                  className="h-3 w-3"
+                />
+                先端に矢じり
+              </label>
+            )}
+            {(common("shape") === "marker-arrow" ||
+              common("shape") === "marker-line") && (
+              <div className="space-y-1">
+                <div className="text-[10px] text-gray-500">
+                  向き（箱内 %。始点→終点）
+                </div>
+                <div className="flex gap-1">
+                  {numInput(
+                    "始X",
+                    common("markerFrom")?.x ?? 15,
+                    (v) =>
+                      onChange({
+                        markerFrom: {
+                          x: v,
+                          y: common("markerFrom")?.y ?? 85,
+                        },
+                      }),
+                    0,
+                    "%",
+                  )}
+                  {numInput(
+                    "始Y",
+                    common("markerFrom")?.y ?? 85,
+                    (v) =>
+                      onChange({
+                        markerFrom: {
+                          x: common("markerFrom")?.x ?? 15,
+                          y: v,
+                        },
+                      }),
+                    0,
+                    "%",
+                  )}
+                </div>
+                <div className="flex gap-1">
+                  {numInput(
+                    "終X",
+                    common("markerTo")?.x ?? 85,
+                    (v) =>
+                      onChange({
+                        markerTo: { x: v, y: common("markerTo")?.y ?? 15 },
+                      }),
+                    0,
+                    "%",
+                  )}
+                  {numInput(
+                    "終Y",
+                    common("markerTo")?.y ?? 15,
+                    (v) =>
+                      onChange({
+                        markerTo: { x: common("markerTo")?.x ?? 85, y: v },
+                      }),
+                    0,
+                    "%",
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </Section>
       )}
 
@@ -1923,10 +2045,12 @@ export function LayerPropertyPanel({
               className="px-1.5 py-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-[11px]"
             >
               <option value="shake">shake（全画面シェイク）</option>
-              <option value="flash">flash（白フラッシュ）※未実装</option>
-              <option value="vignette-pulse">vignette-pulse ※未実装</option>
-              <option value="zoom-punch">zoom-punch ※未実装</option>
-              <option value="blur-burst">blur-burst ※未実装</option>
+              <option value="flash">flash（白フラッシュ／章切替）</option>
+              <option value="vignette-pulse">
+                vignette-pulse（四隅を暗く／クライマックス）
+              </option>
+              <option value="zoom-punch">zoom-punch（一瞬ズーム／強調）</option>
+              <option value="blur-burst">blur-burst（一瞬ぼかし）</option>
             </select>
           </label>
           {sliderInput(

@@ -3,3 +3,8 @@
 :root {
   color-scheme: light dark;
 }
+
+/* 書き出し表示（Canvas, zIndex 9995）で編集できるよう、選択ハンドル(Moveable)を前面に出す */
+.moveable-control-box {
+  z-index: 10000 !important;
+}

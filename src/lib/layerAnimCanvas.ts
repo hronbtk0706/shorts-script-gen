@@ -337,3 +337,87 @@ export function applyCanvasAnim(
   }
   if (filterParts.length > 0) ctx.filter = filterParts.join(" ");
 }
+
+/** カメラモーション (motion) の変換。scale は中心原点、tx/ty はレイヤー w/h に対する割合
+ * (CSS translate % / 100 と同基準)。preview / export 共通の単一実装。 */
+export interface MotionTransform {
+  scale: number;
+  txFrac: number;
+  tyFrac: number;
+}
+
+const MOTION_IDENTITY: MotionTransform = { scale: 1, txFrac: 0, tyFrac: 0 };
+
+/**
+ * layer.motion (ken_burns / pan_* / zoom_* / push_in / zoom_punch / shake) の変換を数値で返す。
+ * preview の computeLayerMotionTransform は CSS 文字列に整形し、export の drawLayer は applyMotion で
+ * ctx に適用する。式は両系統で必ず一致させること。
+ */
+export function computeMotion(
+  layer: Layer,
+  currentTimeSec: number,
+): MotionTransform {
+  const motion = layer.motion;
+  if (!motion || motion === "static") return MOTION_IDENTITY;
+  const dur = Math.max(0.01, layer.endSec - layer.startSec);
+  const tRaw = (currentTimeSec - layer.startSec) / dur;
+  const t = Math.max(0, Math.min(1, tRaw));
+  switch (motion) {
+    case "zoom_in":
+      return { scale: 1 + 0.2 * t, txFrac: 0, tyFrac: 0 };
+    case "zoom_out":
+      return { scale: 1.2 - 0.2 * t, txFrac: 0, tyFrac: 0 };
+    case "pan_left":
+      return { scale: 1.15, txFrac: (0.5 - t) * 0.08, tyFrac: 0 };
+    case "pan_right":
+      return { scale: 1.15, txFrac: (t - 0.5) * 0.08, tyFrac: 0 };
+    case "pan_up":
+      return { scale: 1.15, txFrac: 0, tyFrac: (0.5 - t) * 0.08 };
+    case "pan_down":
+      return { scale: 1.15, txFrac: 0, tyFrac: (t - 0.5) * 0.08 };
+    case "ken_burns":
+      return {
+        scale: 1 + 0.15 * t,
+        txFrac: (t - 0.5) * 0.04,
+        tyFrac: (t - 0.5) * 0.04,
+      };
+    case "push_in":
+      return { scale: 1 + 0.25 * t * t, txFrac: 0, tyFrac: 0 };
+    case "zoom_punch": {
+      const phase = Math.min(1, tRaw * 3);
+      const pulse = Math.sin(phase * Math.PI) * 0.1;
+      return { scale: 1 + pulse, txFrac: 0, tyFrac: 0 };
+    }
+    case "shake": {
+      const f = currentTimeSec * 30;
+      return {
+        scale: 1,
+        txFrac: Math.sin(f) * 0.005,
+        tyFrac: Math.cos(f * 1.3) * 0.005,
+      };
+    }
+    default:
+      return MOTION_IDENTITY;
+  }
+}
+
+/**
+ * ctx にカメラモーションを適用（ctx はレイヤー左上に translate 済み、w/h はレイヤー px）。
+ * CSS `scale(s) translate(tx%, ty%)` と同じ合成（scale を中心原点で外側に、translate を内側に）。
+ */
+export function applyMotion(
+  ctx: CanvasRenderingContext2D,
+  m: MotionTransform,
+  w: number,
+  h: number,
+): void {
+  if (m.scale === 1 && m.txFrac === 0 && m.tyFrac === 0) return;
+  if (m.scale !== 1) {
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(m.scale, m.scale);
+    ctx.translate(-w / 2, -h / 2);
+  }
+  if (m.txFrac !== 0 || m.tyFrac !== 0) {
+    ctx.translate(m.txFrac * w, m.tyFrac * h);
+  }
+}

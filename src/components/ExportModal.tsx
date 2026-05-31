@@ -36,6 +36,10 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
   const [outputPath, setOutputPath] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [title, setTitle] = useState(template.name);
+  // ラウドネス正規化（-14 LUFS）。テンプレに設定があればそれを初期値に、無ければ既定 ON。
+  const [normalizeEnabled, setNormalizeEnabled] = useState(
+    template.audioNormalize?.enabled ?? true,
+  );
   const webCodecsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -49,8 +53,9 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
     } else {
       // モーダルを開く度にテンプレ名でタイトルを初期化
       setTitle(template.name);
+      setNormalizeEnabled(template.audioNormalize?.enabled ?? true);
     }
-  }, [open, template.name]);
+  }, [open, template.name, template.audioNormalize?.enabled]);
 
   const handleStart = () => {
     if (phase === "running") return;
@@ -62,8 +67,18 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
     // WebCodecs 経路: Canvas 合成 + h264/AAC encode（filter_complex を経由しない）
     const abortController = new AbortController();
     webCodecsAbortRef.current = abortController;
+    // 正規化設定を反映したテンプレを渡す（prop は変更しない）。
+    // 数値はテンプレ既定 or 推奨値を踏襲し、ON/OFF のみ UI トグルで上書き。
+    const exportTemplate: VideoTemplate = {
+      ...template,
+      audioNormalize: {
+        enabled: normalizeEnabled,
+        targetLufs: template.audioNormalize?.targetLufs ?? -14,
+        truePeakCeilingDb: template.audioNormalize?.truePeakCeilingDb ?? -1.0,
+      },
+    };
     exportTemplateWebCodecs({
-      template,
+      template: exportTemplate,
       title,
       signal: abortController.signal,
       onProgress: (p) => {
@@ -210,6 +225,28 @@ export function ExportModal({ open, template, onClose, onAutoSave }: Props) {
           />
           <div className="text-[10px] text-gray-500">
             最終的なファイル名: <code>{title.trim() ? title.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 64) || "video" : "video"}_YYYYMMDD_HHMMSS.mp4</code>
+          </div>
+        </div>
+
+        {/* ラウドネス正規化 */}
+        <div
+          className={`rounded border border-gray-200 dark:border-gray-700 p-2 ${
+            phase !== "idle" ? "opacity-60 pointer-events-none" : ""
+          }`}
+        >
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={normalizeEnabled}
+              onChange={(e) => setNormalizeEnabled(e.target.checked)}
+              className="accent-blue-600"
+            />
+            <span className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
+              ラウドネス正規化（-14 LUFS）
+            </span>
+          </label>
+          <div className="text-[10px] text-gray-500 mt-1 pl-6">
+            動画間で音量を統一。YouTube 基準に合わせ、ピークは -1.0 dB で頭打ち。
           </div>
         </div>
 

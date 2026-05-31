@@ -180,3 +180,33 @@
 
 **結論**: 監査時 🔴 31 件のうち、**ffmpeg 撤去 + 既存 fix + 本日の B1/C8/C5/A5 で実害のある差異はすべて解消**。
 残るのは E6（動画ファイルの原理上どうしても再現不可）と C6（稀な 1 文字の改行差）のみ。
+
+---
+
+# 追記 — 2026-05-30 横長テンプレ起因の再監査（C6 修正 + 網羅探索）
+
+横長(1920×1080)テンプレで「テキストの改行位置が preview/export で違う」報告を起点に再監査。
+**根本原因は「design(360) 基準でスケールすべき固定 px が preview 側で生 px のまま」**という C6 と同種のクラス。
+新機能（ducking / 画面エフェクト / loudness / grow-* / arc-sweep）は別途並列監査し**全て一致**を確認。
+
+## 🔧 2026-05-30 に修正（preview/WebCodecs 一致化）
+
+| ID | 内容 | preview | export | 修正 |
+|---|---|---|---|---|
+| **C6** | text の改行位置（本報告の発端） | padding 固定 `4px`（canvasWPx 基準で相対パディングが解像度依存） | `textInnerPadding = 4*(FINAL_W/360)` | preview の text padding 3 箇所を `4*fontScale` に（renderAnimatedText / bubble wrap / 編集 textarea）。border-box 下で可用テキスト幅が一致し改行位置が揃う |
+| **F1** | `motion`（ken-burns/pan/zoom/shake 等のカメラモーション） | `computeLayerMotionTransform` で CSS 適用 | **完全無視**（export が `layer.motion` を読まなかった） | 数値関数 `computeMotion`/`applyMotion` を `layerAnimCanvas.ts` に新設し preview/export 共通化。export `drawLayer` で適用、preview は CSS 整形に置換。`analyzeTemplate` が付与する実プロパティ |
+| **F2** | `videoLoop` 未指定時 | `?? true` でループ | truthy 判定のみで最終フレーム固定 | export `buildVideoStream` を `(layer.videoLoop ?? true)` に |
+| **F3** | text 装飾 neon glow / outline-reveal 線幅 / shadow-drop 影 offset | 生 px（`16/8/4`,`3`,`-6→4`） | `*scalePx` でスケール | preview を `*fontScale` に統一 |
+| **F4** | char/kinetic アニメ縦移動 `dy`（wave/stagger-fade/keyword-color/slide-stack） | 生 px（canvasWPx 空間） | 生 px（FINAL_W 空間、未スケール） | design 基準に統一: preview `*fontScale`、export `drawAnimatedToken` で `dy*scalePx` |
+| **F5** | bubble 枠線太さ | `border.width*0.5` + `non-scaling-stroke`（解像度非依存） | `border.width*(FINAL_W/360)` | preview BubbleSvg を実 px viewBox 化し `strokeWidth = border.width*fontScale` |
+| **F6** | bubble 角丸半径 | `12` 固定・`borderRadius` 無視・`preserveAspectRatio="none"` で歪み | `(borderRadius??12)*(FINAL_W/360)` | preview BubbleSvg を実 px(widthPx×heightPx) viewBox + `radius=(borderRadius??12)*fontScale` で export と同形状に |
+| **F7** | bubble テキスト padding | 外ラップ + renderAnimatedText で二重（計 `8*fontScale`） | `textInnerPadding` 1 回 | 外ラップの padding を撤去（renderAnimatedText が 1 回適用） |
+
+## ⚠️ 残存
+
+| ID | 内容 | 扱い |
+|---|---|---|
+| E6 character 物理 dt | preview rAF 実 dt vs export 固定 1/30 | 原理的に再現不可（合意済み） |
+| F1 motion の合成順 | preview は anim→motion→ambient の中間、export は motion を入退場より外側で適用 | motion 単独（背景カメラ移動）が主用途で差は出ない。入退場と併用する稀ケースのみ順序差。許容 |
+
+**結論**: C6（発端）+ F1〜F7 を修正。固定 px の design スケール漏れクラスは洗い出して解消。motion 欠落（F1）が実害最大だった。
