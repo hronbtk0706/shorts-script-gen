@@ -5,6 +5,7 @@ import type { Layer } from "../types";
 import { templateDimensions } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
+import { hasAnimKfs, sampleAnimKfs } from "../lib/animKeyframes";
 import { computeDuckMultiplier } from "../lib/ducking";
 import { computeScreenEffects } from "../lib/screenEffect";
 import { computeMotion } from "../lib/layerAnimCanvas";
@@ -721,22 +722,37 @@ function LayerView({
     if (isSelected) onRefReady(ref.current);
   }, [isSelected, onRefReady]);
 
-  // 再生中はキーフレーム補間値で表示（編集中は静的値のまま、ドラッグ等の操作を妨げない）
+  // 再生中はキーフレーム補間値で表示（編集中は静的値のまま、ドラッグ等の操作を妨げない）。
+  // ※ 書き出し表示 ON 時の見た目は Canvas(renderExportFrame=export 経路) が描くので、ここは
+  //   主に操作枠(Moveable ターゲット)の位置同期用。kfs(curio アニメ仕様) 優先で評価する。
   const layer: Layer =
-    isPlaying && rawLayer.keyframes
+    isPlaying && hasAnimKfs(rawLayer)
       ? (() => {
-          const s = sampleLayerAt(rawLayer, currentTimeSec);
+          const s = sampleAnimKfs(rawLayer, currentTimeSec - rawLayer.startSec);
           return {
             ...rawLayer,
             x: s.x,
             y: s.y,
-            width: s.width,
-            height: s.height,
+            width: rawLayer.width * s.scale,
+            height: rawLayer.height * s.scale,
             rotation: s.rotation,
             opacity: s.opacity,
           };
         })()
-      : rawLayer;
+      : isPlaying && rawLayer.keyframes
+        ? (() => {
+            const s = sampleLayerAt(rawLayer, currentTimeSec);
+            return {
+              ...rawLayer,
+              x: s.x,
+              y: s.y,
+              width: s.width,
+              height: s.height,
+              rotation: s.rotation,
+              opacity: s.opacity,
+            };
+          })()
+        : rawLayer;
 
   const leftPx = (layer.x / 100) * canvasWPx;
   const topPx = (layer.y / 100) * canvasHPx;

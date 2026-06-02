@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
 import { sortedLayers } from "./layerUtils";
 import { sampleLayerAt } from "./keyframes";
+import { hasAnimKfs, sampleAnimKfs } from "./animKeyframes";
 import { bubbleFullPath } from "./bubble";
 import { computeMarker, isMarkerShape, markerColor } from "./markerShape";
 import {
@@ -123,8 +124,24 @@ export async function renderLayersOnContext(
   }
 }
 
-/** 指定時刻でのキーフレーム補間値を layer に適用した新しい Layer を返す */
+/** 指定時刻でのキーフレーム補間値を layer に適用した新しい Layer を返す（グローバル時刻 t） */
 function applyKeyframesAtTime(layer: Layer, t: number): Layer {
+  // curio-gen アニメ仕様の kfs（startSec 相対秒・easing 付き）があれば優先。
+  // kfs がある層は entry/exit/motion を無視し、_kfsDriven フラグで drawLayer 側の
+  // computeCanvasAnim/computeMotion を抑止する（ambient は別途加算され続ける）。
+  if (hasAnimKfs(layer)) {
+    const s = sampleAnimKfs(layer, t - layer.startSec);
+    return {
+      ...layer,
+      x: s.x,
+      y: s.y,
+      width: layer.width * s.scale,
+      height: layer.height * s.scale,
+      rotation: s.rotation,
+      opacity: s.opacity,
+      _kfsDriven: true,
+    } as Layer & { _kfsDriven: boolean };
+  }
   if (!layer.keyframes) return layer;
   const s = sampleLayerAt(layer, t);
   return {
@@ -378,15 +395,20 @@ async function drawLayer(
   //   角丸クリップ → 中身描画」の順にする。これで motion/anim の拡大・移動が箱を越えて
   //   膨らむのを防ぐ（旧実装は motion を箱クリップの外で適用しており、zoom 系 motion を持つ
   //   color/shape カードが export で膨らんで見切れていた）。
+  // kfs 駆動レイヤーは entry/exit/motion を無視（仕様 §4。位置/scale/opacity/rotation は
+  // applyKeyframesAtTime で既に layer に反映済み）。ambient は加算で残す。
+  const kfsDriven = (layer as Layer & { _kfsDriven?: boolean })._kfsDriven === true;
   let flipDeg = 0;
   let anim: ReturnType<typeof computeCanvasAnim> | null = null;
   if (animAtTimeSec !== undefined) {
     // ambient の絶対 px 振幅を design(360) → 出力解像度へ換算する係数 FINAL_W/360
-    anim = computeCanvasAnim(layer, animAtTimeSec, w, h, FINAL_W / 360);
+    anim = computeCanvasAnim(layer, animAtTimeSec, w, h, FINAL_W / 360, kfsDriven);
     flipDeg = anim.flipDeg;
   }
   const motion =
-    animAtTimeSec !== undefined ? computeMotion(layer, animAtTimeSec) : null;
+    animAtTimeSec !== undefined && !kfsDriven
+      ? computeMotion(layer, animAtTimeSec)
+      : null;
 
   const isBubble = layer.type === "comment" && !!layer.bubble;
   // marker は箱で塗らずストロークが箱を少し越える（円の重なり・jitter）ので、

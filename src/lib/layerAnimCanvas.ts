@@ -68,9 +68,11 @@ export function computeCanvasAnim(
   w: number,
   h: number,
   pxScale = 1,
+  // true なら入退場アニメを無視（ambient だけ計算）。kfs 駆動レイヤー用（仕様 §4）。
+  skipEntryExit = false,
 ): CanvasAnimTransform {
-  const entryAnim = layer.entryAnimation ?? "none";
-  const exitAnim = layer.exitAnimation ?? "none";
+  const entryAnim = skipEntryExit ? "none" : layer.entryAnimation ?? "none";
+  const exitAnim = skipEntryExit ? "none" : layer.exitAnimation ?? "none";
   const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
   const exitDur = Math.max(0.01, layer.exitDuration ?? 0.3);
   const entryEnd = layer.startSec + entryDur;

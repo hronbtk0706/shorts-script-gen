@@ -157,6 +157,35 @@ export interface LayerKeyframes {
   rotation?: KeyframeTrack;
 }
 
+/** easing 語彙（curio-gen アニメ仕様 §5）。未知値は linear フォールバック。 */
+export type KeyframeEase =
+  | "linear"
+  | "easeInQuad"
+  | "easeOutQuad"
+  | "easeInOutQuad"
+  | "easeInCubic"
+  | "easeOutCubic"
+  | "easeInOutCubic"
+  | "easeOutBack"
+  | "easeOutElastic"
+  | "easeOutBounce";
+
+/**
+ * curio-gen アニメ仕様 (P0) のキーフレーム 1 点。
+ * `t` は layer.startSec からの**相対秒**。指定したプロパティのみ補間対象。
+ * `ease` は「直前 KF → この KF」区間のカーブ（先頭 KF の ease は無視）。
+ * 既存のプロパティ別 `keyframes`(LayerKeyframes) とは別系統で、`kfs` があれば優先評価する。
+ */
+export interface AnimKeyframe {
+  t: number;
+  x?: number;
+  y?: number;
+  scale?: number;
+  rotation?: number;
+  opacity?: number;
+  ease?: KeyframeEase;
+}
+
 /**
  * 素材のクレジット情報。
  * Live2D モデル / 音声合成キャラ / 画像素材など、
@@ -344,6 +373,12 @@ export interface Layer {
   keywordColor?: string;
   /** キーフレームアニメーション（最小版: x / y / scale / opacity / rotation、linear 補間） */
   keyframes?: LayerKeyframes;
+  /**
+   * curio-gen アニメ仕様 P0 のキーフレーム列（時刻 t 昇順・startSec 相対秒・per-KF easing）。
+   * これがあるレイヤーは entry/exit/motion を無視し kfs で駆動（ambient は加算）。
+   * UI 編集の `keyframes`(LayerKeyframes) より優先。curio-gen が emit する用。
+   */
+  kfs?: AnimKeyframe[];
   /**
    * 画像/動画の表示範囲（クロップ）。値は素材ピクセルに対する 0〜100 の % 値。
    * 未指定 = 全体表示。{x:10, y:10, width:80, height:80} なら周囲 10% を切り落とす。
