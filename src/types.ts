@@ -125,7 +125,15 @@ export type CharAnimation =
   | "typewriter"
   | "stagger-fade"
   | "wave"
-  | "color-shift";
+  | "color-shift"
+  | "drop-in"
+  | "bounce-in"
+  | "rainbow"
+  | "slide-left"
+  | "slide-right"
+  | "pop-each"
+  | "shake-each"
+  | "blink-each";
 
 /** 単語単位のキネティック演出（テキスト専用） */
 export type KineticAnimation =
@@ -143,6 +151,13 @@ export type TextDecoration =
   | "neon"
   | "outline-reveal"
   | "shadow-drop";
+
+/** テキストのグラデーション塗り（fontColor の代わり）。angle: 度（0=横 左→右 / 90=縦 上→下・既定90）。 */
+export interface TextGradient {
+  from: string;
+  to: string;
+  angle?: number;
+}
 
 /** 吹き出し（comment レイヤーに紐づく）の形状・しっぽ指定 */
 export type BubbleShape = "rect" | "rounded" | "ellipse" | "cloud";
@@ -491,6 +506,8 @@ export interface Layer {
   text?: string;
   fontSize?: number;
   fontColor?: string;
+  /** テキストのグラデーション塗り（fontColor より優先・現状は静的テキストに適用）。 */
+  textGradient?: TextGradient;
   /** テキストの縁取り（各文字の周囲を stroke）太さ px（0 or 未指定 = 縁取りなし） */
   textOutlineWidth?: number;
   /** テキストの縁取り色 */

@@ -1119,6 +1119,36 @@ function computeLayerTextLines(layer: Layer, w: number): string[] {
   return wrapTextLines(c, text, maxW);
 }
 
+/**
+ * テキストのグリフ塗り style を返す。textGradient があれば箱基準の線形グラデ、無ければ fallback。
+ * angle: 度（0=横 左→右 / 90=縦 上→下）。
+ */
+function resolveTextFill(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  fallback: string,
+): string | CanvasGradient {
+  const tg = layer.textGradient;
+  if (!tg) return fallback;
+  const ang = ((tg.angle ?? 90) * Math.PI) / 180;
+  const cx = w / 2;
+  const cy = h / 2;
+  const dx = Math.cos(ang);
+  const dy = Math.sin(ang);
+  const half = (Math.abs(dx) * w + Math.abs(dy) * h) / 2;
+  const g = ctx.createLinearGradient(
+    cx - dx * half,
+    cy - dy * half,
+    cx + dx * half,
+    cy + dy * half,
+  );
+  g.addColorStop(0, tg.from);
+  g.addColorStop(1, tg.to);
+  return g;
+}
+
 function drawText(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
@@ -1233,7 +1263,8 @@ function drawText(
     }
   }
 
-  ctx.fillStyle = fontColor;
+  // textGradient があればグラデ塗り（B テキスト演出）。無ければ従来の単色 fontColor。
+  ctx.fillStyle = resolveTextFill(ctx, layer, w, h, fontColor);
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], w / 2, startY + i * lineHeight + glyphAdj);
   }
@@ -1321,40 +1352,83 @@ function layoutKineticTokens(
   return result;
 }
 
-/** charAnimation の 1 文字の見た目（opacity, dy, color）を時刻から計算する */
-function computeCharAnimState(
+/**
+ * charAnimation の 1 文字の見た目（opacity / dx / dy / scale / color）を時刻から計算する。
+ * dx/dy は design(360) 基準（描画側で scalePx / fontScale 倍）。preview/export で共有（export 済み）。
+ */
+export function computeCharAnimState(
   anim: NonNullable<Layer["charAnimation"]>,
   globalIdx: number,
   localTime: number,
   baseColor: string,
-): { opacity: number; dy: number; color: string } {
+): { opacity: number; dx: number; dy: number; scale: number; color: string } {
+  const base = { opacity: 1, dx: 0, dy: 0, scale: 1, color: baseColor };
   switch (anim) {
     case "typewriter": {
       const appearAt = globalIdx * 0.08;
-      return {
-        opacity: localTime >= appearAt ? 1 : 0,
-        dy: 0,
-        color: baseColor,
-      };
+      return { ...base, opacity: localTime >= appearAt ? 1 : 0 };
     }
     case "stagger-fade": {
       const appearAt = globalIdx * 0.05;
       const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
-      return { opacity: p, dy: (1 - p) * 6, color: baseColor };
+      return { ...base, opacity: p, dy: (1 - p) * 6 };
     }
     case "wave": {
-      const dy = Math.sin(localTime * Math.PI * 2 + globalIdx * 0.35) * 4;
-      return { opacity: 1, dy, color: baseColor };
+      return {
+        ...base,
+        dy: Math.sin(localTime * Math.PI * 2 + globalIdx * 0.35) * 4,
+      };
     }
     case "color-shift": {
+      return { ...base, color: `hsl(${(globalIdx * 30) % 360}, 100%, 60%)` };
+    }
+    case "drop-in": {
+      const appearAt = globalIdx * 0.05;
+      const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
+      return { ...base, opacity: p, dy: -(1 - p) * 14 }; // 上から落ちる
+    }
+    case "bounce-in": {
+      const appearAt = globalIdx * 0.05;
+      const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.45));
+      const eb = easeOf("easeOutBounce")(p);
+      return { ...base, opacity: Math.min(1, p * 4), dy: (1 - eb) * 16 }; // 下から跳ねる
+    }
+    case "rainbow": {
       return {
-        opacity: 1,
-        dy: 0,
-        color: `hsl(${(globalIdx * 30) % 360}, 100%, 60%)`,
+        ...base,
+        color: `hsl(${(globalIdx * 30 + localTime * 120) % 360}, 100%, 60%)`,
+      };
+    }
+    case "slide-left": {
+      const appearAt = globalIdx * 0.05;
+      const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
+      return { ...base, opacity: p, dx: -(1 - easeOf("easeOutCubic")(p)) * 40 };
+    }
+    case "slide-right": {
+      const appearAt = globalIdx * 0.05;
+      const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
+      return { ...base, opacity: p, dx: (1 - easeOf("easeOutCubic")(p)) * 40 };
+    }
+    case "pop-each": {
+      const appearAt = globalIdx * 0.05;
+      const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.4));
+      return { ...base, opacity: Math.min(1, p * 3), scale: easeOf("easeOutBack")(p) };
+    }
+    case "shake-each": {
+      return {
+        ...base,
+        dx: Math.sin(localTime * 30 + globalIdx) * 1.5,
+        dy: Math.cos(localTime * 33 + globalIdx) * 1.5,
+      };
+    }
+    case "blink-each": {
+      return {
+        ...base,
+        opacity: 0.35 + 0.65 * Math.abs(Math.sin(localTime * 6 + globalIdx * 0.6)),
       };
     }
     default:
-      return { opacity: 1, dy: 0, color: baseColor };
+      return base;
   }
 }
 
@@ -1415,6 +1489,7 @@ function drawAnimatedToken(
   opacity: number,
   scale: number,
   dy: number,
+  dx: number,
   color: string,
   decoration: string,
   fontColor: string,
@@ -1431,8 +1506,8 @@ function drawAnimatedToken(
 
   // scale はトークンの中心を原点に。dy は design(360) 基準なので scalePx で出力解像度へ換算
   // （preview 側 renderChar/KineticText は同値を fontScale 倍して CSS translateY に使う）。
-  if (scale !== 1 || dy !== 0) {
-    ctx.translate(x + tokW / 2, y + dy * scalePx);
+  if (scale !== 1 || dy !== 0 || dx !== 0) {
+    ctx.translate(x + dx * scalePx + tokW / 2, y + dy * scalePx);
     if (scale !== 1) ctx.scale(scale, scale);
     ctx.translate(-tokW / 2, 0);
   } else {
@@ -1591,6 +1666,7 @@ function drawAnimatedTextFrame(
           st.opacity,
           st.scale,
           st.dy,
+          0,
           st.color,
           decoration,
           fontColor,
@@ -1621,8 +1697,9 @@ function drawAnimatedTextFrame(
           startX + c.xInLine,
           lineY,
           st.opacity,
-          1,
+          st.scale,
           st.dy,
+          st.dx,
           st.color,
           decoration,
           fontColor,
@@ -1658,6 +1735,7 @@ function drawAnimatedTextFrame(
       lineY,
       1,
       1,
+      0,
       0,
       fontColor,
       decoration,

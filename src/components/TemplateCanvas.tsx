@@ -33,6 +33,7 @@ import {
   wrapTextLines,
   renderLayersOnContext,
   setCompositionCanvasDimensions,
+  computeCharAnimState,
 } from "../lib/layerComposer";
 import { CharacterLayerContent } from "./CharacterLayerContent";
 import { LayerErrorBoundary } from "./LayerErrorBoundary";
@@ -1882,35 +1883,23 @@ function renderCharAnimatedText(
   return (
     <span style={{ display: "inline-block" }}>
       {chars.map((ch, i) => {
+        // export(computeCharAnimState) と同じ計算を共有（数式一致を保証）。
+        // dx/dy は design 基準なので preview は fontScale 倍。
+        const st = computeCharAnimState(anim, i, localTime, layer.fontColor ?? "#fff");
         const style: React.CSSProperties = {
           display: "inline-block",
           whiteSpace: "pre",
+          opacity: st.opacity,
+          color: st.color,
         };
-        switch (anim) {
-          case "typewriter": {
-            // 80ms per char
-            const appearAt = i * 0.08;
-            style.opacity = localTime >= appearAt ? 1 : 0;
-            break;
-          }
-          case "stagger-fade": {
-            const appearAt = i * 0.05;
-            const p = Math.min(1, Math.max(0, (localTime - appearAt) / 0.3));
-            style.opacity = p;
-            // dy は export (drawAnimatedToken: dy*scalePx) と同じく design 基準で fontScale 倍
-            style.transform = `translateY(${((1 - p) * 6 * fontScale).toFixed(2)}px)`;
-            break;
-          }
-          case "wave": {
-            const dy = Math.sin(localTime * Math.PI * 2 + i * 0.35) * 4 * fontScale;
-            style.transform = `translateY(${dy.toFixed(2)}px)`;
-            break;
-          }
-          case "color-shift": {
-            style.color = `hsl(${(i * 30) % 360}, 100%, 60%)`;
-            break;
-          }
+        const tparts: string[] = [];
+        if (st.dx !== 0 || st.dy !== 0) {
+          tparts.push(
+            `translate(${(st.dx * fontScale).toFixed(2)}px, ${(st.dy * fontScale).toFixed(2)}px)`,
+          );
         }
+        if (st.scale !== 1) tparts.push(`scale(${st.scale.toFixed(3)})`);
+        if (tparts.length) style.transform = tparts.join(" ");
         return (
           <span key={i} style={style}>
             {ch}

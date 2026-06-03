@@ -195,6 +195,14 @@ const CHAR_ANIMATIONS: { id: CharAnimation; label: string }[] = [
   { id: "stagger-fade", label: "スタッガーフェード" },
   { id: "wave", label: "ウェーブ（波打ち）" },
   { id: "color-shift", label: "カラーシフト" },
+  { id: "drop-in", label: "ドロップイン（上から）" },
+  { id: "bounce-in", label: "バウンスイン（跳ねる）" },
+  { id: "rainbow", label: "レインボー（虹色流れ）" },
+  { id: "slide-left", label: "スライド（左から）" },
+  { id: "slide-right", label: "スライド（右から）" },
+  { id: "pop-each", label: "ポップ（拡大）" },
+  { id: "shake-each", label: "シェイク（小刻み）" },
+  { id: "blink-each", label: "ブリンク（点滅）" },
 ];
 
 const KINETIC_ANIMATIONS: { id: KineticAnimation; label: string }[] = [
