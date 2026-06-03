@@ -263,7 +263,7 @@ export interface LayerFilter {
  * 既存 `effectKind`（ScreenEffectKind＝全画面後処理）とは別系統で、こちらは zIndex 位置に描く。
  * 1 レイヤーで effect（描画系）か effectKind（後処理系）のどちらかを使う。
  */
-export type DrawnEffectKind = "speedlines" | "spotlight";
+export type DrawnEffectKind = "speedlines" | "spotlight" | "particles";
 
 /** 描画系 effect のパラメータ（effect ごとに使う項目が異なる・全て任意）。 */
 export interface DrawnEffectParams {
@@ -287,6 +287,21 @@ export interface DrawnEffectParams {
   animate?: "none" | "flicker" | "pulse" | "spin";
   /** アニメ速度倍率（既定 1）。 */
   speed?: number;
+  // ---- particles 用（§D）----
+  /** particles の種類。 */
+  kind?: "fall" | "confetti" | "sparkle" | "money" | "dust";
+  /** particles: 生成レート（個/秒）。 */
+  rate?: number;
+  /** particles: 生成総数の上限（必須級・上限到達で生成停止）。 */
+  count?: number;
+  /** particles: 重力（落下加速の倍率・既定1）。 */
+  gravity?: number;
+  /** particles: 横風（既定0）。 */
+  wind?: number;
+  /** particles: 生成領域 [x,y,w,h]（%・既定 画面上部外 [0,-5,100,10]）。 */
+  region?: [number, number, number, number];
+  /** particles: サイズ範囲 [min,max]（design px）。 */
+  sizeRange?: [number, number];
 }
 
 /**

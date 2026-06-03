@@ -14,9 +14,19 @@
 
 import type { DrawnEffectParams } from "../types";
 
-/** 0..1 を返す決定論的 PRNG。 */
+/**
+ * 0..1 を返す決定論的ハッシュ（Wang hash 系）。
+ * 線形合同法(LCG)は seed を規則的に変えると出力が超平面に乗り、粒子が直線状に並ぶため、
+ * seed が連続でも無相関になる整数ハッシュを使う。
+ */
 function rng(n: number): number {
-  return ((n * 9301 + 49297) % 233280) / 233280;
+  let x = Math.trunc(n) | 0;
+  x = (x ^ 61) ^ (x >>> 16);
+  x = (x + (x << 3)) | 0;
+  x = x ^ (x >>> 4);
+  x = Math.imul(x, 0x27d4eb2d);
+  x = x ^ (x >>> 15);
+  return ((x >>> 0) % 1000000) / 1000000;
 }
 
 function clamp01(v: number): number {
@@ -166,5 +176,125 @@ export function drawGrain(
   ctx.globalCompositeOperation = "overlay";
   ctx.fillStyle = pat;
   ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
+const CONFETTI_PALETTE = [
+  "#E5484D",
+  "#FFD60A",
+  "#34D399",
+  "#5577BB",
+  "#F472B6",
+  "#FF8C42",
+];
+
+/**
+ * §D particles: 降りもの・紙吹雪・きらめき・マネーレイン・塵。
+ * 時刻 t から各粒子の状態を決定論計算して描く（ステートレス＝preview=export 一致・スクラブ対応）。
+ * 仕様どおり count 上限で生成停止（リサイクルしない）。スプライト未指定は図形。
+ */
+const frac = (x: number): number => x - Math.floor(x);
+
+export function drawParticles(
+  ctx: CanvasRenderingContext2D,
+  p: DrawnEffectParams,
+  w: number,
+  h: number,
+  pxScale = 1,
+  t = 0, // レイヤー生存相対秒
+): void {
+  const kind = p.kind ?? "confetti";
+  // count = 同時に画面に出る粒子数（上限＝重さ制御）。各粒子は独立位相で循環し常に存在する。
+  const count = Math.max(0, Math.min(2000, Math.round(p.count ?? 60)));
+  const gravity = Math.max(0.1, p.gravity ?? 1);
+  const wind = p.wind ?? 0;
+  const region = p.region ?? [0, -5, 100, 10];
+  const [rx, ry, rw] = region;
+  const sizeRange = p.sizeRange ?? [6, 14];
+  const slow = kind === "sparkle" || kind === "dust";
+  const baseFall = slow ? 5.5 : 2.8; // 画面を縦断する基本秒（gravity で割る）
+  const topY = (ry / 100) * h;
+  const fallDist = h - topY + h * 0.15; // 画面下外まで
+
+  ctx.save();
+  for (let i = 0; i < count; i++) {
+    // 粒子ごとに独立な乱数（位相・速度・横揺れ・回転方向すべてバラす → 筋にならない）
+    const r1 = rng(i * 17 + 1); // 落下位相
+    const r2 = rng(i * 17 + 2); // 周期ばらつき
+    const r3 = rng(i * 17 + 3); // 回転方向/横揺れ
+    const r4 = rng(i * 17 + 4); // 横揺れ周期/サイズ
+    const r5 = rng(i * 17 + 5); // 横位置
+
+    const cycle = (baseFall * (0.6 + r2 * 0.8)) / gravity; // 落下周期
+    const prog = frac(t / cycle + r1); // 0..1 独立位相（常にどこかに居る）
+    const y = topY + prog * fallDist;
+    const baseX = ((rx + r5 * rw) / 100) * w;
+    const swayFreq = 0.7 + r4 * 1.6;
+    const amp = (slow ? 22 : 12) * (0.4 + r3) * pxScale;
+    const x =
+      baseX +
+      wind * 40 * prog * pxScale +
+      Math.sin(t * swayFreq + r2 * 6.283) * amp;
+    const sz = (sizeRange[0] + r4 * (sizeRange[1] - sizeRange[0])) * pxScale;
+
+    if (kind === "confetti" || kind === "money") {
+      // 回転は粒子ごとに正/負・速さもバラす（全部同方向を回避）
+      const spin = (r3 < 0.5 ? -1 : 1) * (1 + r1 * 4);
+      const rot = t * spin + r2 * 6.283;
+      // 立体的な翻り: 一軸を cos で潰して紙がひらひら裏返るのを再現（|flip|=幅, 符号=裏表）
+      const flip = Math.cos(t * (2.2 + r4 * 3.5) + r1 * 6.283);
+      const back = flip < 0; // 裏面は少し暗く
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.scale(1, Math.max(0.04, Math.abs(flip)));
+      if (kind === "money") {
+        ctx.fillStyle = p.color ?? (back ? "#256B2E" : r2 > 0.5 ? "#3FA34D" : "#2E7D32");
+        const ww = sz * 1.9;
+        const hh = sz * 0.92;
+        ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
+        ctx.fillStyle = "rgba(255,255,255,0.35)";
+        ctx.fillRect(-ww / 2, -hh * 0.12, ww, hh * 0.24); // 札の帯
+      } else {
+        const col = p.color ?? CONFETTI_PALETTE[i % CONFETTI_PALETTE.length];
+        ctx.fillStyle = col;
+        // たまに縦長/横長にして向きの多様性を出す
+        const ww = r4 > 0.5 ? sz : sz * 0.6;
+        const hh = r4 > 0.5 ? sz * 0.6 : sz;
+        ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
+        if (back) {
+          // 裏面: 黒を薄く重ねて陰影（立体感）
+          ctx.fillStyle = "rgba(0,0,0,0.28)";
+          ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
+        }
+      }
+      ctx.restore();
+    } else if (kind === "sparkle") {
+      const tw = 0.3 + 0.7 * Math.abs(Math.sin(t * (4 + r2 * 5) + r1 * 6.283));
+      ctx.save();
+      ctx.globalAlpha = tw;
+      ctx.fillStyle = p.color ?? "#FFF3B0";
+      ctx.fillRect(x - sz / 2, y - sz * 0.1, sz, sz * 0.2);
+      ctx.fillRect(x - sz * 0.1, y - sz / 2, sz * 0.2, sz);
+      ctx.restore();
+    } else if (kind === "dust") {
+      ctx.save();
+      ctx.globalAlpha = 0.2 + r3 * 0.3;
+      ctx.fillStyle = p.color ?? "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(x, y, sz * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else {
+      // fall（雪/雨の粒）
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = p.color ?? "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(x, y, sz * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
   ctx.restore();
 }

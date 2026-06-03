@@ -10,7 +10,7 @@ import {
 } from "./animKeyframes";
 import { hasMotionPath, sampleMotionPath } from "./motionPath";
 import { computeLayerFilterCss } from "./layerFilter";
-import { drawSpeedlines, drawSpotlight } from "./effectShape";
+import { drawSpeedlines, drawSpotlight, drawParticles } from "./effectShape";
 import { bubbleFullPath } from "./bubble";
 import { computeMarker, isMarkerShape, markerColor } from "./markerShape";
 import {
@@ -771,6 +771,12 @@ async function drawLayerContentInBox(
           );
         } else if (layer.effect === "spotlight") {
           drawSpotlight(ctx, layer.effectParams ?? {}, w, h, animAtTimeSec ?? 0);
+        } else if (layer.effect === "particles") {
+          // particles はレイヤー生存相対秒で駆動（絶対秒だと startSec>0 の層で
+          // 粒子が既に落下しきっていて見えない）。
+          const relT =
+            animAtTimeSec === undefined ? 0 : animAtTimeSec - layer.startSec;
+          drawParticles(ctx, layer.effectParams ?? {}, w, h, FINAL_W / 360, relT);
         }
         break;
     }
