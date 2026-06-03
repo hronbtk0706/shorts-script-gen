@@ -16,6 +16,10 @@ export type LayerShape =
   | "circle"
   | "rounded"
   | "arc"
+  | "star"
+  | "heart"
+  | "diamond"
+  | "hexagon"
   // 手書き風マーカー注釈（背景の一点を指す）。box 内に内接 / 描画。draw-on で描き進む。
   | "marker-circle" // 丸囲み（楕円ループ）
   | "marker-arrow" // 矢印（markerFrom→markerTo + ヘッド）
@@ -503,6 +507,13 @@ export interface Layer {
   markerCount?: number; // marker-burst の集中線本数。既定 12
   source?: "auto" | "user" | string;
   fillColor?: string;
+  /** color/shape の塗りをグラデーションに（fillColor より優先・rect/rounded/circle に適用）。 */
+  fillGradient?: TextGradient;
+  /**
+   * 画像/動画レイヤーのクロマキー（指定色を透明化して背景と合成）。
+   * threshold/smoothness は 0〜1（色距離の許容と境界のぼかし）。重いので必要時のみ。
+   */
+  chromaKey?: { color: string; threshold?: number; smoothness?: number };
   text?: string;
   fontSize?: number;
   fontColor?: string;

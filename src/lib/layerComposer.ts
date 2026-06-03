@@ -351,7 +351,9 @@ async function drawLayerContentOnly(
         } else {
           // preview と合わせるため shape 既定は #FFE600、color 既定は #333
           const def = layer.type === "shape" ? "#FFE600" : "#333";
-          ctx.fillStyle = layer.fillColor ?? def;
+          ctx.fillStyle = layer.fillGradient
+            ? buildLinearGradient(ctx, layer.fillGradient, w, h)
+            : layer.fillColor ?? def;
           ctx.fillRect(0, 0, w, h);
         }
         break;
@@ -637,6 +639,80 @@ async function drawLayer(
   }
 }
 
+/** #RGB/#RRGGBB を [r,g,b] に。解釈不能は null。 */
+function hexToRgb(hex: string): [number, number, number] | null {
+  let h = hex.trim().replace(/^#/, "");
+  if (h.length === 3) {
+    h = h
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return null;
+  return [r, g, b];
+}
+
+/** クロマキー: tctx 全体で keyColor 近傍ピクセルを透明化（境界は smoothness でぼかす）。 */
+function applyChromaKey(
+  tctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  w: number,
+  h: number,
+  ck: NonNullable<Layer["chromaKey"]>,
+): void {
+  const key = hexToRgb(ck.color);
+  if (!key) return;
+  const thr = (ck.threshold ?? 0.4) * 441.673; // 0..1 → RGB 距離（√3*255）
+  const band = Math.max(1, (ck.smoothness ?? 0.1) * 441.673);
+  const img = tctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const dist = Math.sqrt(
+      (d[i] - key[0]) ** 2 + (d[i + 1] - key[1]) ** 2 + (d[i + 2] - key[2]) ** 2,
+    );
+    if (dist <= thr) d[i + 3] = 0;
+    else if (dist < thr + band)
+      d[i + 3] = Math.round(d[i + 3] * ((dist - thr) / band));
+  }
+  tctx.putImageData(img, 0, 0);
+}
+
+/** cover 描画。chromaKey があればオフスクリーンで色抜きしてから合成、無ければ直接 drawImage。 */
+function drawImageMaybeChroma(
+  ctx: CanvasRenderingContext2D,
+  src: CanvasImageSource,
+  sx: number,
+  sy: number,
+  sw: number,
+  sh: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  layer: Layer,
+  w: number,
+  h: number,
+): void {
+  const ck = layer.chromaKey;
+  if (!ck) {
+    ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
+    return;
+  }
+  const tw = Math.max(1, Math.ceil(w));
+  const th = Math.max(1, Math.ceil(h));
+  const temp = new OffscreenCanvas(tw, th);
+  const tctx = temp.getContext("2d", { willReadFrequently: true });
+  if (!tctx) {
+    ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
+    return;
+  }
+  tctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
+  applyChromaKey(tctx, tw, th, ck);
+  ctx.drawImage(temp, 0, 0);
+}
+
 /**
  * レイヤーの「中身」だけを ctx の現在原点 (= レイヤー左上) に [0,w]×[0,h] で描く。
  * 位置・回転・入退場 transform・クリップは呼び出し側の責務。
@@ -705,7 +781,21 @@ async function drawLayerContentInBox(
           const drawH = sh * scale;
           const dx = (w - drawW) / 2;
           const dy = (h - drawH) / 2;
-          ctx.drawImage(frameSource, sx, sy, sw, sh, dx, dy, drawW, drawH);
+          drawImageMaybeChroma(
+            ctx,
+            frameSource,
+            sx,
+            sy,
+            sw,
+            sh,
+            dx,
+            dy,
+            drawW,
+            drawH,
+            layer,
+            w,
+            h,
+          );
           break;
         }
         // character は事前焼き webm が frameSource として来る前提。
@@ -727,7 +817,21 @@ async function drawLayerContentInBox(
           const drawH = sh * scale;
           const dx = (w - drawW) / 2;
           const dy = (h - drawH) / 2;
-          ctx.drawImage(img, sx, sy, sw, sh, dx, dy, drawW, drawH);
+          drawImageMaybeChroma(
+            ctx,
+            img,
+            sx,
+            sy,
+            sw,
+            sh,
+            dx,
+            dy,
+            drawW,
+            drawH,
+            layer,
+            w,
+            h,
+          );
         }
         // 未指定レイヤーは何も描画しない（透過）
         break;
@@ -741,7 +845,9 @@ async function drawLayerContentInBox(
         } else {
           // preview と合わせるため shape 既定は #FFE600、color 既定は #333
           const def = layer.type === "shape" ? "#FFE600" : "#333";
-          ctx.fillStyle = layer.fillColor ?? def;
+          ctx.fillStyle = layer.fillGradient
+            ? buildLinearGradient(ctx, layer.fillGradient, w, h)
+            : layer.fillColor ?? def;
           ctx.fillRect(0, 0, w, h);
         }
         break;
@@ -790,6 +896,57 @@ async function drawLayerContentInBox(
   }
 }
 
+/** マスク図形のパスを箱 [0,0,w,h] の絶対座標で beginPath する（star/heart/diamond/hexagon）。 */
+function maskShapePath(
+  ctx: CanvasRenderingContext2D,
+  shape: "star" | "heart" | "diamond" | "hexagon",
+  w: number,
+  h: number,
+): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const R = (Math.min(w, h) / 2) * 0.98;
+  ctx.beginPath();
+  if (shape === "diamond") {
+    ctx.moveTo(cx, cy - R);
+    ctx.lineTo(cx + R, cy);
+    ctx.lineTo(cx, cy + R);
+    ctx.lineTo(cx - R, cy);
+    ctx.closePath();
+  } else if (shape === "hexagon") {
+    for (let i = 0; i < 6; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 3;
+      const px = cx + Math.cos(a) * R;
+      const py = cy + Math.sin(a) * R;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+  } else if (shape === "star") {
+    const r = R * 0.45;
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+      const a2 = a + Math.PI / 5;
+      if (i === 0) ctx.moveTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+      else ctx.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R);
+      ctx.lineTo(cx + Math.cos(a2) * r, cy + Math.sin(a2) * r);
+    }
+    ctx.closePath();
+  } else {
+    // heart（箱中心。design 16 単位の心臓形をスケール）
+    const s = Math.min(w, h) * 0.95;
+    const k = s / 16;
+    const X = (vx: number) => cx + vx * k;
+    const Y = (vy: number) => cy + (vy + 3) * k; // 縦中央寄せ
+    ctx.moveTo(X(0), Y(5));
+    ctx.bezierCurveTo(X(-1), Y(1), X(-8), Y(-1), X(-8), Y(-6));
+    ctx.bezierCurveTo(X(-8), Y(-11), X(-2), Y(-11), X(0), Y(-6));
+    ctx.bezierCurveTo(X(2), Y(-11), X(8), Y(-11), X(8), Y(-6));
+    ctx.bezierCurveTo(X(8), Y(-1), X(1), Y(1), X(0), Y(5));
+    ctx.closePath();
+  }
+}
+
 function applyShapeClip(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
@@ -803,6 +960,15 @@ function applyShapeClip(
   } else if (layer.shape === "rounded") {
     const r = (layer.borderRadius ?? 12) * (FINAL_W / 360); // キャンバスプレビュー縮尺 → 実寸
     roundRectPath(ctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+    ctx.clip();
+  } else if (
+    layer.shape === "star" ||
+    layer.shape === "heart" ||
+    layer.shape === "diamond" ||
+    layer.shape === "hexagon"
+  ) {
+    // マスク図形（中身をその形にくり抜く）
+    maskShapePath(ctx, layer.shape, w, h);
     ctx.clip();
   } else if (layer.shape === "arc") {
     // arc は形状自身が描画範囲を決めるためクリップ不要。何もしない。
@@ -1123,16 +1289,14 @@ function computeLayerTextLines(layer: Layer, w: number): string[] {
  * テキストのグリフ塗り style を返す。textGradient があれば箱基準の線形グラデ、無ければ fallback。
  * angle: 度（0=横 左→右 / 90=縦 上→下）。
  */
-function resolveTextFill(
+/** 線形グラデを箱 [0,0,w,h] 基準で生成。angle: 度（0=横 左→右 / 90=縦 上→下）。 */
+function buildLinearGradient(
   ctx: CanvasRenderingContext2D,
-  layer: Layer,
+  spec: { from: string; to: string; angle?: number },
   w: number,
   h: number,
-  fallback: string,
-): string | CanvasGradient {
-  const tg = layer.textGradient;
-  if (!tg) return fallback;
-  const ang = ((tg.angle ?? 90) * Math.PI) / 180;
+): CanvasGradient {
+  const ang = ((spec.angle ?? 90) * Math.PI) / 180;
   const cx = w / 2;
   const cy = h / 2;
   const dx = Math.cos(ang);
@@ -1144,9 +1308,22 @@ function resolveTextFill(
     cx + dx * half,
     cy + dy * half,
   );
-  g.addColorStop(0, tg.from);
-  g.addColorStop(1, tg.to);
+  g.addColorStop(0, spec.from);
+  g.addColorStop(1, spec.to);
   return g;
+}
+
+/** テキストのグリフ塗り style。textGradient があれば線形グラデ、無ければ fallback。 */
+function resolveTextFill(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  fallback: string,
+): string | CanvasGradient {
+  return layer.textGradient
+    ? buildLinearGradient(ctx, layer.textGradient, w, h)
+    : fallback;
 }
 
 function drawText(
