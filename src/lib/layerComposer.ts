@@ -531,6 +531,10 @@ async function drawLayer(
   // marker は箱で塗らずストロークが箱を少し越える（円の重なり・jitter）ので、
   // bubble と同様にクリップ・箱 border を適用しない。
   const noClip = isBubble || isMarkerShape(layer.shape);
+  // ambient（揺れ/回転/円運動/伸縮）がある層は箱を越えて動くのが正しいので、固定の箱クリップを
+  // 掛けない（中身の形は後段の shape クリップが保持する）。掛けると orbit/sway/pulse 等が見切れる。
+  const hasMovingAmbient =
+    !!layer.ambientAnimation && layer.ambientAnimation !== "none";
 
   // flip (perspective rotateY) は Canvas 2D の scale では 2D 近似になるため、
   // 中身を一旦平面でオフスクリーンに描き、列スライス warp で本物の 3D 見えを再現する。
@@ -597,8 +601,9 @@ async function drawLayer(
       ctx.drawImage(temp, 0, 0, tw, th);
     }
   } else {
-    // 1) preview の outer overflow:hidden 相当 = 箱の矩形クリップ（transform の外側で固定）
-    if (!noClip) {
+    // 1) preview の outer overflow:hidden 相当 = 箱の矩形クリップ（transform の外側で固定）。
+    //    ただし ambient がある層は箱を越えて動く演出なのでスキップ（見切れ防止）。
+    if (!noClip && !hasMovingAmbient) {
       ctx.beginPath();
       ctx.rect(0, 0, w, h);
       ctx.clip();

@@ -114,7 +114,10 @@ export type AmbientAnimation =
   | "rainbow"
   | "float"
   | "spin"
-  | "drift";
+  | "drift"
+  | "sway"
+  | "orbit"
+  | "jelly";
 
 /** 文字単位のアニメ（テキスト専用） */
 export type CharAnimation =
@@ -192,9 +195,15 @@ export type KeyframeEase =
   | "easeInCubic"
   | "easeOutCubic"
   | "easeInOutCubic"
+  | "easeInBack"
   | "easeOutBack"
+  | "easeInOutBack"
+  | "easeInElastic"
   | "easeOutElastic"
-  | "easeOutBounce";
+  | "easeInOutElastic"
+  | "easeInBounce"
+  | "easeOutBounce"
+  | "easeInOutBounce";
 
 /**
  * curio-gen アニメ仕様 (P0) のキーフレーム 1 点。

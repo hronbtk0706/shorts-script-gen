@@ -273,6 +273,24 @@ export function computeCanvasAnim(
         tx += Math.sin(tp * Math.PI * 0.5) * 6 * k * pxScale;
         break;
       }
+      case "sway": {
+        // ゆったり左右に傾く（振り子風）
+        rot += (Math.sin(tp * Math.PI * 0.7) * 6 * k * Math.PI) / 180;
+        break;
+      }
+      case "orbit": {
+        // 小さく円運動
+        tx += Math.cos(tp * Math.PI) * 5 * k * pxScale;
+        ty += Math.sin(tp * Math.PI) * 5 * k * pxScale;
+        break;
+      }
+      case "jelly": {
+        // ぷるぷる: x/y を逆位相で伸縮（体積感を保ちつつ揺れる）
+        const j = 0.07 * k * Math.sin(tp * Math.PI * 3);
+        sx *= 1 + j;
+        sy *= 1 - j;
+        break;
+      }
       case "rainbow": {
         hueDeg = (tp * 60) % 360;
         break;

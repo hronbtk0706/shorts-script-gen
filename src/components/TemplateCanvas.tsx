@@ -2207,6 +2207,22 @@ export function computeLayerAmbientStyle(
       parts.push(`translateX(${x.toFixed(2)}px)`);
       break;
     }
+    case "sway": {
+      const r = Math.sin(t * Math.PI * 0.7) * 6 * k;
+      parts.push(`rotate(${r.toFixed(2)}deg)`);
+      break;
+    }
+    case "orbit": {
+      const x = Math.cos(t * Math.PI) * 5 * k * pxScale;
+      const y = Math.sin(t * Math.PI) * 5 * k * pxScale;
+      parts.push(`translate(${x.toFixed(2)}px, ${y.toFixed(2)}px)`);
+      break;
+    }
+    case "jelly": {
+      const j = 0.07 * k * Math.sin(t * Math.PI * 3);
+      parts.push(`scale(${(1 + j).toFixed(4)}, ${(1 - j).toFixed(4)})`);
+      break;
+    }
   }
   return { opacity, transform: parts.join(" "), filter: filters.join(" ") };
 }

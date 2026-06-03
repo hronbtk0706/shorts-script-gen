@@ -184,6 +184,9 @@ const AMBIENT_ANIMATIONS: { id: AmbientAnimation; label: string }[] = [
   { id: "float", label: "フロート" },
   { id: "spin", label: "スピン（回転）" },
   { id: "drift", label: "ドリフト（横揺れ）" },
+  { id: "sway", label: "スウェイ（傾き）" },
+  { id: "orbit", label: "オービット（円運動）" },
+  { id: "jelly", label: "ゼリー（ぷるぷる）" },
 ];
 
 const CHAR_ANIMATIONS: { id: CharAnimation; label: string }[] = [
