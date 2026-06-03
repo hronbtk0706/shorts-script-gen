@@ -239,8 +239,121 @@ export function computeTransition(
       const e = 0.2 * b; // 中心で +20% 拡大
       if (e > zoomExtra) zoomExtra = e;
     }
-    // wipe / push / dissolve は前後フレーム合成が必要なため現状未対応。
+    // wipe / push / dissolve は computeSnapshotTransition + composeSnapshotTransition で別途処理。
   }
   out.scale = 1 + zoomExtra;
   return out;
+}
+
+/** wipe/push/dissolve のアクティブ窓情報（前後フレーム合成が必要なトランジション）。 */
+export interface SnapshotTransition {
+  atSec: number;
+  /** 窓開始時刻（= 前シーンのスナップ時刻）。 */
+  ts: number;
+  /** 窓終了時刻（= 後シーンのスナップ時刻）。 */
+  te: number;
+  style: "wipe" | "push" | "dissolve";
+  /** 窓内 0..1（前→後の遷移度）。 */
+  progress: number;
+  direction: "left-to-right" | "right-to-left" | "up" | "down";
+}
+
+/**
+ * 時刻 t でアクティブな wipe/push/dissolve トランジションを返す（無ければ null）。
+ * atSec 中心 ±duration/2 の窓。複数該当時は最初のものを採る。
+ */
+export function computeSnapshotTransition(
+  transitions: TransitionSpec[] | undefined,
+  t: number,
+): SnapshotTransition | null {
+  if (!transitions) return null;
+  for (const tr of transitions) {
+    if (tr.style !== "wipe" && tr.style !== "push" && tr.style !== "dissolve") {
+      continue;
+    }
+    const dur = Math.max(0.05, tr.duration ?? 0.5);
+    const half = dur / 2;
+    if (t < tr.atSec - half || t > tr.atSec + half) continue;
+    return {
+      atSec: tr.atSec,
+      ts: tr.atSec - half,
+      te: tr.atSec + half,
+      style: tr.style,
+      progress: Math.max(0, Math.min(1, (t - (tr.atSec - half)) / dur)),
+      direction: tr.direction ?? "left-to-right",
+    };
+  }
+  return null;
+}
+
+type AnyCtx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+
+/**
+ * 前シーン(prev) と 後シーン(cur) を style/progress に従って ctx に合成する。
+ * ctx は呼び出し側でクリア済みであること。prev/cur は同サイズの canvas。
+ */
+export function composeSnapshotTransition(
+  ctx: AnyCtx,
+  prev: CanvasImageSource,
+  cur: CanvasImageSource,
+  s: SnapshotTransition,
+  w: number,
+  h: number,
+): void {
+  const p = s.progress;
+  const D = s.direction;
+  if (s.style === "dissolve") {
+    ctx.drawImage(cur, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = 1 - p; // 前シーンが薄れて後シーンへ
+    ctx.drawImage(prev, 0, 0);
+    ctx.restore();
+    return;
+  }
+  if (s.style === "push") {
+    // 前が方向へ抜け、後が同方向から入る
+    let pdx = 0;
+    let pdy = 0;
+    let cdx = 0;
+    let cdy = 0;
+    if (D === "left-to-right") {
+      pdx = p * w;
+      cdx = (p - 1) * w;
+    } else if (D === "right-to-left") {
+      pdx = -p * w;
+      cdx = (1 - p) * w;
+    } else if (D === "up") {
+      pdy = -p * h;
+      cdy = (1 - p) * h;
+    } else {
+      pdy = p * h;
+      cdy = (p - 1) * h;
+    }
+    ctx.drawImage(cur, cdx, cdy);
+    ctx.drawImage(prev, pdx, pdy);
+    return;
+  }
+  // wipe(slide-in): 前シーンを下に敷き、後シーンを画面端から境界まで「中身ごと」流し込む。
+  // （後シーンが定位置で露出する reveal 型ではなく、端からスライドして入ってくる）
+  ctx.drawImage(prev, 0, 0);
+  ctx.save();
+  ctx.beginPath();
+  let cdx = 0;
+  let cdy = 0;
+  if (D === "right-to-left") {
+    ctx.rect((1 - p) * w, 0, p * w, h); // 右側が見える領域
+    cdx = (1 - p) * w; // 後シーンが右から入る
+  } else if (D === "up") {
+    ctx.rect(0, (1 - p) * h, w, p * h); // 下側が見える領域
+    cdy = (1 - p) * h; // 後シーンが下から入る
+  } else if (D === "down") {
+    ctx.rect(0, 0, w, p * h); // 上側が見える領域
+    cdy = (p - 1) * h; // 後シーンが上から入る
+  } else {
+    ctx.rect(0, 0, p * w, h); // 左側が見える領域（left-to-right）
+    cdx = (p - 1) * w; // 後シーンが左から入る
+  }
+  ctx.clip();
+  ctx.drawImage(cur, cdx, cdy);
+  ctx.restore();
 }

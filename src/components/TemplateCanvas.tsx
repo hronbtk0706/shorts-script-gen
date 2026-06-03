@@ -14,7 +14,12 @@ import { hasMotionPath, sampleMotionPath } from "../lib/motionPath";
 import { computeLayerFilterCss } from "../lib/layerFilter";
 import { drawGrain } from "../lib/effectShape";
 import { computeDuckMultiplier } from "../lib/ducking";
-import { computeScreenEffects, computeTransition } from "../lib/screenEffect";
+import {
+  computeScreenEffects,
+  computeTransition,
+  computeSnapshotTransition,
+  composeSnapshotTransition,
+} from "../lib/screenEffect";
 import { computeMotion } from "../lib/layerAnimCanvas";
 import {
   computeMarker,
@@ -398,6 +403,40 @@ export function TemplateCanvas({
         octx.fillStyle = "#000";
         octx.fillRect(0, 0, dims.width, dims.height);
         octx.restore();
+      }
+      // §C wipe/push/dissolve: 窓中は前シーン(ts)を別途描画して後シーンと合成
+      // （export は窓開始フレームを保持。preview は時刻独立なので ts を再レンダリング＝窓中だけ負荷増）
+      const snapTr = computeSnapshotTransition(transitionsRef.current, t);
+      if (snapTr) {
+        const prev = new OffscreenCanvas(dims.width, dims.height);
+        const cur = new OffscreenCanvas(dims.width, dims.height);
+        const pctx = prev.getContext("2d");
+        const cctx = cur.getContext("2d");
+        if (pctx && cctx) {
+          const vfs = frameSources.size > 0 ? frameSources : undefined;
+          // 前シーン(ts=切替直前) と 後シーン(te=切替直後) を別々に描いて窓全体で遷移
+          await renderLayersOnContext(pctx, curLayers, resolveSrc, {
+            atTimeSec: snapTr.ts,
+            applyAnim: true,
+            transparent: false,
+            videoFrameSources: vfs,
+          });
+          await renderLayersOnContext(cctx, curLayers, resolveSrc, {
+            atTimeSec: snapTr.te,
+            applyAnim: true,
+            transparent: false,
+            videoFrameSources: vfs,
+          });
+          octx.clearRect(0, 0, dims.width, dims.height);
+          composeSnapshotTransition(
+            octx,
+            prev,
+            cur,
+            snapTr,
+            dims.width,
+            dims.height,
+          );
+        }
       }
       // 一括 blit（途中状態を可視 Canvas に出さない）
       if (visible.width !== dims.width) visible.width = dims.width;

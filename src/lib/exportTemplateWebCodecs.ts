@@ -41,7 +41,12 @@ import {
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
 import { computeDuckMultiplier, layerHasDucking } from "./ducking";
-import { computeScreenEffects, computeTransition } from "./screenEffect";
+import {
+  computeScreenEffects,
+  computeTransition,
+  computeSnapshotTransition,
+  composeSnapshotTransition,
+} from "./screenEffect";
 import { drawGrain } from "./effectShape";
 import {
   normalizeLoudness,
@@ -440,6 +445,40 @@ export async function exportTemplateWebCodecs(
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, dims.width, dims.height);
         ctx.restore();
+      }
+
+      // §C wipe/push/dissolve: 前シーン(ts=切替直前) と 後シーン(te=切替直後) を
+      // それぞれ描いて、窓全体で 1→2 を遷移合成（ライブ映像だと窓前半がまだ前シーンで
+      // 「1 が動くだけで 2 が来ない」ため、両端をスナップする）。
+      const snapTr = computeSnapshotTransition(template.transitions, t);
+      if (snapTr) {
+        const prevC = new OffscreenCanvas(dims.width, dims.height);
+        const curC = new OffscreenCanvas(dims.width, dims.height);
+        const pc = prevC.getContext("2d");
+        const cc = curC.getContext("2d");
+        if (pc && cc) {
+          const vfs =
+            videoFrameSources.size > 0 ? videoFrameSources : undefined;
+          await renderLayersOnContext(pc, template.layers, resolveSrc, {
+            atTimeSec: snapTr.ts,
+            applyAnim: true,
+            videoFrameSources: vfs,
+          });
+          await renderLayersOnContext(cc, template.layers, resolveSrc, {
+            atTimeSec: snapTr.te,
+            applyAnim: true,
+            videoFrameSources: vfs,
+          });
+          ctx.clearRect(0, 0, dims.width, dims.height);
+          composeSnapshotTransition(
+            ctx,
+            prevC,
+            curC,
+            snapTr,
+            dims.width,
+            dims.height,
+          );
+        }
       }
 
       // mediabunny にフレーム追加 (backpressure を尊重するため await)
