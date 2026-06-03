@@ -182,6 +182,8 @@ const AMBIENT_ANIMATIONS: { id: AmbientAnimation; label: string }[] = [
   { id: "glow-pulse", label: "発光呼吸" },
   { id: "rainbow", label: "レインボー" },
   { id: "float", label: "フロート" },
+  { id: "spin", label: "スピン（回転）" },
+  { id: "drift", label: "ドリフト（横揺れ）" },
 ];
 
 const CHAR_ANIMATIONS: { id: CharAnimation; label: string }[] = [
@@ -1087,6 +1089,15 @@ export function LayerPropertyPanel({
             0,
             2,
             0.05,
+          )}
+        {common("ambientAnimation") && common("ambientAnimation") !== "none" &&
+          sliderInput(
+            "速度",
+            common("ambientSpeed") ?? 1,
+            (v) => onChange({ ambientSpeed: Math.max(0, Math.min(4, v)) }),
+            0,
+            4,
+            0.1,
           )}
       </Section>
 

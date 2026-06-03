@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer } from "../types";
+import type { Layer, TransitionSpec } from "../types";
 import { templateDimensions } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
-import { hasAnimKfs, sampleAnimKfs } from "../lib/animKeyframes";
+import {
+  applyAnchorOffset,
+  hasAnimKfs,
+  sampleAnimKfs,
+} from "../lib/animKeyframes";
+import { hasMotionPath, sampleMotionPath } from "../lib/motionPath";
+import { computeLayerFilterCss } from "../lib/layerFilter";
+import { drawGrain } from "../lib/effectShape";
 import { computeDuckMultiplier } from "../lib/ducking";
-import { computeScreenEffects } from "../lib/screenEffect";
+import { computeScreenEffects, computeTransition } from "../lib/screenEffect";
 import { computeMotion } from "../lib/layerAnimCanvas";
 import {
   computeMarker,
@@ -46,6 +53,8 @@ function resolveSrcForWebview(src: string | undefined): string | null {
 
 interface Props {
   layers: Layer[];
+  /** Phase2 §C: 場面転換（fade-black/zoom）。最終合成に適用。 */
+  transitions?: TransitionSpec[];
   selectedLayerId: string | null;
   /** 複数選択中の全 id。未指定なら [selectedLayerId] 相当 */
   selectedLayerIds?: string[];
@@ -77,6 +86,7 @@ const CANVAS_HEIGHT_RATIO = 0.82;
 
 export function TemplateCanvas({
   layers,
+  transitions,
   selectedLayerId,
   selectedLayerIds,
   onLayerSelect,
@@ -130,6 +140,8 @@ export function TemplateCanvas({
   timeRef.current = currentTimeSec ?? 0;
   const layersRef = useRef(layers);
   layersRef.current = layers;
+  const transitionsRef = useRef(transitions);
+  transitionsRef.current = transitions;
   // 編集中レイヤーは Canvas 描画から除外（DOM textarea を重ねて二重描画を避ける）
   const initW = Math.round(Math.min(CANVAS_MAX_W_PX, 360));
   const [canvasSize, setCanvasSize] = useState({
@@ -225,7 +237,18 @@ export function TemplateCanvas({
   // flash/vignette-pulse は overlay div で上に重ねる。
   const fx = isPlaying
     ? computeScreenEffects(layers, currentTimeSec ?? 0, CANVAS_W_PX / 360)
-    : { dx: 0, dy: 0, scale: 1, flashAlpha: 0, vignetteAlpha: 0, blurPx: 0 };
+    : {
+        dx: 0,
+        dy: 0,
+        scale: 1,
+        flashAlpha: 0,
+        vignetteAlpha: 0,
+        blurPx: 0,
+        gradeFilter: "",
+        tintColor: null,
+        tintAlpha: 0,
+        grain: null,
+      };
   const fxTransforms: string[] = [];
   if (fx.dx !== 0 || fx.dy !== 0) {
     fxTransforms.push(`translate(${fx.dx.toFixed(2)}px, ${fx.dy.toFixed(2)}px)`);
@@ -303,6 +326,9 @@ export function TemplateCanvas({
       // 画面全体エフェクト（shake/zoom-punch/blur-burst/flash/vignette）も本物の書き出しと
       // 同じ順序で適用し、書き出し表示を export と一致させる（exportTemplateWebCodecs と同コード）。
       const fx = computeScreenEffects(layersRef.current, t, dims.width / 360);
+      // §C transition（fade-black/zoom）。export と同式・同窓。
+      const tr = computeTransition(transitionsRef.current, t);
+      const totalScale = fx.scale * tr.scale;
       const cx = dims.width / 2;
       const cy = dims.height / 2;
       octx.save();
@@ -311,12 +337,15 @@ export function TemplateCanvas({
         octx.fillRect(0, 0, dims.width, dims.height);
         octx.translate(fx.dx, fx.dy);
       }
-      if (fx.scale !== 1) {
+      if (totalScale !== 1) {
         octx.translate(cx, cy);
-        octx.scale(fx.scale, fx.scale);
+        octx.scale(totalScale, totalScale);
         octx.translate(-cx, -cy);
       }
-      if (fx.blurPx > 0) octx.filter = `blur(${fx.blurPx.toFixed(2)}px)`;
+      const octxFilterParts: string[] = [];
+      if (fx.blurPx > 0) octxFilterParts.push(`blur(${fx.blurPx.toFixed(2)}px)`);
+      if (fx.gradeFilter) octxFilterParts.push(fx.gradeFilter);
+      if (octxFilterParts.length > 0) octx.filter = octxFilterParts.join(" ");
       await renderLayersOnContext(octx, curLayers, resolveSrc, {
         atTimeSec: t,
         applyAnim: true,
@@ -347,6 +376,26 @@ export function TemplateCanvas({
         grad.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
         octx.save();
         octx.fillStyle = grad;
+        octx.fillRect(0, 0, dims.width, dims.height);
+        octx.restore();
+      }
+      // §B colorgrade tint: 単色を alpha で被せる
+      if (fx.tintColor && fx.tintAlpha > 0) {
+        octx.save();
+        octx.globalAlpha = Math.min(1, fx.tintAlpha);
+        octx.fillStyle = fx.tintColor;
+        octx.fillRect(0, 0, dims.width, dims.height);
+        octx.restore();
+      }
+      // §B grain: フィルム粒子 / 走査線
+      if (fx.grain) {
+        drawGrain(octx, fx.grain, dims.width, dims.height, dims.width / 360, t);
+      }
+      // §C fade-black: 黒被せ（atSec 中心で最大＝暗転）
+      if (tr.blackAlpha > 0) {
+        octx.save();
+        octx.globalAlpha = Math.min(1, tr.blackAlpha);
+        octx.fillStyle = "#000";
         octx.fillRect(0, 0, dims.width, dims.height);
         octx.restore();
       }
@@ -726,17 +775,48 @@ function LayerView({
   // ※ 書き出し表示 ON 時の見た目は Canvas(renderExportFrame=export 経路) が描くので、ここは
   //   主に操作枠(Moveable ターゲット)の位置同期用。kfs(curio アニメ仕様) 優先で評価する。
   const layer: Layer =
-    isPlaying && hasAnimKfs(rawLayer)
+    isPlaying && (hasAnimKfs(rawLayer) || hasMotionPath(rawLayer))
       ? (() => {
-          const s = sampleAnimKfs(rawLayer, currentTimeSec - rawLayer.startSec);
+          // kfs(§4) / motionPath(§8) を合成。x,y は motionPath 優先（§8）。export
+          // applyKeyframesAtTime と同じ合成にする（操作枠の位置を書き出しと一致させる）。
+          const tRel = currentTimeSec - rawLayer.startSec;
+          let x = rawLayer.x;
+          let y = rawLayer.y;
+          let rotation = rawLayer.rotation ?? 0;
+          let opacity = rawLayer.opacity ?? 1;
+          let wPct = rawLayer.width;
+          let hPct = rawLayer.height;
+          if (hasAnimKfs(rawLayer)) {
+            const s = sampleAnimKfs(rawLayer, tRel);
+            x = s.x;
+            y = s.y;
+            rotation = s.rotation;
+            opacity = s.opacity;
+            wPct = s.width !== undefined ? s.width : rawLayer.width * s.scale;
+            hPct = s.height !== undefined ? s.height : rawLayer.height * s.scale;
+          }
+          if (hasMotionPath(rawLayer)) {
+            const p = sampleMotionPath(rawLayer, tRel);
+            x = p.x;
+            y = p.y;
+          }
+          const adj = applyAnchorOffset(
+            rawLayer.anchor,
+            x,
+            y,
+            rawLayer.width,
+            rawLayer.height,
+            wPct,
+            hPct,
+          );
           return {
             ...rawLayer,
-            x: s.x,
-            y: s.y,
-            width: rawLayer.width * s.scale,
-            height: rawLayer.height * s.scale,
-            rotation: s.rotation,
-            opacity: s.opacity,
+            x: adj.x,
+            y: adj.y,
+            width: wPct,
+            height: hPct,
+            rotation,
+            opacity,
           };
         })()
       : isPlaying && rawLayer.keyframes
@@ -839,6 +919,9 @@ function LayerView({
   const innerFilterParts: string[] = [];
   if (anim.filter) innerFilterParts.push(anim.filter);
   if (ambient.filter) innerFilterParts.push(ambient.filter);
+  // §A6: per-layer filter（glow/blur/shadow）。export drawLayer の ctx.filter と同式。
+  const layerFilterCss = computeLayerFilterCss(layer, canvasWPx / 360);
+  if (layerFilterCss) innerFilterParts.push(layerFilterCss);
   const innerFilter = innerFilterParts.join(" ");
 
   // テキスト系レイヤー（comment）は renderAnimatedText 内で border を適用するためここでは省く
@@ -2028,7 +2111,8 @@ export function computeLayerAmbientStyle(
   const amb = layer.ambientAnimation ?? "none";
   if (amb === "none") return { opacity: 1, transform: "", filter: "" };
   const k = Math.max(0, Math.min(2, layer.ambientIntensity ?? 1));
-  const t = currentTimeSec;
+  // ambientSpeed（§7・既定1）を周期時間に乗算（export computeCanvasAnim の tp=t*sp と一致）。
+  const t = currentTimeSec * (layer.ambientSpeed ?? 1);
   const parts: string[] = [];
   const filters: string[] = [];
   let opacity = 1;
@@ -2071,6 +2155,17 @@ export function computeLayerAmbientStyle(
     case "float": {
       const y = Math.sin(t * Math.PI) * 3 * k * pxScale;
       parts.push(`translateY(${y.toFixed(2)}px)`);
+      break;
+    }
+    case "spin": {
+      // 一定速度で回転（§7）。export computeCanvasAnim の rot += tp*90*k と一致（CSS は度）。
+      parts.push(`rotate(${(t * 90 * k).toFixed(2)}deg)`);
+      break;
+    }
+    case "drift": {
+      // ゆっくり横へ漂う（§7）。export と同式 ±6px·k・周期4s。
+      const x = Math.sin(t * Math.PI * 0.5) * 6 * k * pxScale;
+      parts.push(`translateX(${x.toFixed(2)}px)`);
       break;
     }
   }

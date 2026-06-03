@@ -13,7 +13,7 @@
  * （preview=canvasWPx/360, export=FINAL_W/360）。zoom の scale 比と alpha は解像度非依存。
  */
 
-import type { Layer } from "../types";
+import type { Layer, TransitionSpec } from "../types";
 
 export interface ScreenShake {
   dx: number;
@@ -33,6 +33,14 @@ export interface ScreenEffects {
   vignetteAlpha: number;
   /** blur-burst の blur 半径（px, 解像度換算済み） */
   blurPx: number;
+  /** colorgrade grade の ctx.filter 文字列（"" なら無し）。描画前に blur と合成して適用。 */
+  gradeFilter: string;
+  /** colorgrade tint の色（null なら無し）。描画後にオーバーレイ。 */
+  tintColor: string | null;
+  /** colorgrade tint の alpha（0..1）。 */
+  tintAlpha: number;
+  /** grain（フィルム粒子/走査線）。null なら無し。描画後にオーバーレイ。 */
+  grain: { type: "grain" | "scanlines"; strength: number; speed: number } | null;
 }
 
 /** proposal 指定の簡易 PRNG（-0.5..0.5 を返す決定論的乱数） */
@@ -100,6 +108,10 @@ export function computeScreenEffects(
     flashAlpha: 0,
     vignetteAlpha: 0,
     blurPx: 0,
+    gradeFilter: "",
+    tintColor: null,
+    tintAlpha: 0,
+    grain: null,
   };
   let shakeIntensity = 0;
   let zoomExtra = 0;
@@ -139,6 +151,43 @@ export function computeScreenEffects(
         if (b > out.blurPx) out.blurPx = b;
         break;
       }
+      case "colorgrade": {
+        // §B 雰囲気系: 区間内は一定で適用（脈動なし）。strength は params。
+        const pr = L.screenEffectParams ?? {};
+        const st = Math.max(0, Math.min(1, pr.strength ?? 0.5));
+        if (st <= 0) break;
+        const mode = pr.mode ?? "grade";
+        if (mode === "grade") {
+          // 彩度・コントラストを強める（CSS/Canvas filter）
+          out.gradeFilter = `saturate(${(1 + st).toFixed(3)}) contrast(${(
+            1 +
+            st * 0.4
+          ).toFixed(3)})`;
+        } else if (mode === "tint") {
+          out.tintColor = pr.color ?? "#1E3A5F";
+          out.tintAlpha = st;
+        }
+        // duotone は全ピクセル処理で重いため未対応（無視）。
+        break;
+      }
+      case "blur": {
+        // 全画面 blur（区間内一定）。描画前 ctx.filter の blurPx に合算（max）。
+        const r = (L.screenEffectParams?.radius ?? 6) * pxScale;
+        if (r > out.blurPx) out.blurPx = r;
+        break;
+      }
+      case "grain": {
+        const pr = L.screenEffectParams ?? {};
+        const st = Math.max(0, Math.min(1, pr.strength ?? 0.5));
+        if (st > 0) {
+          out.grain = {
+            type: pr.type ?? "grain",
+            strength: st,
+            speed: Math.max(0, pr.speed ?? 1),
+          };
+        }
+        break;
+      }
       default:
         break;
     }
@@ -156,4 +205,42 @@ export function computeScreenEffects(
 /** layers に「いずれかの時刻で効く」effect layer が含まれるか（早期スキップ用） */
 export function hasScreenEffect(layers: Layer[]): boolean {
   return layers.some((l) => l.type === "effect");
+}
+
+/** Phase2 §C 場面転換の最終合成への適用量。 */
+export interface TransitionFx {
+  /** fade-black の黒被せ alpha（0..1）。中心(atSec)で最大。 */
+  blackAlpha: number;
+  /** zoom の拡大率（中心基準）。1.0 = 等倍。 */
+  scale: number;
+}
+
+/**
+ * 時刻 t での transition 適用量。atSec を中心に ±duration/2 の窓で bell 型（中心=最大）。
+ * fade-black=黒被せ / zoom=拡大。wipe/push/dissolve は前後フレーム合成が必要なため未対応（無視）。
+ * 同時刻に複数該当したら効果値の最大を採る。
+ */
+export function computeTransition(
+  transitions: TransitionSpec[] | undefined,
+  t: number,
+): TransitionFx {
+  const out: TransitionFx = { blackAlpha: 0, scale: 1 };
+  if (!transitions || transitions.length === 0) return out;
+  let zoomExtra = 0;
+  for (const tr of transitions) {
+    const dur = Math.max(0.05, tr.duration ?? 0.5);
+    const half = dur / 2;
+    if (t < tr.atSec - half || t > tr.atSec + half) continue;
+    const p = (t - (tr.atSec - half)) / dur; // 0..1
+    const b = bell(p); // 中心で 1
+    if (tr.style === "fade-black") {
+      if (b > out.blackAlpha) out.blackAlpha = b;
+    } else if (tr.style === "zoom") {
+      const e = 0.2 * b; // 中心で +20% 拡大
+      if (e > zoomExtra) zoomExtra = e;
+    }
+    // wipe / push / dissolve は前後フレーム合成が必要なため現状未対応。
+  }
+  out.scale = 1 + zoomExtra;
+  return out;
 }

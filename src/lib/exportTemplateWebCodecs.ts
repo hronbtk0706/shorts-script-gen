@@ -41,7 +41,8 @@ import {
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
 import { computeDuckMultiplier, layerHasDucking } from "./ducking";
-import { computeScreenEffects } from "./screenEffect";
+import { computeScreenEffects, computeTransition } from "./screenEffect";
+import { drawGrain } from "./effectShape";
 import {
   normalizeLoudness,
   DEFAULT_TARGET_LUFS,
@@ -365,6 +366,9 @@ export async function exportTemplateWebCodecs(
       // flash(白被せ) / vignette-pulse は layer 描画後に上塗りする。
       // preview (computeScreenEffects) と同式・同 seed。
       const fx = computeScreenEffects(template.layers, t, dims.width / 360);
+      // §C transition（fade-black/zoom）。zoom は scale に合算、fade-black は描画後に黒被せ。
+      const tr = computeTransition(template.transitions, t);
+      const totalScale = fx.scale * tr.scale;
       const cx = dims.width / 2;
       const cy = dims.height / 2;
       const shaking = fx.dx !== 0 || fx.dy !== 0;
@@ -376,14 +380,16 @@ export async function exportTemplateWebCodecs(
         ctx.fillRect(0, 0, dims.width, dims.height);
         ctx.translate(fx.dx, fx.dy);
       }
-      if (fx.scale !== 1) {
+      if (totalScale !== 1) {
         ctx.translate(cx, cy);
-        ctx.scale(fx.scale, fx.scale);
+        ctx.scale(totalScale, totalScale);
         ctx.translate(-cx, -cy);
       }
-      if (fx.blurPx > 0) {
-        ctx.filter = `blur(${fx.blurPx.toFixed(2)}px)`;
-      }
+      // blur-burst と colorgrade grade（彩度/コントラスト）を描画前 ctx.filter に合成
+      const fxFilterParts: string[] = [];
+      if (fx.blurPx > 0) fxFilterParts.push(`blur(${fx.blurPx.toFixed(2)}px)`);
+      if (fx.gradeFilter) fxFilterParts.push(fx.gradeFilter);
+      if (fxFilterParts.length > 0) ctx.filter = fxFilterParts.join(" ");
       await renderLayersOnContext(ctx, visibleLayers, resolveSrc, {
         skipVideoLayers: false,
         atTimeSec: t,
@@ -412,6 +418,26 @@ export async function exportTemplateWebCodecs(
         grad.addColorStop(1, `rgba(0,0,0,${a.toFixed(3)})`);
         ctx.save();
         ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, dims.width, dims.height);
+        ctx.restore();
+      }
+      // §B colorgrade tint: 単色を alpha で被せる（雰囲気系・区間内一定）
+      if (fx.tintColor && fx.tintAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, fx.tintAlpha);
+        ctx.fillStyle = fx.tintColor;
+        ctx.fillRect(0, 0, dims.width, dims.height);
+        ctx.restore();
+      }
+      // §B grain: フィルム粒子 / 走査線
+      if (fx.grain) {
+        drawGrain(ctx, fx.grain, dims.width, dims.height, dims.width / 360, t);
+      }
+      // §C fade-black: 画面全体に黒を alpha で被せる（atSec 中心で最大＝暗転）
+      if (tr.blackAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, tr.blackAlpha);
+        ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, dims.width, dims.height);
         ctx.restore();
       }

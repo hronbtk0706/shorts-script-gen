@@ -1231,6 +1231,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           <div className="flex-1 min-h-0 flex items-start justify-center">
             <TemplateCanvas
               layers={template.layers}
+              transitions={template.transitions}
               selectedLayerId={selectedLayerId}
               selectedLayerIds={selectedLayerIds}
               onLayerSelect={handleLayerSelect}

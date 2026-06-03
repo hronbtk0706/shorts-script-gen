@@ -34,7 +34,31 @@ export type ScreenEffectKind =
   | "flash" // 白フラッシュ（章切替・カット感）
   | "vignette-pulse" // 画面端を一瞬暗く（クライマックス）
   | "zoom-punch" // 全画面 1 瞬拡大（強調）
-  | "blur-burst"; // 全画面 1 瞬 blur（衝撃直前の予感）
+  | "blur-burst" // 全画面 1 瞬 blur（衝撃直前の予感）
+  | "colorgrade" // 色調補正（tint=色被せ / grade=彩度コントラスト・§B 雰囲気系）
+  | "grain" // フィルム粒子 / 走査線（§B 雰囲気系）
+  | "blur"; // 全画面 blur（区間内一定・§B 雰囲気系）
+
+/**
+ * Phase2 §B-雰囲気: colorgrade のパラメータ（type:"effect" + effectKind:"colorgrade"）。
+ * `tint`=単色被せ / `grade`=彩度・コントラスト調整。`duotone` は重いため未対応。
+ */
+export interface ScreenEffectParams {
+  /** colorgrade のモード（既定 grade）。 */
+  mode?: "tint" | "duotone" | "grade";
+  /** tint の色（hex）。 */
+  color?: string;
+  /** duotone の [暗, 明]（未対応）。 */
+  colors?: [string, string];
+  /** 効果の強さ 0..1（既定 0.5）。 */
+  strength?: number;
+  /** grain の種類（grain=粒子 / scanlines=走査線・既定 grain）。 */
+  type?: "grain" | "scanlines";
+  /** 全画面 blur の半径（design 基準 px・既定 6）。 */
+  radius?: number;
+  /** grain のアニメ速度（既定 1）。 */
+  speed?: number;
+}
 
 export interface LayerBorder {
   width: number;
@@ -88,7 +112,9 @@ export type AmbientAnimation =
   | "blink"
   | "glow-pulse"
   | "rainbow"
-  | "float";
+  | "float"
+  | "spin"
+  | "drift";
 
 /** 文字単位のアニメ（テキスト専用） */
 export type CharAnimation =
@@ -183,6 +209,134 @@ export interface AnimKeyframe {
   scale?: number;
   rotation?: number;
   opacity?: number;
+  /** Phase2 §A2: 幅 %（キャンバス基準・絶対値）。anchor を基準に伸縮。scale と併用時はこちら優先。 */
+  width?: number;
+  /** Phase2 §A2: 高さ %（キャンバス基準・絶対値）。anchor を基準に伸縮。 */
+  height?: number;
+  /** Phase2 §A3: 塗り色（hex）。sRGB 線形補間。 */
+  fillColor?: string;
+  /** Phase2 §A3: 文字色（hex）。 */
+  fontColor?: string;
+  /** Phase2 §A3: 文字縁取り色（hex）。 */
+  textOutlineColor?: string;
+  /** Phase2 §A3: 角丸半径（数値・design 基準）。 */
+  borderRadius?: number;
+  ease?: KeyframeEase;
+}
+
+/**
+ * Phase2 §A1: レイヤーの基準点（scale / width / height の伸縮の固定点）。
+ * 既定 center。例: `left` ＋ width を 0→100% に補間 = 左端から右へ伸びるバー。
+ * ※ 現状 rotation の基準点には適用しない（回帰回避のため scale/サイズのみ）。
+ * フィールド未指定なら従来挙動（kfs scale は左上基準）を維持する。
+ */
+export type LayerAnchor =
+  | "center"
+  | "left"
+  | "right"
+  | "top"
+  | "bottom"
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+
+/**
+ * Phase2 §A6: レイヤー単体に掛ける視覚フィルタ（任意のサブセット指定）。
+ * glow/blur/shadow は CSS/Canvas の filter 文字列（drop-shadow/blur）で preview=export 一致。
+ * tint（着色）は filter 文字列では表現困難なため現状**未適用**（型では受ける）。
+ * px 値（radius/blur/dx/dy）は design(360) 基準で、描画解像度へ pxScale 換算する。
+ */
+export interface LayerFilter {
+  /** 発光。color＋strength(0..1, alpha化) で drop-shadow を重ねる。 */
+  glow?: { color?: string; strength?: number; radius?: number };
+  /** ぼかし。 */
+  blur?: { radius?: number };
+  /** 影。color は #RRGGBBAA 可。 */
+  shadow?: { dx?: number; dy?: number; blur?: number; color?: string };
+  /** 着色（現状未適用）。 */
+  tint?: { color?: string; strength?: number };
+}
+
+/**
+ * Phase2 §B: 描画系 effect（type:"effect" で領域にピクセルを描くオーバーレイ）。
+ * 既存 `effectKind`（ScreenEffectKind＝全画面後処理）とは別系統で、こちらは zIndex 位置に描く。
+ * 1 レイヤーで effect（描画系）か effectKind（後処理系）のどちらかを使う。
+ */
+export type DrawnEffectKind = "speedlines" | "spotlight";
+
+/** 描画系 effect のパラメータ（effect ごとに使う項目が異なる・全て任意）。 */
+export interface DrawnEffectParams {
+  /** 中心 [x,y]（レイヤー領域に対する %・既定 [50,50]） */
+  center?: [number, number];
+  /** 線の色（speedlines） */
+  color?: string;
+  /** speedlines: 線の本数 */
+  density?: number;
+  /** speedlines: 線の太さ（design 基準 px） */
+  thickness?: number;
+  /** speedlines: 中心の空き半径比（0..1） */
+  gapRatio?: number;
+  /** spotlight: 明るい中心の半径（min(w,h) に対する %） */
+  radius?: number;
+  /** spotlight: 周辺の暗さ（0..1） */
+  dim?: number;
+  /** spotlight: 減光の柔らかさ（0..1） */
+  softness?: number;
+  /** アニメ（§B 拡張・アメコミ風・既定 none）。flicker=コマ送りちらつき / pulse=脈動 / spin=回転。 */
+  animate?: "none" | "flicker" | "pulse" | "spin";
+  /** アニメ速度倍率（既定 1）。 */
+  speed?: number;
+}
+
+/**
+ * curio-gen アニメ仕様 P1 (§6) の `kfs` ループ設定。
+ * - `kfs` 列を生存中ループ再生する。1 ループ長 = 最終 KF の `t`。
+ * - `restart`: 頭から繰り返し / `yoyo`: 順再生→逆再生で往復。
+ * - `count`: 回数（yoyo は 1 往復 = 1 回）。`null`/省略で無限（生存区間いっぱい）。
+ *   restart は count 回後に最終 KF 値で停止、yoyo は count 往復後に先頭 KF 値で停止。
+ * 仕様書のフィールド名は `keyframeLoop` だが、shorts-script-gen は `kfs` と揃えた
+ * `kfsLoop` を正とし、`keyframeLoop` もエイリアスで受ける（curio-gen がどちらで emit しても動く）。
+ */
+export interface KeyframeLoop {
+  mode: "restart" | "yoyo";
+  count?: number | null;
+}
+
+/**
+ * curio-gen アニメ仕様 P3 (§8): 位置 (x,y) を Catmull-Rom 曲線で駆動。
+ * - `points`: % 座標（layer.x/y と同じ・左上基準）の通過点。曲線はこれらを滑らかに通る。
+ * - `scale`/`rotation`/`opacity` は kfs 側で指定する（motionPath は位置のみ）。
+ * - kfs と x,y が両方あれば **motionPath を優先**（排他運用推奨）。
+ * - `duration` 省略時 = 生存長（endSec - startSec）。`loop` で周回。
+ */
+export interface MotionPath {
+  points: [number, number][];
+  ease?: KeyframeEase;
+  duration?: number;
+  loop?: boolean;
+}
+
+/** reveal（ワイプ/クリップ表示）の方向（Phase2 §A4）。 */
+export type RevealDirection =
+  | "left-to-right"
+  | "right-to-left"
+  | "top-to-bottom"
+  | "bottom-to-top"
+  | "center-out"
+  | "radial";
+
+/**
+ * curio-gen アニメ仕様 Phase2 §A4: reveal（クリップ/ワイプ表示）。
+ * レイヤー内容を `direction` に沿って 0%→100% にクリップ表示する。
+ * 細い矩形＝「線が描かれる」、バー＝「塗りで満ちる」、文字＝「ワイプで出る」。
+ * `t`（既定0・startSec 相対秒）から `duration`（既定0.6s）かけて ease で進捗。
+ * transform ではなくクリップなので keyframes/motionPath と併用可。
+ */
+export interface RevealSpec {
+  direction: RevealDirection;
+  t?: number;
+  duration?: number;
   ease?: KeyframeEase;
 }
 
@@ -351,6 +505,13 @@ export interface Layer {
   /** type === "effect" 専用: 強度 (0..2, default 1.0)。
    *  shake の translate 幅などを共通制御する。 */
   effectIntensity?: number;
+  /** type === "effect" 専用: 描画系 effect の種類（speedlines/spotlight・§B）。
+   *  effectKind（全画面後処理）とは別系統。これがあれば zIndex 位置に描画する。 */
+  effect?: DrawnEffectKind;
+  /** 描画系 effect のパラメータ（§B）。 */
+  effectParams?: DrawnEffectParams;
+  /** type === "effect" + effectKind:"colorgrade" 専用: 色調補正パラメータ（§B 雰囲気系）。 */
+  screenEffectParams?: ScreenEffectParams;
   /** 音声/動画レイヤー: 再生速度倍率。1.0 = 等速、0.5 = 半分、2.0 = 倍速 */
   playbackRate?: number;
   /** 動画レイヤー専用: 素材が短いときにループ再生するか（default: true） */
@@ -363,6 +524,11 @@ export interface Layer {
   ambientAnimation?: AmbientAnimation;
   /** Ambient の強度（0〜1 の倍率、デフォルト 1） */
   ambientIntensity?: number;
+  /**
+   * Ambient の速度倍率（curio-gen アニメ仕様 §7・新規・デフォルト 1.0）。
+   * 全 ambient の周期時間に乗算する（spin/drift だけでなく既存 pulse/shake 等にも効く）。
+   */
+  ambientSpeed?: number;
   /** 文字単位のアニメ（テキスト専用） */
   charAnimation?: CharAnimation;
   /** 単語単位のキネティック（テキスト専用） */
@@ -379,6 +545,30 @@ export interface Layer {
    * UI 編集の `keyframes`(LayerKeyframes) より優先。curio-gen が emit する用。
    */
   kfs?: AnimKeyframe[];
+  /**
+   * curio-gen アニメ仕様 P1 (§6): `kfs` のループ/往復設定。
+   * `kfs` が無ければ無視。仕様書名 `keyframeLoop` もエイリアスで受ける（下記）。
+   */
+  kfsLoop?: KeyframeLoop;
+  /** 仕様書 §6 の名称。`kfsLoop` 未指定時のフォールバックとして読む。 */
+  keyframeLoop?: KeyframeLoop;
+  /**
+   * curio-gen アニメ仕様 P3 (§8): 位置を曲線で駆動する motionPath。
+   * これがある層は位置を曲線で完全駆動するため entry/exit/motion を抑止（kfs と同様 _kfsDriven）。
+   */
+  motionPath?: MotionPath;
+  /**
+   * curio-gen アニメ仕様 Phase2 §A4: reveal（クリップ/ワイプ表示）。
+   * transform ではなくクリップなので kfs/motionPath/entry 等と併用可。
+   */
+  reveal?: RevealSpec;
+  /**
+   * Phase2 §A1: scale / width / height の伸縮基準点（既定 center）。
+   * 未指定なら従来挙動（kfs scale は左上基準）を維持。
+   */
+  anchor?: LayerAnchor;
+  /** Phase2 §A6: レイヤー単体の視覚フィルタ（glow/blur/shadow。tint は未適用）。 */
+  filter?: LayerFilter;
   /**
    * 画像/動画の表示範囲（クロップ）。値は素材ピクセルに対する 0〜100 の % 値。
    * 未指定 = 全体表示。{x:10, y:10, width:80, height:80} なら周囲 10% を切り落とす。
@@ -455,6 +645,28 @@ export function templateDimensions(t: { aspect?: TemplateAspect }): {
   return ASPECT_DIMENSIONS[templateAspectOf(t)];
 }
 
+/**
+ * Phase2 §C: 場面転換トランジション（top-level transitions[]）。
+ * `atSec` を中心に ±duration/2 の窓で最終合成フレーム全体に適用する。
+ * 実装済み: `fade-black`（暗転）/ `zoom`（ズーム切替）。
+ * `wipe`/`push`/`dissolve` は前後フレーム合成が必要なため**未対応**（型では受けるが無視）。
+ */
+export type TransitionStyle =
+  | "fade-black"
+  | "wipe"
+  | "push"
+  | "zoom"
+  | "dissolve";
+
+export interface TransitionSpec {
+  atSec: number;
+  style: TransitionStyle;
+  /** 効果の長さ（秒・既定0.5）。atSec を中心に前後 duration/2。 */
+  duration?: number;
+  /** wipe/push の方向（現状未使用）。 */
+  direction?: "left-to-right" | "right-to-left" | "up" | "down";
+}
+
 export interface VideoTemplate {
   version: 2;
   id: string;
@@ -472,6 +684,8 @@ export interface VideoTemplate {
   themeVibe?: string;
   /** 全レイヤーを global timeline に配置 */
   layers: Layer[];
+  /** Phase2 §C: 場面転換（fade-black/zoom のみ適用、wipe/push/dissolve は未対応）。 */
+  transitions?: TransitionSpec[];
   /** @deprecated 旧版互換: 単一動画のインポート結果。新版は importedCommentBundles を使用 */
   importedComments?: ExtractedComment[];
   /** @deprecated 旧版互換: 上の取得元情報 */

@@ -2,7 +2,15 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
 import { sortedLayers } from "./layerUtils";
 import { sampleLayerAt } from "./keyframes";
-import { hasAnimKfs, sampleAnimKfs } from "./animKeyframes";
+import {
+  applyAnchorOffset,
+  easeOf,
+  hasAnimKfs,
+  sampleAnimKfs,
+} from "./animKeyframes";
+import { hasMotionPath, sampleMotionPath } from "./motionPath";
+import { computeLayerFilterCss } from "./layerFilter";
+import { drawSpeedlines, drawSpotlight } from "./effectShape";
 import { bubbleFullPath } from "./bubble";
 import { computeMarker, isMarkerShape, markerColor } from "./markerShape";
 import {
@@ -126,19 +134,65 @@ export async function renderLayersOnContext(
 
 /** 指定時刻でのキーフレーム補間値を layer に適用した新しい Layer を返す（グローバル時刻 t） */
 function applyKeyframesAtTime(layer: Layer, t: number): Layer {
-  // curio-gen アニメ仕様の kfs（startSec 相対秒・easing 付き）があれば優先。
-  // kfs がある層は entry/exit/motion を無視し、_kfsDriven フラグで drawLayer 側の
-  // computeCanvasAnim/computeMotion を抑止する（ambient は別途加算され続ける）。
-  if (hasAnimKfs(layer)) {
-    const s = sampleAnimKfs(layer, t - layer.startSec);
+  // curio-gen アニメ仕様の kfs(§4) / motionPath(§8) があれば優先。
+  // どちらも startSec 相対秒・easing 付き。これらがある層は entry/exit/motion を無視し、
+  // _kfsDriven フラグで drawLayer 側の computeCanvasAnim/computeMotion を抑止する
+  // （ambient は別途加算され続ける）。kfs と motionPath の x,y が両方あれば motionPath を優先（§8）。
+  const hasKfs = hasAnimKfs(layer);
+  const hasPath = hasMotionPath(layer);
+  if (hasKfs || hasPath) {
+    const tRel = t - layer.startSec;
+    let x = layer.x;
+    let y = layer.y;
+    let rotation = layer.rotation ?? 0;
+    let opacity = layer.opacity ?? 1;
+    // §A2: 最終サイズ %。kfs の width/height（絶対）優先、無ければ scale で算出。
+    let wPct = layer.width;
+    let hPct = layer.height;
+    // §A3: 色 / borderRadius の補間値（kfs に定義があるときだけ上書き）。
+    const colorOverrides: Partial<
+      Pick<Layer, "fillColor" | "fontColor" | "textOutlineColor" | "borderRadius">
+    > = {};
+    if (hasKfs) {
+      const s = sampleAnimKfs(layer, tRel);
+      x = s.x;
+      y = s.y;
+      rotation = s.rotation;
+      opacity = s.opacity;
+      wPct = s.width !== undefined ? s.width : layer.width * s.scale;
+      hPct = s.height !== undefined ? s.height : layer.height * s.scale;
+      if (s.fillColor !== undefined) colorOverrides.fillColor = s.fillColor;
+      if (s.fontColor !== undefined) colorOverrides.fontColor = s.fontColor;
+      if (s.textOutlineColor !== undefined)
+        colorOverrides.textOutlineColor = s.textOutlineColor;
+      if (s.borderRadius !== undefined)
+        colorOverrides.borderRadius = s.borderRadius;
+    }
+    if (hasPath) {
+      const p = sampleMotionPath(layer, tRel); // 位置のみ・kfs の x,y より優先
+      x = p.x;
+      y = p.y;
+    }
+    // §A1: anchor 指定時のみ、サイズ変化分だけ x,y をずらしてアンカー辺を固定。
+    // anchor 未指定なら従来どおり左上固定（既存挙動を完全維持）。
+    const adj = applyAnchorOffset(
+      layer.anchor,
+      x,
+      y,
+      layer.width,
+      layer.height,
+      wPct,
+      hPct,
+    );
     return {
       ...layer,
-      x: s.x,
-      y: s.y,
-      width: layer.width * s.scale,
-      height: layer.height * s.scale,
-      rotation: s.rotation,
-      opacity: s.opacity,
+      x: adj.x,
+      y: adj.y,
+      width: wPct,
+      height: hPct,
+      rotation,
+      opacity,
+      ...colorOverrides,
       _kfsDriven: true,
     } as Layer & { _kfsDriven: boolean };
   }
@@ -361,6 +415,68 @@ async function drawLayerContentOnly(
   }
 }
 
+/** reveal(§A4) の進捗 0..1（ease 適用後）。reveal 無し / 時刻不明なら 1（全表示）。 */
+function revealProgress(layer: Layer, animAtTimeSec?: number): number {
+  const rv = layer.reveal;
+  if (!rv) return 1;
+  if (animAtTimeSec === undefined) return 1;
+  const dur = rv.duration && rv.duration > 0 ? rv.duration : 0.6;
+  const tRel = animAtTimeSec - layer.startSec - (rv.t ?? 0);
+  const p = Math.max(0, Math.min(1, tRel / dur));
+  return easeOf(rv.ease)(p);
+}
+
+/**
+ * reveal(§A4) のクリップを現在のローカル箱 [0,w]×[0,h] に適用。
+ * 進捗 p に応じて方向別に表示領域を絞る。p>=1 は何もしない（全表示）。
+ */
+function applyRevealClip(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  animAtTimeSec?: number,
+): void {
+  const rv = layer.reveal;
+  if (!rv) return;
+  const p = revealProgress(layer, animAtTimeSec);
+  if (p >= 1) return;
+  ctx.beginPath();
+  switch (rv.direction) {
+    case "right-to-left":
+      ctx.rect(w * (1 - p), 0, w * p, h);
+      break;
+    case "top-to-bottom":
+      ctx.rect(0, 0, w, h * p);
+      break;
+    case "bottom-to-top":
+      ctx.rect(0, h * (1 - p), w, h * p);
+      break;
+    case "center-out":
+      ctx.rect((w - w * p) / 2, (h - h * p) / 2, w * p, h * p);
+      break;
+    case "radial":
+      ctx.arc(w / 2, h / 2, (p * Math.hypot(w, h)) / 2, 0, Math.PI * 2);
+      break;
+    case "left-to-right":
+    default:
+      ctx.rect(0, 0, w * p, h);
+      break;
+  }
+  ctx.clip();
+}
+
+/**
+ * per-layer filter(§A6) を現在の ctx.filter に結合適用（ambient/anim の filter を上書きせず連結）。
+ * drawLayerContentInBox の前に呼ぶこと。
+ */
+function applyLayerFilter(ctx: CanvasRenderingContext2D, layer: Layer): void {
+  const css = computeLayerFilterCss(layer, FINAL_W / 360);
+  if (!css) return;
+  const cur = ctx.filter && ctx.filter !== "none" ? ctx.filter + " " : "";
+  ctx.filter = cur + css;
+}
+
 async function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
@@ -368,8 +484,9 @@ async function drawLayer(
   videoFrameSources?: Map<string, CanvasImageSource>,
   animAtTimeSec?: number,
 ): Promise<void> {
-  // effect レイヤーは pixel を出力しない（最終合成段階で画面全体に適用する）
-  if (layer.type === "effect") return;
+  // effect レイヤー: 全画面後処理系（effectKind）は pixel を出さず合成段で適用するためスキップ。
+  // 描画系（layer.effect = speedlines/spotlight・§B）はこの層で領域に描くので通常フローに通す。
+  if (layer.type === "effect" && !layer.effect) return;
 
   const w = (layer.width / 100) * FINAL_W;
   const h = (layer.height / 100) * FINAL_H;
@@ -420,12 +537,14 @@ async function drawLayer(
   if (flipDeg !== 0) {
     if (motion) applyMotion(ctx, motion, w, h);
     if (anim) applyCanvasAnim(ctx, anim, w, h);
+    applyLayerFilter(ctx, layer); // §A6: warp 像に glow/blur/shadow を適用
     const tw = Math.max(1, Math.ceil(w));
     const th = Math.max(1, Math.ceil(h));
     const temp = new OffscreenCanvas(tw, th);
     const tctx = temp.getContext("2d") as CanvasRenderingContext2D | null;
     if (tctx) {
       if (!noClip) applyShapeClip(tctx, layer, w, h);
+      applyRevealClip(tctx, layer, w, h, animAtTimeSec);
       await drawLayerContentInBox(
         tctx,
         layer,
@@ -450,28 +569,59 @@ async function drawLayer(
     return;
   }
 
-  // 1) preview の outer overflow:hidden 相当 = 箱の矩形クリップ（transform の外側で固定）
-  if (!noClip) {
-    ctx.beginPath();
-    ctx.rect(0, 0, w, h);
-    ctx.clip();
+  const filterCss = computeLayerFilterCss(layer, FINAL_W / 360);
+  if (filterCss) {
+    // §A6: glow/shadow は要素の外側へ広がるため、箱クリップ後に描くと切れてしまう。
+    // 中身を一旦オフスクリーンに（形状/reveal クリップ込みで）描き、箱の矩形クリップは掛けずに
+    // ctx.filter 付きで本キャンバスへ合成 → 影/発光が箱の外へ出られる（CSS filter と同じ挙動）。
+    if (motion) applyMotion(ctx, motion, w, h);
+    if (anim) applyCanvasAnim(ctx, anim, w, h);
+    const tw = Math.max(1, Math.ceil(w));
+    const th = Math.max(1, Math.ceil(h));
+    const temp = new OffscreenCanvas(tw, th);
+    const tctx = temp.getContext("2d") as CanvasRenderingContext2D | null;
+    if (tctx) {
+      if (!noClip) applyShapeClip(tctx, layer, w, h);
+      applyRevealClip(tctx, layer, w, h, animAtTimeSec);
+      await drawLayerContentInBox(
+        tctx,
+        layer,
+        w,
+        h,
+        resolveSrc,
+        videoFrameSources,
+        animAtTimeSec,
+      );
+      // ambient/anim の ctx.filter に layer filter を連結し、合成 blit に適用
+      applyLayerFilter(ctx, layer);
+      ctx.drawImage(temp, 0, 0, tw, th);
+    }
+  } else {
+    // 1) preview の outer overflow:hidden 相当 = 箱の矩形クリップ（transform の外側で固定）
+    if (!noClip) {
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      ctx.clip();
+    }
+    // 2) inner transform（motion → 入退場/ambient）。矩形クリップの内側なので箱を越えない
+    if (motion) applyMotion(ctx, motion, w, h);
+    if (anim) applyCanvasAnim(ctx, anim, w, h);
+    // 3) preview の inner borderRadius 相当 = 形状クリップ（transform と一緒に動く）
+    if (!noClip) {
+      applyShapeClip(ctx, layer, w, h);
+    }
+    // 3.5) reveal(§A4) クリップ（形状クリップの内側でさらに方向ワイプ）
+    applyRevealClip(ctx, layer, w, h, animAtTimeSec);
+    await drawLayerContentInBox(
+      ctx,
+      layer,
+      w,
+      h,
+      resolveSrc,
+      videoFrameSources,
+      animAtTimeSec,
+    );
   }
-  // 2) inner transform（motion → 入退場/ambient）。矩形クリップの内側なので箱を越えない
-  if (motion) applyMotion(ctx, motion, w, h);
-  if (anim) applyCanvasAnim(ctx, anim, w, h);
-  // 3) preview の inner borderRadius 相当 = 形状クリップ（transform と一緒に動く）
-  if (!noClip) {
-    applyShapeClip(ctx, layer, w, h);
-  }
-  await drawLayerContentInBox(
-    ctx,
-    layer,
-    w,
-    h,
-    resolveSrc,
-    videoFrameSources,
-    animAtTimeSec,
-  );
 
   ctx.restore();
 
@@ -606,6 +756,21 @@ async function drawLayerContentInBox(
           drawAnimatedTextFrame(ctx, layer, w, h, animAtTimeSec);
         } else {
           drawText(ctx, layer, w, h);
+        }
+        break;
+      case "effect":
+        // §B 描画系 effect（speedlines/spotlight）。canvas は FINAL 解像度なので pxScale=FINAL_W/360。
+        if (layer.effect === "speedlines") {
+          drawSpeedlines(
+            ctx,
+            layer.effectParams ?? {},
+            w,
+            h,
+            FINAL_W / 360,
+            animAtTimeSec ?? 0,
+          );
+        } else if (layer.effect === "spotlight") {
+          drawSpotlight(ctx, layer.effectParams ?? {}, w, h, animAtTimeSec ?? 0);
         }
         break;
     }

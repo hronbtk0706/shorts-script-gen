@@ -230,41 +230,55 @@ export function computeCanvasAnim(
   const ambient = layer.ambientAnimation ?? "none";
   if (ambient !== "none" && t >= layer.startSec && t < layer.endSec) {
     const k = Math.max(0, Math.min(2, layer.ambientIntensity ?? 1));
+    // ambientSpeed（§7・新規・既定1）: 全 ambient の周期時間に乗算（速度制御）。
+    // preview computeLayerAmbientStyle と同じく tp = t * speed を使う。
+    const sp = layer.ambientSpeed ?? 1;
+    const tp = t * sp;
     switch (ambient) {
       case "pulse": {
-        const s = 1 + 0.05 * k * Math.sin(t * Math.PI * 2);
+        const s = 1 + 0.05 * k * Math.sin(tp * Math.PI * 2);
         sx *= s;
         sy *= s;
         break;
       }
       case "shake": {
         // 絶対 px 振幅は design(360) 基準 → 描画解像度へ pxScale 換算
-        tx += Math.sin(t * 30) * 2 * k * pxScale;
-        ty += Math.cos(t * 33) * 1.5 * k * pxScale;
+        tx += Math.sin(tp * 30) * 2 * k * pxScale;
+        ty += Math.cos(tp * 33) * 1.5 * k * pxScale;
         break;
       }
       case "wiggle": {
-        rot += (Math.sin(t * Math.PI * 2) * 2 * k * Math.PI) / 180;
+        rot += (Math.sin(tp * Math.PI * 2) * 2 * k * Math.PI) / 180;
         break;
       }
       case "bounce": {
-        ty += -Math.abs(Math.sin(t * Math.PI * 2)) * 4 * k * pxScale;
+        ty += -Math.abs(Math.sin(tp * Math.PI * 2)) * 4 * k * pxScale;
         break;
       }
       case "blink": {
-        opacity *= Math.sin(t * Math.PI * 4) > 0 ? 1 : 0.3 + 0.7 * (1 - k);
+        opacity *= Math.sin(tp * Math.PI * 4) > 0 ? 1 : 0.3 + 0.7 * (1 - k);
         break;
       }
       case "float": {
-        ty += Math.sin(t * Math.PI) * 3 * k * pxScale;
+        ty += Math.sin(tp * Math.PI) * 3 * k * pxScale;
+        break;
+      }
+      case "spin": {
+        // 一定速度で回転（§7）。90°/s を基準に intensity(k)・speed(sp) で倍率。rot はラジアン。
+        rot += (tp * 90 * k * Math.PI) / 180;
+        break;
+      }
+      case "drift": {
+        // ゆっくり横へ漂う（§7）。±6px·k、speed1 で周期4s。
+        tx += Math.sin(tp * Math.PI * 0.5) * 6 * k * pxScale;
         break;
       }
       case "rainbow": {
-        hueDeg = (t * 60) % 360;
+        hueDeg = (tp * 60) % 360;
         break;
       }
       case "glow-pulse": {
-        glowBlur = (4 + Math.sin(t * Math.PI * 2) * 4 * k) * pxScale;
+        glowBlur = (4 + Math.sin(tp * Math.PI * 2) * 4 * k) * pxScale;
         glowColor = "rgba(255,230,0,0.9)";
         break;
       }
