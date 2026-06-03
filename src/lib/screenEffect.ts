@@ -252,7 +252,13 @@ export interface SnapshotTransition {
   ts: number;
   /** 窓終了時刻（= 後シーンのスナップ時刻）。 */
   te: number;
-  style: "wipe" | "push" | "dissolve";
+  style:
+    | "wipe"
+    | "push"
+    | "dissolve"
+    | "glitch"
+    | "circle-wipe"
+    | "blinds";
   /** 窓内 0..1（前→後の遷移度）。 */
   progress: number;
   direction: "left-to-right" | "right-to-left" | "up" | "down";
@@ -267,10 +273,16 @@ export function computeSnapshotTransition(
   t: number,
 ): SnapshotTransition | null {
   if (!transitions) return null;
+  const SNAPSHOT_STYLES = [
+    "wipe",
+    "push",
+    "dissolve",
+    "glitch",
+    "circle-wipe",
+    "blinds",
+  ];
   for (const tr of transitions) {
-    if (tr.style !== "wipe" && tr.style !== "push" && tr.style !== "dissolve") {
-      continue;
-    }
+    if (!SNAPSHOT_STYLES.includes(tr.style)) continue;
     const dur = Math.max(0.05, tr.duration ?? 0.5);
     const half = dur / 2;
     if (t < tr.atSec - half || t > tr.atSec + half) continue;
@@ -278,7 +290,7 @@ export function computeSnapshotTransition(
       atSec: tr.atSec,
       ts: tr.atSec - half,
       te: tr.atSec + half,
-      style: tr.style,
+      style: tr.style as SnapshotTransition["style"],
       progress: Math.max(0, Math.min(1, (t - (tr.atSec - half)) / dur)),
       direction: tr.direction ?? "left-to-right",
     };
@@ -331,6 +343,62 @@ export function composeSnapshotTransition(
     }
     ctx.drawImage(cur, cdx, cdy);
     ctx.drawImage(prev, pdx, pdy);
+    return;
+  }
+  if (s.style === "circle-wipe") {
+    // 中心から円が広がって後シーンが現れる
+    ctx.drawImage(prev, 0, 0);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(w / 2, h / 2, (p * Math.hypot(w, h)) / 2, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(cur, 0, 0);
+    ctx.restore();
+    return;
+  }
+  if (s.style === "blinds") {
+    // 複数の横帯が同時に開いて後シーンが現れる
+    ctx.drawImage(prev, 0, 0);
+    ctx.save();
+    const n = 12;
+    const bandH = h / n;
+    ctx.beginPath();
+    for (let k = 0; k < n; k++) ctx.rect(0, k * bandH, w, bandH * p);
+    ctx.clip();
+    ctx.drawImage(cur, 0, 0);
+    ctx.restore();
+    return;
+  }
+  if (s.style === "glitch") {
+    // 中盤でグリッチ最大。横スライスをランダムにずらして prev↔cur を混ぜる
+    const base = p < 0.5 ? prev : cur;
+    const other = p < 0.5 ? cur : prev;
+    ctx.drawImage(base, 0, 0);
+    const intensity = 1 - Math.abs(p - 0.5) * 2; // 0→1→0
+    if (intensity > 0.05) {
+      const slices = 14;
+      const sliceH = h / slices;
+      const phase = Math.floor(p * 24); // コマ送り
+      for (let k = 0; k < slices; k++) {
+        const r =
+          Math.abs(Math.sin((k + 1) * 12.9898 + phase * 78.233) * 43758.5453) %
+          1;
+        if (r < intensity * 0.8) {
+          const dx = (r - 0.5) * w * 0.18 * intensity;
+          ctx.drawImage(
+            other,
+            0,
+            k * sliceH,
+            w,
+            sliceH,
+            dx,
+            k * sliceH,
+            w,
+            sliceH,
+          );
+        }
+      }
+    }
     return;
   }
   // wipe(slide-in): 前シーンを下に敷き、後シーンを画面端から境界まで「中身ごと」流し込む。

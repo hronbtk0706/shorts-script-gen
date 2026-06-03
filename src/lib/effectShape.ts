@@ -188,10 +188,58 @@ const CONFETTI_PALETTE = [
   "#FF8C42",
 ];
 
+const HEART_PALETTE = ["#FF5C8A", "#FF3D6E", "#FF8FB3", "#E5484D"];
+
+/** ハート形のパス（原点中心・サイズ s）。 */
+function heartPath(ctx: CanvasRenderingContext2D, s: number): void {
+  const k = s / 16;
+  ctx.beginPath();
+  ctx.moveTo(0, 5 * k);
+  ctx.bezierCurveTo(-1 * k, 1 * k, -8 * k, -1 * k, -8 * k, -6 * k);
+  ctx.bezierCurveTo(-8 * k, -11 * k, -2 * k, -11 * k, 0, -6 * k);
+  ctx.bezierCurveTo(2 * k, -11 * k, 8 * k, -11 * k, 8 * k, -6 * k);
+  ctx.bezierCurveTo(8 * k, -1 * k, 1 * k, 1 * k, 0, 5 * k);
+  ctx.closePath();
+}
+
+/** 5 点星のパス（原点中心・外半径 r）。 */
+function starPath(ctx: CanvasRenderingContext2D, r: number): void {
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+    const a2 = a + Math.PI / 5;
+    if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    ctx.lineTo(Math.cos(a2) * r * 0.45, Math.sin(a2) * r * 0.45);
+  }
+  ctx.closePath();
+}
+
+/** hex 色を amt(>0:明 / <0:暗) に寄せた rgb 文字列。解釈不能はそのまま返す。 */
+function shade(hex: string, amt: number): string {
+  let hh = hex.trim().replace(/^#/, "");
+  if (hh.length === 3) {
+    hh = hh
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const r = parseInt(hh.slice(0, 2), 16);
+  const g = parseInt(hh.slice(2, 4), 16);
+  const b = parseInt(hh.slice(4, 6), 16);
+  if ([r, g, b].some(Number.isNaN)) return hex;
+  const tgt = amt > 0 ? 255 : 0;
+  const k = Math.min(1, Math.abs(amt));
+  return `rgb(${Math.round(r + (tgt - r) * k)},${Math.round(
+    g + (tgt - g) * k,
+  )},${Math.round(b + (tgt - b) * k)})`;
+}
+
 /**
  * §D particles: 降りもの・紙吹雪・きらめき・マネーレイン・塵。
  * 時刻 t から各粒子の状態を決定論計算して描く（ステートレス＝preview=export 一致・スクラブ対応）。
  * 仕様どおり count 上限で生成停止（リサイクルしない）。スプライト未指定は図形。
+ * 質感: 遠近 depth（手前=大きく濃い / 奥=小さく薄い）・発光グロー・グラデ光沢で安っぽさを回避。
  */
 const frac = (x: number): number => x - Math.floor(x);
 
@@ -235,61 +283,147 @@ export function drawParticles(
       baseX +
       wind * 40 * prog * pxScale +
       Math.sin(t * swayFreq + r2 * 6.283) * amp;
-    const sz = (sizeRange[0] + r4 * (sizeRange[1] - sizeRange[0])) * pxScale;
+    const szBase = (sizeRange[0] + r4 * (sizeRange[1] - sizeRange[0])) * pxScale;
+    // 遠近感: depth 小=奥(小さく薄い) / 大=手前(大きく濃い)
+    const depth = rng(i * 17 + 6);
+    const sz = szBase * (0.62 + depth * 0.78);
+    const depthA = 0.45 + depth * 0.55;
 
     if (kind === "confetti" || kind === "money") {
-      // 回転は粒子ごとに正/負・速さもバラす（全部同方向を回避）
       const spin = (r3 < 0.5 ? -1 : 1) * (1 + r1 * 4);
       const rot = t * spin + r2 * 6.283;
-      // 立体的な翻り: 一軸を cos で潰して紙がひらひら裏返るのを再現（|flip|=幅, 符号=裏表）
+      // 立体的な翻り: 一軸を cos で潰して紙がひらひら裏返る
       const flip = Math.cos(t * (2.2 + r4 * 3.5) + r1 * 6.283);
-      const back = flip < 0; // 裏面は少し暗く
+      const back = flip < 0;
+      const base =
+        kind === "money"
+          ? p.color ?? (r2 > 0.5 ? "#3FA34D" : "#2E7D32")
+          : p.color ?? CONFETTI_PALETTE[i % CONFETTI_PALETTE.length];
+      const ww = kind === "money" ? sz * 1.9 : r4 > 0.5 ? sz : sz * 0.6;
+      const hh = kind === "money" ? sz * 0.92 : r4 > 0.5 ? sz * 0.6 : sz;
       ctx.save();
+      ctx.globalAlpha = depthA;
       ctx.translate(x, y);
       ctx.rotate(rot);
       ctx.scale(1, Math.max(0.04, Math.abs(flip)));
+      // 上明→下暗のグラデで光沢・立体感
+      const g = ctx.createLinearGradient(0, -hh / 2, 0, hh / 2);
+      g.addColorStop(0, shade(base, 0.34));
+      g.addColorStop(1, shade(base, -0.22));
+      ctx.fillStyle = g;
+      ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
       if (kind === "money") {
-        ctx.fillStyle = p.color ?? (back ? "#256B2E" : r2 > 0.5 ? "#3FA34D" : "#2E7D32");
-        const ww = sz * 1.9;
-        const hh = sz * 0.92;
-        ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
         ctx.fillStyle = "rgba(255,255,255,0.35)";
-        ctx.fillRect(-ww / 2, -hh * 0.12, ww, hh * 0.24); // 札の帯
-      } else {
-        const col = p.color ?? CONFETTI_PALETTE[i % CONFETTI_PALETTE.length];
-        ctx.fillStyle = col;
-        // たまに縦長/横長にして向きの多様性を出す
-        const ww = r4 > 0.5 ? sz : sz * 0.6;
-        const hh = r4 > 0.5 ? sz * 0.6 : sz;
-        ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
-        if (back) {
-          // 裏面: 黒を薄く重ねて陰影（立体感）
-          ctx.fillStyle = "rgba(0,0,0,0.28)";
-          ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
-        }
+        ctx.fillRect(-ww / 2, -hh * 0.12, ww, hh * 0.24);
       }
+      if (back) {
+        ctx.fillStyle = "rgba(0,0,0,0.3)"; // 裏面の陰
+        ctx.fillRect(-ww / 2, -hh / 2, ww, hh);
+      }
+      ctx.restore();
+    } else if (kind === "heart" || kind === "star") {
+      const rot = Math.sin(t * (0.8 + r3 * 1.5) + r1 * 6.283) * 0.5;
+      const base =
+        kind === "heart"
+          ? p.color ?? HEART_PALETTE[i % HEART_PALETTE.length]
+          : p.color ?? "#FFD60A";
+      ctx.save();
+      ctx.globalAlpha = depthA;
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.shadowColor = base; // 発光グロー
+      ctx.shadowBlur = sz * 0.7;
+      if (kind === "heart") heartPath(ctx, sz);
+      else starPath(ctx, sz * 0.6);
+      const g = ctx.createLinearGradient(0, -sz / 2, 0, sz / 2);
+      g.addColorStop(0, shade(base, 0.4));
+      g.addColorStop(1, shade(base, -0.12));
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.restore();
+    } else if (kind === "bubble") {
+      const rr = sz * 0.5;
+      ctx.save();
+      ctx.globalAlpha = depthA;
+      // 半透明の球（中心ハイライト→縁色）
+      const g = ctx.createRadialGradient(
+        x - rr * 0.3,
+        y - rr * 0.3,
+        rr * 0.1,
+        x,
+        y,
+        rr,
+      );
+      g.addColorStop(0, "rgba(255,255,255,0.55)");
+      g.addColorStop(0.65, "rgba(190,233,255,0.10)");
+      g.addColorStop(1, "rgba(150,205,255,0.30)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, rr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.5 * depthA;
+      ctx.strokeStyle = "rgba(220,245,255,0.7)";
+      ctx.lineWidth = Math.max(1, sz * 0.05);
+      ctx.stroke();
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.beginPath();
+      ctx.arc(x - rr * 0.35, y - rr * 0.35, rr * 0.13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (kind === "spark") {
+      const tw = 0.3 + 0.7 * Math.abs(Math.sin(t * (7 + r2 * 6) + r1 * 6.283));
+      const base = p.color ?? "#FFE38A";
+      ctx.save();
+      ctx.globalAlpha = tw * depthA;
+      ctx.translate(x, y);
+      ctx.rotate(r1 * 6.283);
+      ctx.shadowColor = base; // 強い発光
+      ctx.shadowBlur = sz * 1.3;
+      ctx.fillStyle = base;
+      ctx.beginPath();
+      ctx.moveTo(0, -sz * 0.6);
+      ctx.lineTo(sz * 0.12, 0);
+      ctx.lineTo(0, sz * 0.6);
+      ctx.lineTo(-sz * 0.12, 0);
+      ctx.closePath();
+      ctx.moveTo(-sz * 0.6, 0);
+      ctx.lineTo(0, sz * 0.12);
+      ctx.lineTo(sz * 0.6, 0);
+      ctx.lineTo(0, -sz * 0.12);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = "#FFFFFF"; // 明るいコア
+      ctx.beginPath();
+      ctx.arc(0, 0, sz * 0.12, 0, Math.PI * 2);
+      ctx.fill();
       ctx.restore();
     } else if (kind === "sparkle") {
       const tw = 0.3 + 0.7 * Math.abs(Math.sin(t * (4 + r2 * 5) + r1 * 6.283));
+      const base = p.color ?? "#FFF3B0";
       ctx.save();
-      ctx.globalAlpha = tw;
-      ctx.fillStyle = p.color ?? "#FFF3B0";
+      ctx.globalAlpha = tw * depthA;
+      ctx.fillStyle = base;
+      ctx.shadowColor = base;
+      ctx.shadowBlur = sz * 0.8;
       ctx.fillRect(x - sz / 2, y - sz * 0.1, sz, sz * 0.2);
       ctx.fillRect(x - sz * 0.1, y - sz / 2, sz * 0.2, sz);
       ctx.restore();
     } else if (kind === "dust") {
       ctx.save();
-      ctx.globalAlpha = 0.2 + r3 * 0.3;
+      ctx.globalAlpha = (0.18 + r3 * 0.28) * depthA;
       ctx.fillStyle = p.color ?? "#FFFFFF";
       ctx.beginPath();
       ctx.arc(x, y, sz * 0.35, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     } else {
-      // fall（雪/雨の粒）
+      // fall（雪の粒）柔らかく発光
       ctx.save();
-      ctx.globalAlpha = 0.85;
+      ctx.globalAlpha = 0.85 * depthA;
       ctx.fillStyle = p.color ?? "#FFFFFF";
+      ctx.shadowColor = "rgba(255,255,255,0.85)";
+      ctx.shadowBlur = sz * 0.5;
       ctx.beginPath();
       ctx.arc(x, y, sz * 0.4, 0, Math.PI * 2);
       ctx.fill();

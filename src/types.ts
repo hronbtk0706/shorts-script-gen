@@ -289,7 +289,16 @@ export interface DrawnEffectParams {
   speed?: number;
   // ---- particles 用（§D）----
   /** particles の種類。 */
-  kind?: "fall" | "confetti" | "sparkle" | "money" | "dust";
+  kind?:
+    | "fall"
+    | "confetti"
+    | "sparkle"
+    | "money"
+    | "dust"
+    | "heart"
+    | "star"
+    | "bubble"
+    | "spark";
   /** particles: 生成レート（個/秒）。 */
   rate?: number;
   /** particles: 生成総数の上限（必須級・上限到達で生成停止）。 */
@@ -671,7 +680,10 @@ export type TransitionStyle =
   | "wipe"
   | "push"
   | "zoom"
-  | "dissolve";
+  | "dissolve"
+  | "glitch"
+  | "circle-wipe"
+  | "blinds";
 
 export interface TransitionSpec {
   atSec: number;
