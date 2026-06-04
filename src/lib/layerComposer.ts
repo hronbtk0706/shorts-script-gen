@@ -18,7 +18,13 @@ import {
 } from "./effectShape";
 import { resolveDynamicText } from "./counterText";
 import { bubbleFullPath } from "./bubble";
-import { computeMarker, isMarkerShape, markerColor } from "./markerShape";
+import {
+  computeMarker,
+  hashSeed,
+  isMarkerShape,
+  markerColor,
+  mulberry32,
+} from "./markerShape";
 import {
   computeHandwrite,
   hasHandwrite,
@@ -1261,6 +1267,7 @@ function drawHandwriteShape(
   // --- インクストローク ---
   const lineW =
     (layer.handwrite?.strokeWidth ?? (layer.fontSize ?? 48) * 0.07) * pxScale;
+  const chalk = tip === "chalk";
   ctx.strokeStyle = ink;
   ctx.lineWidth = Math.max(1, lineW);
   ctx.lineCap = "round";
@@ -1277,10 +1284,15 @@ function drawHandwriteShape(
       }
       continue;
     }
-    ctx.beginPath();
-    ctx.moveTo(stroke[0].x, stroke[0].y);
-    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
-    ctx.stroke();
+    if (chalk) {
+      // チョーク質感（ザラつき＋かすれ）。位置シードで毎フレーム安定。
+      drawChalkStroke(ctx, stroke, lineW, ink);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(stroke[0].x, stroke[0].y);
+      for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+      ctx.stroke();
+    }
   }
   ctx.globalAlpha = 1;
 
@@ -1300,11 +1312,106 @@ function drawHandwriteShape(
     }
   }
 
-  // --- ペン先 ---
+  // --- ペン先 ＋ チョーク粉落ち ---
   if (render.penTip) {
     drawPenTip(ctx, render.penTip, tip, ink, (layer.fontSize ?? 48) * pxScale);
+    if (chalk) {
+      drawChalkDust(
+        ctx,
+        render.penTip,
+        animAtTimeSec ?? 0,
+        ink,
+        (layer.fontSize ?? 48) * pxScale,
+      );
+    }
   }
 
+  ctx.restore();
+}
+
+const _frac = (x: number): number => x - Math.floor(x);
+
+/**
+ * チョーク質感のストローク: 細い基本線＋パスに沿った粒子(grain)で「ザラつき・かすれ」を表現。
+ * grain は位置シード（量子化座標）で決めるので、ストロークが伸びても既出部はチラつかない。
+ */
+function drawChalkStroke(
+  ctx: CanvasRenderingContext2D,
+  pts: { x: number; y: number }[],
+  lineW: number,
+  color: string,
+): void {
+  const baseAlpha = ctx.globalAlpha;
+  // 基本のボディ（芯はやや残しつつ細め）
+  ctx.save();
+  ctx.globalAlpha = baseAlpha * 0.62;
+  ctx.lineWidth = lineW * 0.82;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.stroke();
+  ctx.restore();
+  // grain 粒子
+  ctx.save();
+  ctx.fillStyle = color;
+  const step = Math.max(2, lineW * 0.45);
+  for (let i = 1; i < pts.length; i++) {
+    const ax = pts[i - 1].x;
+    const ay = pts[i - 1].y;
+    const bx = pts[i].x;
+    const by = pts[i].y;
+    const segLen = Math.hypot(bx - ax, by - ay) || 1;
+    const tx = (bx - ax) / segLen;
+    const ty = (by - ay) / segLen;
+    const nx = -ty;
+    const ny = tx;
+    const nSteps = Math.max(1, Math.floor(segLen / step));
+    for (let k = 0; k < nSteps; k++) {
+      const f = (k + 0.5) / nSteps;
+      const cx = ax + (bx - ax) * f;
+      const cy = ay + (by - ay) * f;
+      const rng = mulberry32(hashSeed(`${Math.round(cx)}_${Math.round(cy)}`));
+      for (let g = 0; g < 2; g++) {
+        if (rng() < 0.12) continue; // かすれ（粒の抜け）
+        const off = (rng() - 0.5) * lineW * 0.85; // 法線方向の散らばり
+        const along = (rng() - 0.5) * step; // 接線方向の散らばり
+        const r = lineW * (0.08 + rng() * 0.2);
+        ctx.globalAlpha = baseAlpha * (0.25 + rng() * 0.55);
+        ctx.beginPath();
+        ctx.arc(cx + nx * off + tx * along, cy + ny * off + ty * along, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/** チョーク粉落ち: ペン先から細かい粉が落ちて薄れて消える（時刻駆動・決定論）。 */
+function drawChalkDust(
+  ctx: CanvasRenderingContext2D,
+  tip: { x: number; y: number },
+  t: number,
+  color: string,
+  fontPx: number,
+): void {
+  const K = 9;
+  const fall = fontPx * 0.45;
+  ctx.save();
+  ctx.fillStyle = color;
+  for (let i = 0; i < K; i++) {
+    const rng = mulberry32(hashSeed(`dust${i}`));
+    const r1 = rng();
+    const r2 = rng();
+    const r3 = rng();
+    const phase = _frac(t * (1.3 + r1 * 0.8) + r1);
+    const x = tip.x + (r2 - 0.5) * fontPx * 0.16;
+    const y = tip.y + fontPx * 0.1 + phase * fall;
+    const r = Math.max(0.5, fontPx * 0.012 * (0.6 + r3));
+    ctx.globalAlpha = (1 - phase) * 0.45;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
