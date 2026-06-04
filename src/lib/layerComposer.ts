@@ -1447,7 +1447,15 @@ function drawPenTip(
   fontPx: number,
 ): void {
   const ang = -0.6; // 右上がりに持つ（書き方向には追従させない＝手の角度は一定）
-  const L = fontPx * 1.05; // 道具の長さ
+  // 道具ごとの長さ（チョークは短い棒、鉛筆は長め）
+  const L =
+    tip === "chalk"
+      ? fontPx * 0.55
+      : tip === "pencil"
+        ? fontPx * 1.25
+        : tip === "marker"
+          ? fontPx * 0.95
+          : fontPx * 1.0; // pen
   const W = fontPx * 0.17; // 太さ
   ctx.save();
   ctx.translate(tipPt.x, tipPt.y);
