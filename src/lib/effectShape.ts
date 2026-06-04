@@ -463,7 +463,7 @@ export function drawSteam(
   const oy = (center[1] / 100) * h;
   const color = p.color ?? "#FFFFFF";
   const speed = Math.max(0.1, p.speed ?? 1);
-  const spreadPx = (p.spread ?? 26) * pxScale;
+  const spreadPx = (p.spread ?? 16) * pxScale;
   const riseDist = p.rise != null ? p.rise * pxScale : h * 0.6;
   const sizeRange = p.sizeRange ?? [10, 26];
   const kind = p.kind; // "sparkle"/"dust" のみ特別扱い、他は柔らかい湯気
@@ -511,17 +511,23 @@ export function drawSteam(
       ctx.fill();
       ctx.restore();
     } else {
-      // 柔らかい湯気: 中心ほど濃く縁が透ける放射グラデの円
+      // 柔らかい湯気: 縦に伸びたソフトな塊（上ほど大きく薄れて立ち上る筋になる）。
+      // ふわっと連なって見えるよう縦長楕円＋低 alpha で重ね描き、傾きは進行方向に少し倒す。
       const rr = sz * 0.5;
+      const rx = rr * (0.55 + 0.1 * r4); // 横は細め
+      const ry = rr * (1.5 + 0.6 * prog); // 縦長・上昇で伸びる
+      const tilt = sway * 0.012; // 揺れに合わせてわずかに傾ける
       ctx.save();
-      ctx.globalAlpha = alpha * 0.5;
-      const g = ctx.createRadialGradient(x, y, rr * 0.1, x, y, rr);
-      g.addColorStop(0, withAlpha(color, 0.85));
-      g.addColorStop(0.6, withAlpha(color, 0.28));
+      ctx.globalAlpha = alpha * 0.42;
+      ctx.translate(x, y);
+      ctx.rotate(tilt);
+      const g = ctx.createRadialGradient(0, 0, rr * 0.05, 0, 0, ry);
+      g.addColorStop(0, withAlpha(color, 0.7));
+      g.addColorStop(0.55, withAlpha(color, 0.22));
       g.addColorStop(1, withAlpha(color, 0));
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(x, y, rr, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }

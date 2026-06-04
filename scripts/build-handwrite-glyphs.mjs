@@ -98,24 +98,41 @@ function buildAscii() {
     if (Number.isFinite(by)) baselineNorm = (by - yMin) / emHeight;
   }
 
+  // Hershey の width(送り) は実インク幅より狭く、そのまま使うと文字が重なる。
+  // 各グリフの実インク x 範囲を取り、min を 0 に寄せて「インク幅＋左右ベアリング」を送りにする。
+  const BEARING = 2.2; // 左右の余白（raw 単位・emHeight≈32 基準）
   const glyphs = {};
   for (const r of raw) {
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    for (const s of r.strokes)
+      for (const [x] of s) {
+        if (x < xMin) xMin = x;
+        if (x > xMax) xMax = x;
+      }
+    if (!Number.isFinite(xMin)) {
+      xMin = 0;
+      xMax = 0;
+    }
+    const shift = BEARING - xMin; // インク左端を BEARING に寄せる
     const flatStrokes = r.strokes.map((s) => {
       const out = [];
       for (const [x, y] of s) {
         out.push(
-          Math.round(((x - 0) / emHeight) * 1000) / 1000, // x はそのまま emHeight 正規化（左サイドベアリング維持）
+          Math.round(((x + shift) / emHeight) * 1000) / 1000,
           Math.round(((y - yMin) / emHeight) * 1000) / 1000,
         );
       }
       return out;
     });
+    const inkW = xMax - xMin;
+    const advance = (inkW + BEARING * 2) / emHeight; // 実インク幅＋左右ベアリング
     glyphs[r.cp] = {
-      advance: Math.round((r.width / emHeight) * 1000) / 1000,
+      advance: Math.round(advance * 1000) / 1000,
       strokes: flatStrokes,
     };
   }
-  // スペースは strokes 無し・advance のみ
+  // スペースは strokes 無し・advance のみ（Hershey の送りをそのまま）
   glyphs[32] = { advance: Math.round((spaceWidth / emHeight) * 1000) / 1000, strokes: [] };
 
   return {
