@@ -1,0 +1,82 @@
+{
+  "version": 2,
+  "id": "test-surfaces",
+  "name": "★テスト: 4サーフェス手書き（チョーク/鉛筆/マーカー/ペン）",
+  "createdAt": "2026-06-04T00:00:00.000Z",
+  "totalDuration": 8,
+  "aspect": "vertical",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#20222a",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 0,
+      "startSec": 0,
+      "endSec": 8
+    },
+    {
+      "id": "hw-blackboard",
+      "type": "comment",
+      "text": "化学反応",
+      "handwrite": { "order": "normal", "speed": 1 },
+      "surface": "blackboard",
+      "fontSize": 56,
+      "x": 8,
+      "y": 5,
+      "width": 84,
+      "height": 18,
+      "zIndex": 1,
+      "startSec": 0.3,
+      "endSec": 8
+    },
+    {
+      "id": "hw-notebook",
+      "type": "comment",
+      "text": "計算問題",
+      "handwrite": { "order": "normal", "speed": 1 },
+      "surface": "notebook",
+      "fontSize": 56,
+      "x": 8,
+      "y": 28,
+      "width": 84,
+      "height": 18,
+      "zIndex": 1,
+      "startSec": 0.45,
+      "endSec": 8
+    },
+    {
+      "id": "hw-whiteboard",
+      "type": "comment",
+      "text": "売上目標",
+      "handwrite": { "order": "normal", "speed": 1 },
+      "surface": "whiteboard",
+      "fontSize": 56,
+      "x": 8,
+      "y": 51,
+      "width": 84,
+      "height": 18,
+      "zIndex": 1,
+      "startSec": 0.6,
+      "endSec": 8
+    },
+    {
+      "id": "hw-none-pen",
+      "type": "comment",
+      "text": "重要事項",
+      "handwrite": { "order": "normal", "speed": 1 },
+      "surface": "none",
+      "fontSize": 56,
+      "x": 8,
+      "y": 74,
+      "width": 84,
+      "height": 18,
+      "zIndex": 1,
+      "startSec": 0.75,
+      "endSec": 8
+    }
+  ]
+}

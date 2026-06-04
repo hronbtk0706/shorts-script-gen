@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "id": "test-chalk-name",
+  "name": "★テスト: 黒板チョークで「信高裕碩」を書く",
+  "createdAt": "2026-06-04T00:00:00.000Z",
+  "totalDuration": 8,
+  "aspect": "vertical",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#15171a",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 0,
+      "startSec": 0,
+      "endSec": 8
+    },
+    {
+      "id": "chalk-title",
+      "type": "comment",
+      "text": "信高裕碩",
+      "handwrite": { "order": "normal", "speed": 1.1 },
+      "surface": "blackboard",
+      "fontSize": 54,
+      "x": 6,
+      "y": 33,
+      "width": 88,
+      "height": 26,
+      "zIndex": 1,
+      "startSec": 0.5,
+      "endSec": 8
+    }
+  ]
+}
