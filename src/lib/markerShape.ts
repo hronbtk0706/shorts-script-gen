@@ -227,40 +227,41 @@ export function computeMarker(
       const to = layer.markerTo ?? { x: 88, y: 12 };
       const a: Pt = { x: (from.x / 100) * w, y: (from.y / 100) * h };
       const b: Pt = { x: (to.x / 100) * w, y: (to.y / 100) * h };
-      // 終端を overshoot ぶん延長した点（線が markerTo を少し突き抜けてから収まる演出）。
       const overshoot = Math.max(0, Math.min(0.5, layer.markerOvershoot ?? 0.1));
       const bOver: Pt = {
         x: b.x + (b.x - a.x) * overshoot,
         y: b.y + (b.y - a.y) * overshoot,
       };
-      // 急加速イージング: expo-out（最初に一気に伸びる）。
+      // 方向・矢じり寸法を先に確定（線を矢じり根元で止めるのに使う）。
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const px = -uy;
+      const py = ux;
+      const head = layer.markerHead ?? "triangle";
+      const hd = Math.min(Math.max(len * 0.18, 14 * pxScale), 52 * pxScale);
+      const back = hd * 0.95;
+      const wide = hd * 0.5;
+      // 急加速イージング: expo-out。reach は b=1.0 / bOver=1+overshoot の単位。
       const ep = p >= 1 ? 1 : 1 - Math.pow(2, -10 * p);
-      // 伸長: reach は b=1.0 / bOver=1+overshoot の単位。前半で一気に b 付近、
-      // 0.82 以降に少しだけ bOver を超えて行き、p=1 で b に収束する。
       const reach =
         ep < 0.82
-          ? (ep / 0.82) // 行き（b まで一気）
-          : 1 + overshoot * (1 - (ep - 0.82) / 0.18); // 行き過ぎ→ p=1 で b へ収束
-      // full は a→bOver。b はその 1/(1+overshoot) の位置にあるので、reach をそれで割って
-      // truncate 進捗に変換する（静止時 reach=1 → tip=b。突き抜けない）。
-      const lineLen = reach / (1 + overshoot);
-      // サージはシャープに（jitter ごく控えめ）。
+          ? ep / 0.82
+          : 1 + overshoot * (1 - (ep - 0.82) / 0.18);
+      let lineLen = reach / (1 + overshoot); // 静止時 tip=b
+      // 矢じりを出すときは線を「矢じりの根元」で止める（半透明ヘッドを線が透けて
+      // 突き抜けて見えるのを防ぐ）。base は a→bOver 上で (len-back) の位置。
+      const showHead = head === "triangle" && ep >= 0.6;
+      if (showHead) {
+        const baseFrac = Math.max(0, (len - back) / (len * (1 + overshoot)));
+        lineLen = Math.min(lineLen, baseFrac);
+      }
       const full = jitterLine(a, bOver, amp * 0.1, 48, wob);
       const tr = truncate(full, lineLen);
       if (tr.length) strokes.push(tr);
-      // 三角ヘッド（突き刺さる）。既定 triangle、ep>=0.6 で出す。位置は a→b 方向の b。
-      const head = layer.markerHead ?? "triangle";
-      if (head === "triangle" && ep >= 0.6) {
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const ux = dx / len;
-        const uy = dy / len;
-        const px = -uy;
-        const py = ux;
-        const hd = Math.min(Math.max(len * 0.18, 14 * pxScale), 52 * pxScale);
-        const back = hd * 0.95;
-        const wide = hd * 0.55;
+      if (showHead) {
         arrowHead = [
           { x: b.x, y: b.y },
           { x: b.x - ux * back + px * wide, y: b.y - uy * back + py * wide },
