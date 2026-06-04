@@ -1415,7 +1415,30 @@ function drawChalkDust(
   ctx.restore();
 }
 
-/** ペン先（チョーク/ペン/マーカー/鉛筆）を penTip に描く。 */
+/** hex を明(+)/暗(-) に。書く道具の断面シェードに使う。 */
+function shadeHex(hex: string, amt: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  let r = (n >> 16) & 255;
+  let g = (n >> 8) & 255;
+  let b = n & 255;
+  if (amt >= 0) {
+    r += (255 - r) * amt;
+    g += (255 - g) * amt;
+    b += (255 - b) * amt;
+  } else {
+    r *= 1 + amt;
+    g *= 1 + amt;
+    b *= 1 + amt;
+  }
+  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+}
+
+/**
+ * 書いている道具（チョーク棒/ペン/マーカー/鉛筆）そのものを penTip に描く。
+ * 一定の持ち角（右上がり）で本体を傾け、書く先端を penTip に合わせる。
+ */
 function drawPenTip(
   ctx: CanvasRenderingContext2D,
   tipPt: { x: number; y: number; angle: number },
@@ -1423,48 +1446,118 @@ function drawPenTip(
   ink: string,
   fontPx: number,
 ): void {
-  const s = Math.max(2, fontPx * 0.16);
+  const ang = -0.6; // 右上がりに持つ（書き方向には追従させない＝手の角度は一定）
+  const L = fontPx * 1.05; // 道具の長さ
+  const W = fontPx * 0.17; // 太さ
   ctx.save();
   ctx.translate(tipPt.x, tipPt.y);
-  ctx.rotate(tipPt.angle);
+  ctx.rotate(ang);
+  // 影（本体の少し下に薄く）
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.strokeStyle = "#000";
+  ctx.lineCap = "round";
+  ctx.lineWidth = W * 1.05;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.6, W * 0.6);
+  ctx.lineTo(L, W * 0.6);
+  ctx.stroke();
+  ctx.restore();
+
+  const bodyGrad = (base: string): CanvasGradient => {
+    const g = ctx.createLinearGradient(0, -W / 2, 0, W / 2);
+    g.addColorStop(0, shadeHex(base, 0.3));
+    g.addColorStop(0.5, base);
+    g.addColorStop(1, shadeHex(base, -0.32));
+    return g;
+  };
+
   if (tip === "chalk") {
+    ctx.strokeStyle = bodyGrad(ink);
+    ctx.lineCap = "round";
+    ctx.lineWidth = W;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.45, 0);
+    ctx.lineTo(L, 0);
+    ctx.stroke();
+    // 書く先端（粉っぽい発光）
     ctx.shadowColor = ink;
-    ctx.shadowBlur = s * 0.8;
+    ctx.shadowBlur = W * 0.6;
     ctx.fillStyle = ink;
     ctx.beginPath();
-    ctx.arc(0, 0, s * 0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.beginPath();
-    ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2);
+    ctx.arc(0, 0, W * 0.34, 0, Math.PI * 2);
     ctx.fill();
   } else if (tip === "marker") {
-    ctx.fillStyle = ink;
+    // 本体（ink 色のキャップ）
+    ctx.strokeStyle = bodyGrad(ink);
+    ctx.lineCap = "round";
+    ctx.lineWidth = W * 1.2;
     ctx.beginPath();
-    ctx.ellipse(0, 0, s * 0.55, s * 0.38, 0, 0, Math.PI * 2);
+    ctx.moveTo(W * 0.7, 0);
+    ctx.lineTo(L, 0);
+    ctx.stroke();
+    // 首（灰）
+    ctx.strokeStyle = "#d0d0d0";
+    ctx.lineCap = "butt";
+    ctx.lineWidth = W * 0.85;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.4, 0);
+    ctx.lineTo(W * 0.72, 0);
+    ctx.stroke();
+    // チゼル先端
+    ctx.fillStyle = shadeHex(ink, -0.4);
+    ctx.beginPath();
+    ctx.moveTo(0, -W * 0.26);
+    ctx.lineTo(W * 0.42, -W * 0.42);
+    ctx.lineTo(W * 0.42, W * 0.42);
+    ctx.lineTo(0, W * 0.26);
+    ctx.closePath();
     ctx.fill();
   } else if (tip === "pencil") {
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = s * 0.25;
+    // 木胴（黄）
+    ctx.strokeStyle = bodyGrad("#EBB63E");
     ctx.lineCap = "round";
+    ctx.lineWidth = W;
     ctx.beginPath();
-    ctx.moveTo(-s * 0.6, -s * 0.3);
-    ctx.lineTo(0, 0);
+    ctx.moveTo(W * 0.95, 0);
+    ctx.lineTo(L, 0);
     ctx.stroke();
-    ctx.fillStyle = ink;
+    // 削りのテーパー（木肌）
+    ctx.fillStyle = "#D79B33";
     ctx.beginPath();
-    ctx.arc(0, 0, s * 0.18, 0, Math.PI * 2);
+    ctx.moveTo(W * 0.28, -W * 0.5);
+    ctx.lineTo(W * 0.95, -W * 0.5);
+    ctx.lineTo(W * 0.95, W * 0.5);
+    ctx.lineTo(W * 0.28, W * 0.5);
+    ctx.closePath();
     ctx.fill();
-  } else {
-    // pen: 涙形（先端が点）
-    ctx.fillStyle = ink;
+    // 黒鉛の先端
+    ctx.fillStyle = "#3a3a3a";
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(-s * 0.7, -s * 0.35);
-    ctx.lineTo(-s * 0.5, 0);
-    ctx.lineTo(-s * 0.7, s * 0.35);
+    ctx.lineTo(W * 0.3, -W * 0.34);
+    ctx.lineTo(W * 0.3, W * 0.34);
     ctx.closePath();
+    ctx.fill();
+  } else {
+    // pen: 濃い胴＋金属コーン＋ペン先(ink)
+    ctx.strokeStyle = bodyGrad("#2d2d34");
+    ctx.lineCap = "round";
+    ctx.lineWidth = W * 0.95;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.6, 0);
+    ctx.lineTo(L, 0);
+    ctx.stroke();
+    ctx.fillStyle = "#b9bcc4"; // 金属コーン
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(W * 0.62, -W * 0.4);
+    ctx.lineTo(W * 0.62, W * 0.4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = ink; // ペン先
+    ctx.beginPath();
+    ctx.arc(0, 0, W * 0.16, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();

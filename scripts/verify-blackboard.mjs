@@ -96,11 +96,27 @@ function render(text, p, fontSizeDesign) {
     }
     ctx.restore();
   }
+  function shadeHex(hex, amt){const m=/^#?([0-9a-fA-F]{6})$/.exec(hex.trim());if(!m)return hex;const n=parseInt(m[1],16);let r=(n>>16)&255,g=(n>>8)&255,b=n&255;if(amt>=0){r+=(255-r)*amt;g+=(255-g)*amt;b+=(255-b)*amt;}else{r*=1+amt;g*=1+amt;b*=1+amt;}return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;}
+  // layerComposer.drawPenTip(chalk) と同じ
+  function drawChalkStick(tip) {
+    const ang=-0.6, L=fontPx*1.05, Wd=fontPx*0.17;
+    ctx.save(); ctx.translate(tip.x, tip.y); ctx.rotate(ang);
+    ctx.save(); ctx.globalAlpha=0.16; ctx.strokeStyle="#000"; ctx.lineCap="round"; ctx.lineWidth=Wd*1.05;
+    ctx.beginPath(); ctx.moveTo(Wd*0.6,Wd*0.6); ctx.lineTo(L,Wd*0.6); ctx.stroke(); ctx.restore();
+    const grad=ctx.createLinearGradient(0,-Wd/2,0,Wd/2);
+    grad.addColorStop(0,shadeHex(ink,0.3)); grad.addColorStop(0.5,ink); grad.addColorStop(1,shadeHex(ink,-0.32));
+    ctx.strokeStyle=grad; ctx.lineCap="round"; ctx.lineWidth=Wd;
+    ctx.beginPath(); ctx.moveTo(Wd*0.45,0); ctx.lineTo(L,0); ctx.stroke();
+    ctx.shadowColor=ink; ctx.shadowBlur=Wd*0.6; ctx.fillStyle=ink;
+    ctx.beginPath(); ctx.arc(0,0,Wd*0.34,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
   for (let i = 0; i < drawCount && i < all.length; i++) drawChalkStroke(all[i]);
-  // 途中なら最後に描いた画の終端をペン先として粉を出す
+  // 途中なら最後に描いた画の終端をペン先として 粉＋チョーク棒 を描く
   if (p < 1 && drawCount > 0 && drawCount <= all.length) {
     const last = all[drawCount-1]; const tip = last[last.length-1];
-    drawChalkDust(tip, p * 5); // 適当な時刻
+    ctx.globalAlpha = 1; drawChalkDust(tip, p * 5);
+    ctx.globalAlpha = 1; drawChalkStick(tip);
   }
   return cv.toBuffer("image/png");
 }
