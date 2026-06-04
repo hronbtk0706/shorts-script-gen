@@ -196,7 +196,9 @@ export function computeHandwrite(
     | { kind: "sweep"; x: number; y: number; w: number; h: number; ch: string; len: number };
   const segs: Seg[] = [];
 
-  const jitterAmp = (layer.handwrite?.jitter ?? 0.5) * 1.2 * pxScale;
+  // 揺れ幅は固定 px ではなく fontPx 比例にする（小さい字で相対的に揺れすぎて「ぐにゃぐにゃ」に
+  // なるのを防ぐ）。既定は控えめ。jitter を上げると手書き感を強められる。
+  const jitterAmp = (layer.handwrite?.jitter ?? 0.3) * fontPx * 0.018;
   const rng = mulberry32(hashSeed(layer.id || "handwrite"));
 
   for (let li = 0; li < lines.length; li++) {

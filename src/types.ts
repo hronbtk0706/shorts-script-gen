@@ -93,7 +93,7 @@ export interface HandwriteSpec {
   speed?: number;
   /** ペン先表現（未指定は surface プリセットの既定）。 */
   tip?: HandwriteTip;
-  /** 手書きの揺れ 0..2（既定 0.5・字形が崩れない程度に控えめ）。 */
+  /** 手書きの揺れ 0..2（既定 0.3・fontPx 比例で字形が崩れない程度に控えめ）。 */
   jitter?: number;
   /** 線の太さ design(360) 基準 px（未指定 ≒ fontSize*0.07）。 */
   strokeWidth?: number;
