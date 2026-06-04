@@ -16,13 +16,20 @@
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
-import { mkdirSync, writeFileSync } from "fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "fs";
+import { gunzipSync } from "zlib";
 
 const require = createRequire(import.meta.url);
 const ht = require("hersheytext");
+const { svgPathProperties } = require("svg-path-properties");
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(__dirname, "..", "public", "handwrite");
+const CACHE_DIR = join(__dirname, ".cache");
+// KanjiVG 結合 XML（CC BY-SA 3.0）。cache に無ければ DL する。
+const KANJIVG_URL =
+  "https://github.com/KanjiVG/kanjivg/releases/download/r20250816/kanjivg-20250816.xml.gz";
+const KANJIVG_GZ = join(CACHE_DIR, "kanjivg.xml.gz");
 
 const FONT = "futural"; // Hershey single-stroke sans（ASCII 向き）
 
@@ -144,6 +151,83 @@ function buildAscii() {
   };
 }
 
+// ---- KanjiVG（漢字・かな）----
+
+/** svg path d を 0..1 正規化ポリラインへサンプリング（KanjiVG viewBox 109）。 */
+function samplePath(d) {
+  const props = new svgPathProperties(d);
+  const L = props.getTotalLength();
+  if (!(L > 0)) return null;
+  const n = Math.max(5, Math.min(40, Math.ceil(L / 3.2) + 1));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const pt = props.getPointAtLength((L * i) / (n - 1));
+    out.push(
+      Math.round((pt.x / 109) * 1000) / 1000,
+      Math.round((pt.y / 109) * 1000) / 1000,
+    );
+  }
+  return out;
+}
+
+/** codepoint → 出力シャードのファイル名（handwriteGlyphs.shardForCodepoint と一致させる）。 */
+function shardName(cp) {
+  if (cp >= 0x3040 && cp <= 0x30ff) return "kana.json";
+  if ((cp >= 0x3400 && cp <= 0x9fff) || (cp >= 0xf900 && cp <= 0xfaff)) {
+    return `kanji-${(cp >> 8).toString(16)}.json`;
+  }
+  return null; // 対象外
+}
+
+function buildKanjiVG() {
+  if (!existsSync(KANJIVG_GZ)) {
+    console.error(
+      `[build-handwrite-glyphs] KanjiVG cache 無し: ${KANJIVG_GZ}\n` +
+        `  先に DL してください: curl -sL "${KANJIVG_URL}" -o "${KANJIVG_GZ}"`,
+    );
+    return;
+  }
+  const xml = gunzipSync(readFileSync(KANJIVG_GZ)).toString("utf8");
+  // base エントリのみ（variant 接尾辞付き id は除外）
+  const kanjiRe = /<kanji id="kvg:kanji_([0-9a-fA-F]+)">([\s\S]*?)<\/kanji>/g;
+  const pathRe = /<path[^>]*\sd="([^"]+)"/g;
+  const shards = new Map(); // filename → glyphs{}
+  let count = 0;
+  let m;
+  while ((m = kanjiRe.exec(xml)) !== null) {
+    const cp = parseInt(m[1], 16);
+    const file = shardName(cp);
+    if (!file) continue;
+    const body = m[2];
+    const strokes = [];
+    let pm;
+    pathRe.lastIndex = 0;
+    while ((pm = pathRe.exec(body)) !== null) {
+      try {
+        const s = samplePath(pm[1]);
+        if (s && s.length >= 4) strokes.push(s);
+      } catch {
+        /* 壊れた path はスキップ */
+      }
+    }
+    if (strokes.length === 0) continue;
+    if (!shards.has(file)) shards.set(file, {});
+    shards.get(file)[cp] = { advance: 1, strokes };
+    count++;
+  }
+  for (const [file, glyphs] of shards) {
+    const json = {
+      format: "handwrite-glyphs-v1",
+      source: "KanjiVG (CC BY-SA 3.0)",
+      glyphs,
+    };
+    writeFileSync(join(OUT_DIR, file), JSON.stringify(json));
+  }
+  console.log(
+    `[build-handwrite-glyphs] wrote ${shards.size} KanjiVG shards, ${count} glyphs (漢字・かな)`,
+  );
+}
+
 function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   const ascii = buildAscii();
@@ -151,6 +235,7 @@ function main() {
   writeFileSync(path, JSON.stringify(ascii));
   const n = Object.keys(ascii.glyphs).length;
   console.log(`[build-handwrite-glyphs] wrote ${path} (${n} ASCII glyphs, emHeight=${ascii.emHeight}, baseline=${ascii.baselineNorm})`);
+  buildKanjiVG();
 }
 
 main();

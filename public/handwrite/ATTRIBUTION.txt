@@ -1,0 +1,20 @@
+手書き（筆順）テキスト機能の字形データ出典・ライセンス
+=========================================================
+
+■ 漢字・かな（kana.json / kanji-*.json）
+  KanjiVG  https://kanjivg.tagaini.net/  (https://github.com/KanjiVG/kanjivg)
+  © Ulrich Apel and the KanjiVG project
+  ライセンス: Creative Commons Attribution-Share Alike 3.0 (CC BY-SA 3.0)
+             https://creativecommons.org/licenses/by-sa/3.0/
+  本アプリは KanjiVG の SVG 筆順データを、各画をポリラインにサンプリングして
+  再配布しています（派生物）。CC BY-SA 3.0 に従い、本派生データも同ライセンスで提供します。
+  リリース: r20250816 (kanjivg-20250816.xml.gz)
+
+■ 英数記号（ascii.json）
+  Hershey Fonts (futural)
+  パブリックドメイン相当（米国国立標準技術研究所/Dr. Allen V. Hershey による）。
+
+注記: 動画として書き出した成果物（映像）自体は KanjiVG の派生物ではありません
+      （筆跡を描く道具として使用）。再配布が CC BY-SA の対象になるのは、本字形
+      データ（kana.json / kanji-*.json）そのものを取り出して配る場合です。
+      YouTube 概要欄等にクレジットを記載することを推奨します。

@@ -96,6 +96,12 @@ function loadShard(file: string): Promise<void> {
  */
 function shardForCodepoint(cp: number): string | null {
   if (cp >= 0x20 && cp <= 0x7e) return "ascii.json";
+  // かな（ひらがな・カタカナ）
+  if (cp >= 0x3040 && cp <= 0x30ff) return "kana.json";
+  // CJK 漢字（基本＋拡張A＋互換）。build-handwrite-glyphs.mjs の shardName と一致させる。
+  if ((cp >= 0x3400 && cp <= 0x9fff) || (cp >= 0xf900 && cp <= 0xfaff)) {
+    return `kanji-${(cp >> 8).toString(16)}.json`;
+  }
   return null;
 }
 

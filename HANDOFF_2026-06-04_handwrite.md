@@ -72,14 +72,19 @@ surface?: "none" | "blackboard" | "whiteboard" | "notebook"; // 既定 none
 
 ---
 
-## 4. Phase B（次ステップ・本 PR 外）— 全 KanjiVG 同梱
+## 4. Phase B（完了・2026-06-04）— 全 KanjiVG 同梱で日本語の本物の筆順
 
-- 全 KanjiVG（**CC BY-SA 3.0**）を取得 → `svg-path-properties` で画ごとサンプリング → codepoint シャード（gzip）→
-  `public/handwrite/`＋`index.json` 同梱。`handwriteGlyphs.ts` の `shardForCodepoint` にかな/漢字を割当てれば有効化。
-- **ライセンス（要対応）**: KanjiVG は **CC BY-SA 3.0**。同梱時は `public/handwrite/ATTRIBUTION.txt` ＋
-  アプリ内クレジット導線（既存 `AssetCredit`/概要欄）に **KanjiVG 表示が必須**、派生データも同ライセンス。
-  Hershey はパブリックドメイン（義務なし）。
-- ユーザー確定: 収録範囲は **全 KanjiVG**（漢字 6000+・かな）。
+- 全 KanjiVG（r20250816・**CC BY-SA 3.0**）の結合 XML を取得 → `svg-path-properties` で画ごとに
+  ポリラインサンプリング（viewBox 109 正規化）→ codepoint シャード化（`public/handwrite/kana.json`＋
+  `kanji-<cp>>8>.json` 86 シャード・**6,608 グリフ**・計約 13MB）。`scripts/build-handwrite-glyphs.mjs` で生成。
+- `handwriteGlyphs.ts` の `shardForCodepoint`: かな(3040-30FF)→kana.json、CJK(3400-9FFF,F900-FAFF)→
+  kanji-XX.json。未収録文字は char-sweep に自動フォールバック。
+- これで **日本語（漢字・かな）が一画ずつ正しい書き順で書かれる**（headless 検証済み「お金は紙きれになった」）。
+- **ライセンス**: `public/handwrite/ATTRIBUTION.txt` に KanjiVG CC BY-SA 表記を同梱。派生データ（kana/kanji json）も
+  同ライセンス。Hershey はパブリックドメイン。YouTube 概要欄等へのクレジット記載を推奨。
+- データ再生成: `npm run build:glyphs`（KanjiVG を `scripts/.cache/` に DL→キャッシュ。cache は .gitignore、
+  生成シャードは git 同梱）。
+- 残（任意）: アプリ内クレジット UI（既存 `AssetCredit`/概要欄導線）への KanjiVG 表示は未配線。
 
 ---
 

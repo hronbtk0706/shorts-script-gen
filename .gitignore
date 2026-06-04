@@ -32,3 +32,6 @@ templates/audio/
 # 動画生成セッションのキャッシュ
 sessions/
 
+
+# KanjiVG ダウンロードキャッシュ（生成シャードは public/handwrite に同梱するので不要）
+scripts/.cache/
