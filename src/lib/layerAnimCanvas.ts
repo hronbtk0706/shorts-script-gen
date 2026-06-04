@@ -176,6 +176,13 @@ export function computeCanvasAnim(
         // arcEnd の補間は drawArcShape 側で行う（shape:"arc" 専用）。
         // ここでは transform 無し / opacity 1 維持で「描かれていく」ように見せる。
         break;
+      case "flip-swap":
+        // ③ 値札フリップ: 縦に潰れて(scaleY 1→0)中央で 0、後半 0→1 で戻る。
+        // 中央(scaleY=0)で text→flipTo に差し替え（文字列は resolveDynamicText が担当）。
+        // p:0→0.5 で 1→0、0.5→1 で 0→1 ＝ scaleY = |p-0.5|*2（ease を通さず素直に潰す）。
+        // 原点は中央(originY=0.5)のまま。preview computeLayerAnimStyle と一致。
+        sy = Math.max(0.001, Math.abs(p - 0.5) * 2);
+        break;
     }
   }
 

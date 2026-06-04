@@ -28,6 +28,9 @@ import {
   strokeToPath,
 } from "../lib/markerShape";
 import { bubbleFullPath } from "../lib/bubble";
+import { resolveDynamicText } from "../lib/counterText";
+import { hasHandwrite } from "../lib/handwriteStroke";
+import { preloadHandwriteLayers } from "../lib/handwriteGlyphs";
 import {
   TEXT_DEFAULT_FONT_STACK,
   wrapTextLines,
@@ -144,6 +147,9 @@ export function TemplateCanvas({
   // rAF ループ用に最新の時刻/レイヤーを ref で保持（ループを再生成せず参照）
   const timeRef = useRef(currentTimeSec ?? 0);
   timeRef.current = currentTimeSec ?? 0;
+  // 手書き（筆順）の「停止/スクラブ中は全文表示」用に再生状態を ref で保持。
+  const isPlayingRef = useRef(isPlaying);
+  isPlayingRef.current = isPlaying;
   const layersRef = useRef(layers);
   layersRef.current = layers;
   const transitionsRef = useRef(transitions);
@@ -357,6 +363,8 @@ export function TemplateCanvas({
         applyAnim: true,
         transparent: false,
         videoFrameSources: frameSources.size > 0 ? frameSources : undefined,
+        // 停止/スクラブ中は手書きを全文表示（編集レイアウト安定）。再生中は時刻どおり書き進む。
+        staticHandwrite: !isPlayingRef.current,
       });
       octx.filter = "none";
       octx.restore();
@@ -476,6 +484,23 @@ export function TemplateCanvas({
     if (!showExport || isPlaying) return;
     void renderExportFrame();
   }, [showExport, isPlaying, currentTimeSec, layers, editingLayerId, renderExportFrame]);
+
+  // 手書き（筆順）字形データの先読み: handwrite レイヤーの本文が変わったら必要グリフを
+  // ロードし、揃ったら 1 度再合成（合成キャンバスがストロークを描けるようになる）。
+  const handwriteKey = layers
+    .filter((l) => l.handwrite)
+    .map((l) => l.text ?? "")
+    .join("");
+  useEffect(() => {
+    let cancelled = false;
+    void preloadHandwriteLayers(layersRef.current).then(() => {
+      if (!cancelled) void renderExportFrame();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handwriteKey, renderExportFrame]);
 
   return (
     <div
@@ -1245,6 +1270,9 @@ function renderLayerContent(
       );
     }
     case "comment":
+      // 手書き（筆順）は合成キャンバス（書き出し経路 drawHandwriteShape）が描く。
+      // DOM 側は描かず操作枠のみ（particles/speedlines と同じ）。二重実装を避け preview=export を保証。
+      if (hasHandwrite(layer)) return null;
       if (layer.bubble) {
         // 吹き出しモード: SVG で背景と枠を描画し、その上にテキストを重ねる。
         // padding は内側 renderAnimatedText が design 基準で 1 回適用するため、ここでは付けない
@@ -1275,6 +1303,7 @@ function renderLayerContent(
                 fontScale ?? 0.25,
                 widthPx,
                 heightPx,
+                isPlaying,
               )}
             </div>
           </div>
@@ -1286,6 +1315,7 @@ function renderLayerContent(
         fontScale ?? 0.25,
         widthPx,
         heightPx,
+        isPlaying,
       );
     case "audio":
       return null;
@@ -1461,9 +1491,10 @@ function MarkerShapeSvg({
     const raw = (currentTimeSec - layer.startSec) / entryDur;
     p = Math.max(0, Math.min(1, raw));
   }
-  const { strokes, arrowHead } = computeMarker(layer, w, h, p, fontScale);
+  const { strokes, arrowHead, flash } = computeMarker(layer, w, h, p, fontScale);
   const color = markerColor(layer);
   const lineW = (layer.markerWidth ?? 6) * fontScale;
+  const flashGradId = `surge-flash-${layer.id}`;
   return (
     <svg
       viewBox={`0 0 ${w} ${h}`}
@@ -1490,6 +1521,25 @@ function MarkerShapeSvg({
           fill={color}
           opacity={0.85}
         />
+      )}
+      {/* marker-surge の着弾フラッシュ（export drawMarkerShape と同じ放射グラデ） */}
+      {flash && flash.alpha > 0.001 && (
+        <>
+          <defs>
+            <radialGradient id={flashGradId} cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#ffffff" stopOpacity={0.95} />
+              <stop offset="40%" stopColor={color} stopOpacity={1} />
+              <stop offset="100%" stopColor="#ffffff" stopOpacity={0} />
+            </radialGradient>
+          </defs>
+          <circle
+            cx={flash.x}
+            cy={flash.y}
+            r={flash.r}
+            fill={`url(#${flashGradId})`}
+            opacity={Math.min(1, flash.alpha)}
+          />
+        </>
       )}
     </svg>
   );
@@ -1681,10 +1731,15 @@ export function renderAnimatedText(
   fontScale: number = 1,
   widthPx?: number,
   heightPx?: number,
+  // ① counter / ③ flip-swap の「停止時は最終値」を実現するための再生状態。
+  // 既定 false（サムネ等の静的呼び出しは最終値を表示）。本キャンバスは実 isPlaying を渡す。
+  isPlaying: boolean = false,
 ): React.ReactNode {
-  const text = layer.text ?? "テキスト";
-  const baseFontSize = Math.max(8, (layer.fontSize ?? 48) * fontScale);
   const localTime = currentTimeSec - layer.startSec;
+  // counter / flip-swap があれば表示文字列を毎フレーム差し替え（export と同一の resolveDynamicText）。
+  const dynamicText = resolveDynamicText(layer, localTime, isPlaying);
+  const text = dynamicText ?? layer.text ?? "テキスト";
+  const baseFontSize = Math.max(8, (layer.fontSize ?? 48) * fontScale);
   const layerDur = Math.max(0.1, layer.endSec - layer.startSec);
   const decoration = layer.textDecoration ?? "none";
   // highlight-bar / underline-sweep の縦位置（box px が分かるときのみ行位置基準に）
@@ -1785,7 +1840,9 @@ export function renderAnimatedText(
     // ズレる（C6）。export と同じ wrapTextLines で行を確定し、明示的な改行で描画する。
     const fontSizePx = (layer.fontSize ?? 48) * fontScale;
     const maxW = widthPx - 4 * fontScale * 2;
-    contentNode = previewWrapLines(layer, fontSizePx, maxW).join("\n");
+    // counter/flip の動的文字列も export(wrapTextLines)と同じ折り返しにするため text を差し替える。
+    const wrapLayer = dynamicText != null ? { ...layer, text } : layer;
+    contentNode = previewWrapLines(wrapLayer, fontSizePx, maxW).join("\n");
   } else {
     contentNode = text;
   }
@@ -2069,6 +2126,12 @@ export function computeLayerAnimStyle(
       case "arc-sweep":
         // ArcShapeSvg 側で arcEnd を時間補間するため、ここでは transform を触らない。
         // entry 中も opacity 1.0 維持で「描かれていく」ように見せる。
+        break;
+      case "flip-swap":
+        // ③ 値札フリップ: 縦に潰れて戻る。scaleY = |p-0.5|*2（中央で 0）。
+        // transform-origin は中央（既定）。export computeCanvasAnim の sy と一致。
+        // 文字列差し替え（text→flipTo）は resolveDynamicText が担当。
+        parts.push(`scaleY(${Math.max(0.001, Math.abs(p - 0.5) * 2)})`);
         break;
     }
   }

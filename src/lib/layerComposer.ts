@@ -10,9 +10,20 @@ import {
 } from "./animKeyframes";
 import { hasMotionPath, sampleMotionPath } from "./motionPath";
 import { computeLayerFilterCss } from "./layerFilter";
-import { drawSpeedlines, drawSpotlight, drawParticles } from "./effectShape";
+import {
+  drawSpeedlines,
+  drawSpotlight,
+  drawParticles,
+  drawSteam,
+} from "./effectShape";
+import { resolveDynamicText } from "./counterText";
 import { bubbleFullPath } from "./bubble";
 import { computeMarker, isMarkerShape, markerColor } from "./markerShape";
+import {
+  computeHandwrite,
+  hasHandwrite,
+  resolveSurface,
+} from "./handwriteStroke";
 import {
   computeCanvasAnim,
   applyCanvasAnim,
@@ -24,6 +35,10 @@ import {
 // デフォルトは旧テンプレ互換の縦 (1080x1920)。
 let FINAL_W = 1080;
 let FINAL_H = 1920;
+
+// 手書き（筆順）を全文表示で描くか。renderLayersOnContext 冒頭で opts から設定する
+// （preview 停止/スクラブ時のみ true。レンダリングは逐次なので module 変数で安全）。
+let staticHandwriteFlag = false;
 
 /**
  * 合成コマンドを呼ぶ前に、テンプレの出力解像度をセットする。
@@ -106,8 +121,12 @@ export async function renderLayersOnContext(
     /** true なら入退場アニメ等の動的変換を適用する (WebCodecs エクスポート用)。
      * 既存の PNG 焼き経路 (composeLayerContentPng) は false のまま使う。 */
     applyAnim?: boolean;
+    /** 手書き（筆順）を全文表示(p=1)で描く。preview が停止/スクラブ中に渡す
+     * （編集レイアウト安定用。実 export は渡さない＝時刻どおりに書き進む）。 */
+    staticHandwrite?: boolean;
   } = {},
 ): Promise<void> {
+  staticHandwriteFlag = opts.staticHandwrite === true;
   if (opts.transparent) {
     ctx.clearRect(0, 0, FINAL_W, FINAL_H);
   } else {
@@ -852,6 +871,11 @@ async function drawLayerContentInBox(
         }
         break;
       case "comment":
+        // 手書き（筆順）ライトオン。これがあれば通常テキスト描画の代わりに筆順アニメで描く。
+        if (hasHandwrite(layer)) {
+          drawHandwriteShape(ctx, layer, w, h, animAtTimeSec);
+          break;
+        }
         if (layer.bubble) {
           // 吹き出し: 独自パスで塗り + 枠を描く（preview の BubbleSvg と一致）
           drawBubbleShape(ctx, layer, w, h);
@@ -859,14 +883,25 @@ async function drawLayerContentInBox(
           ctx.fillStyle = parseRgba(layer.fillColor);
           ctx.fillRect(0, 0, w, h);
         }
-        // WebCodecs 経路（animAtTimeSec あり）でテキスト演出（char/kinetic/装飾）を
-        // 持つレイヤーは、時刻対応版でフレームごとに描画する（preview の
-        // renderAnimatedText / HighlightBar / UnderlineSweep 等と一致させる）。
-        // 演出なし、または PNG 焼き経路（animAtTimeSec 未指定）は静的版 drawText。
-        if (animAtTimeSec !== undefined && commentHasAnimatedText(layer)) {
-          drawAnimatedTextFrame(ctx, layer, w, h, animAtTimeSec);
-        } else {
-          drawText(ctx, layer, w, h);
+        {
+          // ① counter / ③ flip-swap: 表示文字列を毎フレーム差し替える（preview の
+          // renderAnimatedText と同じ resolveDynamicText で算出して一致させる）。
+          // animAtTimeSec あり=再生（時刻で補間/切替）、無し=静的合成（最終値を表示）。
+          const dyn = resolveDynamicText(
+            layer,
+            (animAtTimeSec ?? layer.startSec) - layer.startSec,
+            animAtTimeSec !== undefined,
+          );
+          const txtLayer = dyn != null ? { ...layer, text: dyn } : layer;
+          // WebCodecs 経路（animAtTimeSec あり）でテキスト演出（char/kinetic/装飾）を
+          // 持つレイヤーは、時刻対応版でフレームごとに描画する（preview の
+          // renderAnimatedText / HighlightBar / UnderlineSweep 等と一致させる）。
+          // 演出なし、または PNG 焼き経路（animAtTimeSec 未指定）は静的版 drawText。
+          if (animAtTimeSec !== undefined && commentHasAnimatedText(txtLayer)) {
+            drawAnimatedTextFrame(ctx, txtLayer, w, h, animAtTimeSec);
+          } else {
+            drawText(ctx, txtLayer, w, h);
+          }
         }
         break;
       case "effect":
@@ -888,6 +923,11 @@ async function drawLayerContentInBox(
           const relT =
             animAtTimeSec === undefined ? 0 : animAtTimeSec - layer.startSec;
           drawParticles(ctx, layer.effectParams ?? {}, w, h, FINAL_W / 360, relT);
+        } else if (layer.effect === "steam") {
+          // ② steam（湯気）。particles 同様レイヤー生存相対秒で駆動（決定論・preview=export）。
+          const relT =
+            animAtTimeSec === undefined ? 0 : animAtTimeSec - layer.startSec;
+          drawSteam(ctx, layer.effectParams ?? {}, w, h, FINAL_W / 360, relT);
         }
         break;
     }
@@ -1109,7 +1149,7 @@ function drawMarkerShape(
     p = Math.max(0, Math.min(1, raw));
   }
   const pxScale = FINAL_W / 360;
-  const { strokes, arrowHead } = computeMarker(layer, w, h, p, pxScale);
+  const { strokes, arrowHead, flash } = computeMarker(layer, w, h, p, pxScale);
   const color = markerColor(layer);
   const lineW = (layer.markerWidth ?? 6) * pxScale;
 
@@ -1132,6 +1172,191 @@ function drawMarkerShape(
     ctx.moveTo(arrowHead[0].x, arrowHead[0].y);
     ctx.lineTo(arrowHead[1].x, arrowHead[1].y);
     ctx.lineTo(arrowHead[2].x, arrowHead[2].y);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // marker-surge の着弾フラッシュ（白芯→色縁の放射グラデ）。preview MarkerShapeSvg と一致。
+  if (flash && flash.alpha > 0.001) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, flash.alpha);
+    const g = ctx.createRadialGradient(
+      flash.x,
+      flash.y,
+      0,
+      flash.x,
+      flash.y,
+      flash.r,
+    );
+    g.addColorStop(0, "rgba(255,255,255,0.95)");
+    g.addColorStop(0.4, color);
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(flash.x, flash.y, flash.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+/**
+ * 手書き（筆順）ライトオンを描画。幾何は handwriteStroke.computeHandwrite（preview/export 共通）。
+ * surface 背景 → 罫線 → ストローク（インク）→ sweep 文字 → ペン先 の順で描く。
+ */
+function drawHandwriteShape(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  animAtTimeSec?: number,
+): void {
+  const pxScale = FINAL_W / 360;
+  const family = layer.fontFamily
+    ? `${layer.fontFamily}, ${TEXT_DEFAULT_FONT_STACK}`
+    : TEXT_DEFAULT_FONT_STACK;
+  const measure = (text: string, fontPx: number): number => {
+    ctx.save();
+    ctx.font = `bold ${fontPx}px ${family}`;
+    const m = ctx.measureText(text).width;
+    ctx.restore();
+    return m;
+  };
+  const tRel = (animAtTimeSec ?? layer.startSec) - layer.startSec;
+  // 停止/スクラブ中（staticHandwriteFlag）or 静的合成（animAtTimeSec 無し）は全文表示。
+  const forceFull = staticHandwriteFlag || animAtTimeSec === undefined;
+  const render = computeHandwrite(layer, w, h, tRel, forceFull, pxScale, measure);
+  const { preset, ink, tip } = resolveSurface(layer);
+
+  ctx.save();
+
+  // --- surface 背景 ---
+  if (preset.bg) {
+    ctx.fillStyle = preset.bg;
+    ctx.fillRect(0, 0, w, h);
+    if (preset.border) {
+      ctx.strokeStyle = preset.border;
+      ctx.lineWidth = 2 * pxScale;
+      ctx.strokeRect(0, 0, w, h);
+    }
+  }
+  // --- notebook 罫線（各行ベースライン + 赤マージン）---
+  if (preset.rule) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(120,170,210,0.55)";
+    ctx.lineWidth = 1 * pxScale;
+    for (const by of render.lineBaselines) {
+      ctx.beginPath();
+      ctx.moveTo(0, by + 2 * pxScale);
+      ctx.lineTo(w, by + 2 * pxScale);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "rgba(220,90,90,0.5)";
+    ctx.beginPath();
+    ctx.moveTo(w * 0.08, 0);
+    ctx.lineTo(w * 0.08, h);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // --- インクストローク ---
+  const lineW =
+    (layer.handwrite?.strokeWidth ?? (layer.fontSize ?? 48) * 0.07) * pxScale;
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = Math.max(1, lineW);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.globalAlpha = layer.surface === "blackboard" ? 0.92 : 1;
+  for (const stroke of render.strokes) {
+    if (stroke.length < 2) {
+      // 1 点だけの画は小さな点で（始筆）
+      if (stroke.length === 1) {
+        ctx.beginPath();
+        ctx.arc(stroke[0].x, stroke[0].y, lineW * 0.5, 0, Math.PI * 2);
+        ctx.fillStyle = ink;
+        ctx.fill();
+      }
+      continue;
+    }
+    ctx.beginPath();
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // --- sweep フォールバック文字（左→右クリップ出現）---
+  if (render.sweeps.length > 0) {
+    ctx.fillStyle = ink;
+    ctx.font = `bold ${Math.max(4, (layer.fontSize ?? 48) * pxScale)}px ${family}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    for (const s of render.sweeps) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(s.x, s.y, Math.max(0, s.w * s.clip), s.h);
+      ctx.clip();
+      ctx.fillText(s.ch, s.x + s.w / 2, s.y + s.h / 2);
+      ctx.restore();
+    }
+  }
+
+  // --- ペン先 ---
+  if (render.penTip) {
+    drawPenTip(ctx, render.penTip, tip, ink, (layer.fontSize ?? 48) * pxScale);
+  }
+
+  ctx.restore();
+}
+
+/** ペン先（チョーク/ペン/マーカー/鉛筆）を penTip に描く。 */
+function drawPenTip(
+  ctx: CanvasRenderingContext2D,
+  tipPt: { x: number; y: number; angle: number },
+  tip: "chalk" | "pen" | "marker" | "pencil",
+  ink: string,
+  fontPx: number,
+): void {
+  const s = Math.max(2, fontPx * 0.16);
+  ctx.save();
+  ctx.translate(tipPt.x, tipPt.y);
+  ctx.rotate(tipPt.angle);
+  if (tip === "chalk") {
+    ctx.shadowColor = ink;
+    ctx.shadowBlur = s * 0.8;
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (tip === "marker") {
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s * 0.55, s * 0.38, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (tip === "pencil") {
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = s * 0.25;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.6, -s * 0.3);
+    ctx.lineTo(0, 0);
+    ctx.stroke();
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.arc(0, 0, s * 0.18, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // pen: 涙形（先端が点）
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(-s * 0.7, -s * 0.35);
+    ctx.lineTo(-s * 0.5, 0);
+    ctx.lineTo(-s * 0.7, s * 0.35);
     ctx.closePath();
     ctx.fill();
   }

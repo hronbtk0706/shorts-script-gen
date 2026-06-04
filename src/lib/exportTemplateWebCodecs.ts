@@ -40,6 +40,7 @@ import {
   setCompositionCanvasDimensions,
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
+import { preloadHandwriteLayers } from "./handwriteGlyphs";
 import { computeDuckMultiplier, layerHasDucking } from "./ducking";
 import {
   computeScreenEffects,
@@ -327,6 +328,10 @@ export async function exportTemplateWebCodecs(
       }
     }
   }
+
+  // 手書き（筆順）字形データをフレームループ前に同期キャッシュへロードしておく
+  // （以降 computeHandwrite/getGlyph は同期ヒット。キャラ事前焼きと同じ思想）。
+  await preloadHandwriteLayers(visibleLayers);
 
   try {
     onProgress?.({

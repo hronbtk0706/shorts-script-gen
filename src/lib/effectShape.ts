@@ -432,3 +432,113 @@ export function drawParticles(
   }
   ctx.restore();
 }
+
+/**
+ * steam（湯気/立ち上る粒子・curio-gen 依頼書 ②）。
+ * origin（center [x,y]%）から粒子が上へ昇り、広がりながら薄れて消えるオーバーレイ。
+ * drawParticles と同じ決定論 PRNG（seed=粒子 index）+ 独立位相で preview=export 一致。
+ *
+ * effectParams の使用項目:
+ * - center [x,y]%   : 発生位置（既定 [50,82]＝カップ位置あたり）
+ * - count           : 同時粒子数（既定 24・上限 400）
+ * - color           : 粒子色（既定 #FFFFFF）
+ * - speed           : 上昇速度倍率（既定 1）
+ * - spread          : 横揺れ広がり（design px・既定 26。上昇に従い広がる）
+ * - rise            : 上昇量（design px。未指定はレイヤー高さの約 60%）
+ * - sizeRange       : サイズ範囲 [min,max]（design px・既定 [10,26]）
+ * - kind            : "sparkle"=きらめき / "dust"=細かい塵 / それ以外=柔らかい湯気
+ * @param t レイヤー生存相対秒。
+ */
+export function drawSteam(
+  ctx: CanvasRenderingContext2D,
+  p: DrawnEffectParams,
+  w: number,
+  h: number,
+  pxScale = 1,
+  t = 0,
+): void {
+  const count = Math.max(0, Math.min(400, Math.round(p.count ?? 24)));
+  const center = p.center ?? [50, 82];
+  const ox = (center[0] / 100) * w;
+  const oy = (center[1] / 100) * h;
+  const color = p.color ?? "#FFFFFF";
+  const speed = Math.max(0.1, p.speed ?? 1);
+  const spreadPx = (p.spread ?? 26) * pxScale;
+  const riseDist = p.rise != null ? p.rise * pxScale : h * 0.6;
+  const sizeRange = p.sizeRange ?? [10, 26];
+  const kind = p.kind; // "sparkle"/"dust" のみ特別扱い、他は柔らかい湯気
+
+  ctx.save();
+  for (let i = 0; i < count; i++) {
+    const r1 = rng(i * 17 + 1); // 上昇位相
+    const r2 = rng(i * 17 + 2); // 周期ばらつき
+    const r3 = rng(i * 17 + 3); // 横揺れ周波/位相
+    const r4 = rng(i * 17 + 4); // サイズ
+    const r5 = rng(i * 17 + 5); // 横位置オフセット
+
+    const cycle = (2.6 * (0.7 + r2 * 0.8)) / speed; // 1 粒が昇りきる秒数
+    const prog = frac(t / cycle + r1); // 0(発生)..1(上端で消滅)
+    const y = oy - prog * riseDist;
+    // 横揺れ: 上昇に従い振幅が広がる（湯気が上で広がる感じ）
+    const sway =
+      Math.sin(prog * Math.PI * (1.4 + r3 * 2.2) + r1 * 6.283) *
+      spreadPx *
+      (0.25 + prog * 0.9);
+    const baseX = ox + (r5 - 0.5) * spreadPx * 0.5;
+    const x = baseX + sway;
+    const szBase = (sizeRange[0] + r4 * (sizeRange[1] - sizeRange[0])) * pxScale;
+    // 湯気は昇りながら膨らむ
+    const sz = szBase * (0.55 + prog * 1.1);
+    // 透明度: 発生で 0 → 中盤ピーク → 上端で 0（鐘形）
+    const alpha = Math.sin(clamp01(prog) * Math.PI);
+
+    if (kind === "sparkle") {
+      const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * (4 + r2 * 5) + r1 * 6.283));
+      ctx.save();
+      ctx.globalAlpha = alpha * tw;
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = sz * 0.7;
+      ctx.fillRect(x - sz / 2, y - sz * 0.08, sz, sz * 0.16);
+      ctx.fillRect(x - sz * 0.08, y - sz / 2, sz * 0.16, sz);
+      ctx.restore();
+    } else if (kind === "dust") {
+      ctx.save();
+      ctx.globalAlpha = alpha * (0.25 + r3 * 0.3);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, sz * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else {
+      // 柔らかい湯気: 中心ほど濃く縁が透ける放射グラデの円
+      const rr = sz * 0.5;
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.5;
+      const g = ctx.createRadialGradient(x, y, rr * 0.1, x, y, rr);
+      g.addColorStop(0, withAlpha(color, 0.85));
+      g.addColorStop(0.6, withAlpha(color, 0.28));
+      g.addColorStop(1, withAlpha(color, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, rr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+  ctx.restore();
+}
+
+/** #rrggbb（または既存色文字列）を rgba(...) に。湯気の縁を透明に落とすのに使う。 */
+function withAlpha(hex: string, a: number): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) {
+    // 既に rgb()/rgba()/名前色等ならそのまま（透明化は globalAlpha 側に任せる）
+    return hex;
+  }
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r},${g},${b},${a})`;
+}

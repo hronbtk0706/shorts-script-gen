@@ -143,6 +143,7 @@ const SHAPES: { id: LayerShape; label: string }[] = [
   { id: "marker-cross", label: "バツ" },
   { id: "marker-brackets", label: "囲み枠" },
   { id: "marker-burst", label: "集中線" },
+  { id: "marker-surge", label: "サージ（急騰線）" },
 ];
 
 const ENTRY_ANIMATIONS: { id: EntryAnimation; label: string }[] = [
@@ -160,6 +161,7 @@ const ENTRY_ANIMATIONS: { id: EntryAnimation; label: string }[] = [
   { id: "stretch-in", label: "横伸び" },
   { id: "roll-in", label: "ロール" },
   { id: "draw-on", label: "描き進む（マーカー）" },
+  { id: "flip-swap", label: "値札フリップ（潰れて差替）" },
 ];
 
 const EXIT_ANIMATIONS: { id: ExitAnimation; label: string }[] = [
@@ -1063,6 +1065,28 @@ export function LayerPropertyPanel({
         </div>
         {common("entryAnimation") && common("entryAnimation") !== "none" &&
           numInput("入場秒", common("entryDuration") ?? 0.3, (v) => onChange({ entryDuration: Math.max(0, v) }), 0.1, "s")}
+        {/* ③ flip-swap: 切替後テキスト / 切替タイミング */}
+        {common("entryAnimation") === "flip-swap" && (
+          <>
+            <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+              <label className="text-gray-600">切替後</label>
+              <input
+                type="text"
+                value={common("flipTo") ?? ""}
+                onChange={(e) => onChange({ flipTo: e.target.value })}
+                placeholder="差し替え後のテキスト"
+                className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+              />
+            </div>
+            {numInput(
+              "切替秒",
+              common("flipAtSec") ?? (common("entryDuration") ?? 0.3) / 2,
+              (v) => onChange({ flipAtSec: Math.max(0, v) }),
+              0.05,
+              "s",
+            )}
+          </>
+        )}
         <div className="grid grid-cols-[70px_1fr] items-center gap-1">
           <label className="text-gray-600">退場</label>
           <select
@@ -1465,8 +1489,27 @@ export function LayerPropertyPanel({
                 1,
                 "本",
               )}
+            {common("shape") === "marker-surge" && (
+              <>
+                {sliderInput(
+                  "オーバーシュート",
+                  common("markerOvershoot") ?? 0.1,
+                  (v) =>
+                    onChange({
+                      markerOvershoot: Math.max(0, Math.min(0.5, v)),
+                    }),
+                  0,
+                  0.5,
+                  0.05,
+                )}
+                <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                  入場アニメを「描き進む」にすると急騰します
+                </div>
+              </>
+            )}
             {(common("shape") === "marker-arrow" ||
-              common("shape") === "marker-line") && (
+              common("shape") === "marker-line" ||
+              common("shape") === "marker-surge") && (
               <label className="flex items-center gap-1 text-[11px]">
                 <input
                   type="checkbox"
@@ -1485,7 +1528,8 @@ export function LayerPropertyPanel({
               </label>
             )}
             {(common("shape") === "marker-arrow" ||
-              common("shape") === "marker-line") && (
+              common("shape") === "marker-line" ||
+              common("shape") === "marker-surge") && (
               <div className="space-y-1">
                 <div className="text-[10px] text-gray-500">
                   向き（箱内 %。始点→終点）
@@ -1741,6 +1785,230 @@ export function LayerPropertyPanel({
                 rows={2}
                 className="w-full px-1.5 py-0.5 text-xs rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 resize-none"
               />
+            </div>
+          )}
+          {/* ① native counter（数字カウントアップ）。ON のとき本文を無視して from→to を表示 */}
+          {!multi && primary.type === "comment" && (
+            <div className="pt-1 border-t border-gray-200 dark:border-gray-700 mt-1 space-y-1">
+              <label className="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={!!primary.counter}
+                  onChange={(e) =>
+                    onChange({
+                      counter: e.target.checked
+                        ? primary.counter ?? {
+                            from: 0,
+                            to: 100,
+                            durationSec: 2,
+                            separator: true,
+                          }
+                        : undefined,
+                    })
+                  }
+                />
+                数字カウントアップ（counter）
+              </label>
+              {primary.counter && (
+                <div className="space-y-1 pl-1">
+                  {numInput("開始値", primary.counter.from, (v) =>
+                    onChange({ counter: { ...primary.counter!, from: v } }),
+                  )}
+                  {numInput("終了値", primary.counter.to, (v) =>
+                    onChange({ counter: { ...primary.counter!, to: v } }),
+                  )}
+                  {numInput(
+                    "秒数",
+                    primary.counter.durationSec,
+                    (v) =>
+                      onChange({
+                        counter: { ...primary.counter!, durationSec: Math.max(0.1, v) },
+                      }),
+                    0.5,
+                    "s",
+                  )}
+                  {numInput(
+                    "小数桁",
+                    primary.counter.decimals ?? 0,
+                    (v) =>
+                      onChange({
+                        counter: {
+                          ...primary.counter!,
+                          decimals: Math.max(0, Math.round(v)),
+                        },
+                      }),
+                    1,
+                  )}
+                  <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+                    <label className="text-gray-600">前後</label>
+                    <div className="flex gap-1">
+                      <input
+                        type="text"
+                        value={primary.counter.prefix ?? ""}
+                        onChange={(e) =>
+                          onChange({
+                            counter: { ...primary.counter!, prefix: e.target.value },
+                          })
+                        }
+                        placeholder="前(¥)"
+                        className="w-1/2 px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                      />
+                      <input
+                        type="text"
+                        value={primary.counter.suffix ?? ""}
+                        onChange={(e) =>
+                          onChange({
+                            counter: { ...primary.counter!, suffix: e.target.value },
+                          })
+                        }
+                        placeholder="後(円)"
+                        className="w-1/2 px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+                    <label className="text-gray-600">イージング</label>
+                    <select
+                      value={primary.counter.ease ?? "out"}
+                      onChange={(e) =>
+                        onChange({
+                          counter: {
+                            ...primary.counter!,
+                            ease: e.target.value as NonNullable<
+                              Layer["counter"]
+                            >["ease"],
+                          },
+                        })
+                      }
+                      className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                    >
+                      <option value="out">out（減速）</option>
+                      <option value="linear">linear（一定）</option>
+                      <option value="in">in（加速）</option>
+                      <option value="inout">inout</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-1.5 text-[10px] text-gray-600 dark:text-gray-400">
+                    <input
+                      type="checkbox"
+                      checked={primary.counter.separator ?? true}
+                      onChange={(e) =>
+                        onChange({
+                          counter: {
+                            ...primary.counter!,
+                            separator: e.target.checked,
+                          },
+                        })
+                      }
+                    />
+                    3桁区切りカンマ
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+          {/* 手書き（筆順）ライトオン。ON で一画ずつ書かれていく描画＋下地（surface） */}
+          {!multi && primary.type === "comment" && (
+            <div className="pt-1 border-t border-gray-200 dark:border-gray-700 mt-1 space-y-1">
+              <label className="flex items-center gap-1.5 text-[11px] text-gray-600 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={!!primary.handwrite}
+                  onChange={(e) =>
+                    onChange({
+                      handwrite: e.target.checked
+                        ? primary.handwrite ?? { order: "normal" }
+                        : undefined,
+                    })
+                  }
+                />
+                手書き（筆順）ライトオン
+              </label>
+              {primary.handwrite && (
+                <div className="space-y-1 pl-1">
+                  <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+                    <label className="text-gray-600">下地</label>
+                    <select
+                      value={primary.surface ?? "none"}
+                      onChange={(e) =>
+                        onChange({ surface: e.target.value as Layer["surface"] })
+                      }
+                      className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                    >
+                      <option value="none">なし</option>
+                      <option value="blackboard">黒板（緑・白チョーク）</option>
+                      <option value="whiteboard">ホワイトボード（黒マーカー）</option>
+                      <option value="notebook">ノート（罫線・鉛筆）</option>
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+                    <label className="text-gray-600">ペン先</label>
+                    <select
+                      value={primary.handwrite.tip ?? ""}
+                      onChange={(e) =>
+                        onChange({
+                          handwrite: {
+                            ...primary.handwrite!,
+                            tip: (e.target.value || undefined) as
+                              | NonNullable<Layer["handwrite"]>["tip"]
+                              | undefined,
+                          },
+                        })
+                      }
+                      className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                    >
+                      <option value="">下地の既定</option>
+                      <option value="chalk">チョーク</option>
+                      <option value="pen">ペン</option>
+                      <option value="marker">マーカー</option>
+                      <option value="pencil">鉛筆</option>
+                    </select>
+                  </div>
+                  {sliderInput(
+                    "速度",
+                    primary.handwrite.speed ?? 1,
+                    (v) =>
+                      onChange({
+                        handwrite: { ...primary.handwrite!, speed: Math.max(0.1, v) },
+                      }),
+                    0.2,
+                    4,
+                    0.1,
+                  )}
+                  {sliderInput(
+                    "手書き揺れ",
+                    primary.handwrite.jitter ?? 0.5,
+                    (v) =>
+                      onChange({
+                        handwrite: {
+                          ...primary.handwrite!,
+                          jitter: Math.max(0, Math.min(2, v)),
+                        },
+                      }),
+                    0,
+                    2,
+                    0.1,
+                  )}
+                  {sliderInput(
+                    "線の太さ",
+                    primary.handwrite.strokeWidth ?? Math.round((primary.fontSize ?? 48) * 0.07),
+                    (v) =>
+                      onChange({
+                        handwrite: {
+                          ...primary.handwrite!,
+                          strokeWidth: Math.max(0.5, v),
+                        },
+                      }),
+                    0.5,
+                    20,
+                    0.5,
+                    "px",
+                  )}
+                  <div className="text-[10px] text-amber-600 dark:text-amber-400">
+                    日本語の本物の筆順は次更新で対応（現在は左→右の掃出しで表示）
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {/* 文字サイズ / 文字色 は上部の常時表示。フォント / 縁取り / 背景色 は「見た目」タブの text-style セクションに移動 */}

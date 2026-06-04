@@ -22,8 +22,10 @@ export interface Pt {
 export interface MarkerRender {
   /** 描くべきストローク（ポリライン）の配列。box px 座標。 */
   strokes: Pt[][];
-  /** marker-arrow のヘッド（塗りつぶす三角形）。無ければ null。 */
+  /** marker-arrow / marker-surge のヘッド（塗りつぶす三角形）。無ければ null。 */
   arrowHead: Pt[] | null;
+  /** marker-surge 終端の着弾フラッシュ（box px）。無ければ null。 */
+  flash?: { x: number; y: number; r: number; alpha: number } | null;
 }
 
 const DEFAULT_COLOR = "#FF3B30";
@@ -33,7 +35,7 @@ export function markerColor(layer: Layer): string {
 }
 
 /** FNV-1a で文字列 → 32bit seed */
-function hashSeed(id: string): number {
+export function hashSeed(id: string): number {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
     h ^= id.charCodeAt(i);
@@ -43,7 +45,7 @@ function hashSeed(id: string): number {
 }
 
 /** mulberry32 決定論 PRNG */
-function mulberry32(a: number): () => number {
+export function mulberry32(a: number): () => number {
   return () => {
     a |= 0;
     a = (a + 0x6d2b79f5) | 0;
@@ -54,7 +56,7 @@ function mulberry32(a: number): () => number {
 }
 
 /** 低周波の滑らかな揺れ（2 つの正弦波の合成）。s は 0..1。 */
-function makeWobble(rng: () => number): (s: number) => number {
+export function makeWobble(rng: () => number): (s: number) => number {
   const f1 = 1 + rng() * 1.5; // 1.0〜2.5 周
   const f2 = 2.5 + rng() * 2; // 2.5〜4.5 周
   const p1 = rng() * Math.PI * 2;
@@ -118,7 +120,7 @@ function jitterEllipse(
 }
 
 /** 点列を進捗 lp(0..1) ぶんに切り詰める（最後のセグメントは線形補間）。 */
-function truncate(pts: Pt[], lp: number): Pt[] {
+export function truncate(pts: Pt[], lp: number): Pt[] {
   if (lp >= 1) return pts;
   if (lp <= 0) return [];
   const n = pts.length;
@@ -135,7 +137,7 @@ function truncate(pts: Pt[], lp: number): Pt[] {
 }
 
 /** [start,end] 窓の中で全体進捗 p をローカル進捗に変換 */
-function localP(p: number, start: number, end: number): number {
+export function localP(p: number, start: number, end: number): number {
   if (p <= start) return 0;
   if (p >= end) return 1;
   return (p - start) / (end - start);
@@ -165,6 +167,7 @@ export function computeMarker(
 
   const strokes: Pt[][] = [];
   let arrowHead: Pt[] | null = null;
+  let flash: MarkerRender["flash"] = null;
 
   switch (shape) {
     case "marker-circle": {
@@ -213,6 +216,59 @@ export function computeMarker(
           { x: b.x - ux * back + px * wide, y: b.y - uy * back + py * wide },
           { x: b.x - ux * back - px * wide, y: b.y - uy * back - py * wide },
         ];
+      }
+      break;
+    }
+    case "marker-surge": {
+      // ④ 数値サージ: markerFrom→markerTo を急加速(expo-out)で一気に描く折れ線/矢印。
+      // 入力 p（draw-on 線形進捗）を expo-out に再マップしてから truncate するので、
+      // preview/export は同じ p で呼べば同じ見た目になる（イージングはここに集約）。
+      const from = layer.markerFrom ?? { x: 12, y: 88 };
+      const to = layer.markerTo ?? { x: 88, y: 12 };
+      const a: Pt = { x: (from.x / 100) * w, y: (from.y / 100) * h };
+      const b: Pt = { x: (to.x / 100) * w, y: (to.y / 100) * h };
+      // 終端を overshoot ぶん延長した点（線が markerTo を少し突き抜けてから収まる演出）。
+      const overshoot = Math.max(0, Math.min(0.5, layer.markerOvershoot ?? 0.1));
+      const bOver: Pt = {
+        x: b.x + (b.x - a.x) * overshoot,
+        y: b.y + (b.y - a.y) * overshoot,
+      };
+      // 急加速イージング: expo-out（最初に一気に伸びる）。
+      const ep = p >= 1 ? 1 : 1 - Math.pow(2, -10 * p);
+      // 伸長フェーズ: ep を [0, 1+overshoot] にマップして bOver まで届かせ、
+      // 完了間際に b へ収束（overshoot ぶん行き過ぎて戻る）。
+      const reach =
+        ep < 0.82
+          ? (ep / 0.82) * (1 + overshoot) // 行き（bOver 手前まで一気）
+          : 1 + overshoot * (1 - (ep - 0.82) / 0.18); // 戻り（b へ収束）
+      const lineLen = Math.min(1, reach); // truncate は 0..1（bOver 基準のポリライン）
+      // サージは滑らかな線（jitter 控えめ）。bOver までのポリラインを引いて lineLen で切る。
+      const full = jitterLine(a, bOver, amp * 0.25, 56, wob);
+      const tr = truncate(full, lineLen);
+      if (tr.length) strokes.push(tr);
+      // 三角ヘッド（突き刺さる）。既定 triangle、ep>=0.6 で出す。位置は a→b 方向の b。
+      const head = layer.markerHead ?? "triangle";
+      if (head === "triangle" && ep >= 0.6) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const ux = dx / len;
+        const uy = dy / len;
+        const px = -uy;
+        const py = ux;
+        const hd = Math.min(Math.max(len * 0.18, 14 * pxScale), 52 * pxScale);
+        const back = hd * 0.95;
+        const wide = hd * 0.55;
+        arrowHead = [
+          { x: b.x, y: b.y },
+          { x: b.x - ux * back + px * wide, y: b.y - uy * back + py * wide },
+          { x: b.x - ux * back - px * wide, y: b.y - uy * back - py * wide },
+        ];
+      }
+      // 着弾フラッシュ: 描き終わり間際(ep 0.78→1)に閃光が咲いて消える（完了後 p=1→0 で消灯）。
+      const fa = ep < 0.78 ? 0 : Math.sin(((ep - 0.78) / 0.22) * Math.PI);
+      if (fa > 0.001) {
+        flash = { x: b.x, y: b.y, r: Math.max(8, 26 * pxScale), alpha: fa };
       }
       break;
     }
@@ -326,7 +382,7 @@ export function computeMarker(
       break;
   }
 
-  return { strokes, arrowHead };
+  return { strokes, arrowHead, flash };
 }
 
 /** shape が marker-* かどうか */

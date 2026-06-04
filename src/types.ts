@@ -29,7 +29,10 @@ export type LayerShape =
   | "marker-check" // レ点
   | "marker-cross" // バツ
   | "marker-brackets" // フォーカスブラケット（四隅の [ ]）
-  | "marker-burst"; // 集中線（焦点へ放射状）
+  | "marker-burst" // 集中線（焦点へ放射状）
+  // 数値サージ（curio-gen 依頼書 ④）。markerFrom→markerTo を急加速イージング(expo-out)で
+  // 一気に描き、終端に三角ヘッド + 着弾フラッシュ。entryAnimation:"draw-on" で駆動。
+  | "marker-surge";
 
 /** 画面全体エフェクトの種類（type === "effect" の layer.effectKind で指定）。
  *  effect layer は pixel を出力せず、[startSec, endSec] の間 最終合成フレーム全体に効果を適用する。 */
@@ -69,6 +72,51 @@ export interface LayerBorder {
   color: string;
 }
 
+/** 手書き（筆順）ペン先の種類（curio-gen 依頼書「手書き筆順テキスト」）。 */
+export type HandwriteTip = "chalk" | "pen" | "marker" | "pencil";
+
+/** 手書きの下地（書く面）プリセット。ink/tip の既定値を供給する。 */
+export type SurfaceKind = "none" | "blackboard" | "whiteboard" | "notebook";
+
+/**
+ * 手書き「筆順」ライトオン（curio-gen 依頼書・本命）。
+ * これがある text(comment) レイヤーは文字を一画ずつ「書かれていく」アニメで描画する。
+ * - 日本語（漢字・かな）は KanjiVG、ASCII は Hershey 単線フォントの筆順を使う（Phase B で同梱）。
+ * - 字形データが無い文字は char-sweep（左→右の掃引出現）に自動フォールバック（絶対に壊れない）。
+ * - `[startSec, startSec + writeDur]` で書き上がり、その後 endSec まで静止。停止/編集中は全文表示(p=1)。
+ * - 決定論的（seed=layer.id）で preview/export 一致。
+ */
+export interface HandwriteSpec {
+  /** 書き順（既定 "normal"＝読み順）。将来 "random" 等の拡張余地。 */
+  order?: "normal";
+  /** 自動算出した書き秒への倍率（既定 1。大きいほど速い）。 */
+  speed?: number;
+  /** ペン先表現（未指定は surface プリセットの既定）。 */
+  tip?: HandwriteTip;
+  /** 手書きの揺れ 0..2（既定 0.5・字形が崩れない程度に控えめ）。 */
+  jitter?: number;
+  /** 線の太さ design(360) 基準 px（未指定 ≒ fontSize*0.07）。 */
+  strokeWidth?: number;
+}
+
+/**
+ * native counter（curio-gen 依頼書 ①）。数字を from→to へ滑らかにカウントアップする。
+ * comment レイヤーの `counter` に持たせる。`layer.text` より優先して表示文字列を決める。
+ * - 進捗 p = clamp((tSec - startSec) / durationSec, 0, 1) を ease 適用 → value = from + (to-from)*easedP。
+ * - 整形: decimals で四捨五入 → separator が true なら3桁区切り → prefix/suffix で前後を挟む。
+ * - preview/export は同一の computeCounterText（src/lib/counterText.ts）で算出し一致させる。
+ */
+export interface CounterSpec {
+  from: number;
+  to: number;
+  durationSec: number; // startSec 起点で from→to にかける秒数（<=0 は無効＝to を静的表示）
+  prefix?: string; // 数値の前（例 "¥" "$"）
+  suffix?: string; // 数値の後（例 "マルク" "円" "%"）
+  separator?: boolean; // 3桁区切りカンマ（既定 true）
+  decimals?: number; // 小数桁（既定 0）
+  ease?: "out" | "linear" | "in" | "inout"; // 既定 "out"
+}
+
 export type EntryAnimation =
   | "none"
   | "fade"
@@ -91,7 +139,10 @@ export type EntryAnimation =
   // shape:"arc" 専用。entry 中 arcEnd を arcStart→arcEnd まで補間して時計回りに描画
   | "arc-sweep"
   // marker-* 専用。ペン先が entryDuration で進み、その進捗ぶんだけストロークが現れる
-  | "draw-on";
+  | "draw-on"
+  // テキスト専用（curio-gen 依頼書 ③）。縦に潰れて(scaleY 1→0)、中央で text→flipTo に
+  // 差し替え、後半 0→1 で戻るパタパタ式の値札フリップ。flipTo / flipAtSec と併用。
+  | "flip-swap";
 
 export type ExitAnimation =
   | "none"
@@ -291,7 +342,12 @@ export interface LayerFilter {
  * 既存 `effectKind`（ScreenEffectKind＝全画面後処理）とは別系統で、こちらは zIndex 位置に描く。
  * 1 レイヤーで effect（描画系）か effectKind（後処理系）のどちらかを使う。
  */
-export type DrawnEffectKind = "speedlines" | "spotlight" | "particles";
+export type DrawnEffectKind =
+  | "speedlines"
+  | "spotlight"
+  | "particles"
+  // 湯気/立ち上る粒子オーバーレイ（curio-gen 依頼書 ②）。origin から上へ昇って薄れる。
+  | "steam";
 
 /** 描画系 effect のパラメータ（effect ごとに使う項目が異なる・全て任意）。 */
 export interface DrawnEffectParams {
@@ -339,6 +395,11 @@ export interface DrawnEffectParams {
   region?: [number, number, number, number];
   /** particles: サイズ範囲 [min,max]（design px）。 */
   sizeRange?: [number, number];
+  // ---- steam 用（§②・湯気/立ち上る粒子）----
+  /** steam: 横揺れの広がり幅（design px・既定 26）。上昇に従って広がる。 */
+  spread?: number;
+  /** steam: 上昇量（design px。未指定ならレイヤー高さの約 60%）。 */
+  rise?: number;
 }
 
 /**
@@ -505,6 +566,7 @@ export interface Layer {
   markerTo?: { x: number; y: number }; // marker-arrow/line 終点（box 内 %）。既定 右上
   markerHead?: "none" | "triangle"; // marker-arrow/line の先端ヘッド。既定 arrow=triangle / line=none
   markerCount?: number; // marker-burst の集中線本数。既定 12
+  markerOvershoot?: number; // marker-surge の終端オーバーシュート量（線長比 0..0.5。既定 0.1）
   source?: "auto" | "user" | string;
   fillColor?: string;
   /** color/shape の塗りをグラデーションに（fillColor より優先・rect/rounded/circle に適用）。 */
@@ -515,6 +577,21 @@ export interface Layer {
    */
   chromaKey?: { color: string; threshold?: number; smoothness?: number };
   text?: string;
+  /**
+   * native counter（curio-gen 依頼書 ①）。これがある comment レイヤーは layer.text を無視し、
+   * startSec 起点で from→to を durationSec かけて補間した文字列を毎フレーム表示する。
+   * 停止/編集中（preview ドラッグ中・静的合成）は to（最終値）を表示してレイアウトを安定させる。
+   * fontSize / fontColor / entry / ambient / textDecoration 等と独立に併用可。
+   */
+  counter?: CounterSpec;
+  /** entryAnimation:"flip-swap" の切替後テキスト（③）。中央(scaleY=0)で text→flipTo に差し替え。 */
+  flipTo?: string;
+  /** flip-swap の切替タイミング（startSec 相対秒・既定 entryDuration/2＝scaleY が 0 になる中央）。 */
+  flipAtSec?: number;
+  /** 手書き（筆順）ライトオン。存在で手書きレンダラに切替（主に comment レイヤー）。 */
+  handwrite?: HandwriteSpec;
+  /** 手書きの下地（黒板/ホワイトボード/ノート/なし）。ink/tip の既定値を供給。 */
+  surface?: SurfaceKind;
   fontSize?: number;
   fontColor?: string;
   /** テキストのグラデーション塗り（fontColor より優先・現状は静的テキストに適用）。 */
