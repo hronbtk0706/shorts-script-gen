@@ -235,15 +235,17 @@ export function computeMarker(
       };
       // 急加速イージング: expo-out（最初に一気に伸びる）。
       const ep = p >= 1 ? 1 : 1 - Math.pow(2, -10 * p);
-      // 伸長フェーズ: ep を [0, 1+overshoot] にマップして bOver まで届かせ、
-      // 完了間際に b へ収束（overshoot ぶん行き過ぎて戻る）。
+      // 伸長: reach は b=1.0 / bOver=1+overshoot の単位。前半で一気に b 付近、
+      // 0.82 以降に少しだけ bOver を超えて行き、p=1 で b に収束する。
       const reach =
         ep < 0.82
-          ? (ep / 0.82) * (1 + overshoot) // 行き（bOver 手前まで一気）
-          : 1 + overshoot * (1 - (ep - 0.82) / 0.18); // 戻り（b へ収束）
-      const lineLen = Math.min(1, reach); // truncate は 0..1（bOver 基準のポリライン）
-      // サージは滑らかな線（jitter 控えめ）。bOver までのポリラインを引いて lineLen で切る。
-      const full = jitterLine(a, bOver, amp * 0.25, 56, wob);
+          ? (ep / 0.82) // 行き（b まで一気）
+          : 1 + overshoot * (1 - (ep - 0.82) / 0.18); // 行き過ぎ→ p=1 で b へ収束
+      // full は a→bOver。b はその 1/(1+overshoot) の位置にあるので、reach をそれで割って
+      // truncate 進捗に変換する（静止時 reach=1 → tip=b。突き抜けない）。
+      const lineLen = reach / (1 + overshoot);
+      // サージはシャープに（jitter ごく控えめ）。
+      const full = jitterLine(a, bOver, amp * 0.1, 48, wob);
       const tr = truncate(full, lineLen);
       if (tr.length) strokes.push(tr);
       // 三角ヘッド（突き刺さる）。既定 triangle、ep>=0.6 で出す。位置は a→b 方向の b。
