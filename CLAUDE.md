@@ -85,3 +85,12 @@
 - エクスポート: [src/lib/layerComposer.ts](src/lib/layerComposer.ts) の `renderLayersOnContext` が
   毎フレーム `applyKeyframesAtTime`（`sampleLayerAt` 経由）で補間値を `drawLayer` に渡す
 - **opacity のキーフレーム補間も WebCodecs では対応済み**（旧 ffmpeg 経路では未対応だったが撤去済み）
+
+## セッション間の引き継ぎ（重要）
+
+セッションをまたいで作業を確実に引き継ぐため、**作業の現在地メモを正本とする**:
+
+- 場所: ユーザーの auto-memory `current-work-state.md`（`MEMORY.md` の index 先頭 ⭐ にポインタあり）。
+- **セッション開始時**: まず `current-work-state.md` を読み、ブランチ・残タスク・決定事項・直近の追加を把握してから着手する。
+- **更新タイミング**: セッション末ではなく **「作業の区切りごと」に都度更新する**（機能を1つ実装した／決定した／ビルドした等のたびに）。途中で中断しても最新が残るようにする。古いまま放置すると誤誘導になるので、変わったら即反映。
+- 演出（アニメ/エフェクト/シェイプ/テキスト演出）を追加・変更したら `HANDOFF_演出リファレンス.md` も更新し、`moviegenerate/docs/shorts-script-gen-capabilities.md` へ同期する（curio-gen が読む正本）。
