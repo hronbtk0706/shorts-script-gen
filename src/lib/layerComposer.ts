@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Layer, LayerGroup } from "../types";
+import type {
+  Layer,
+  LayerGroup,
+  CameraSpec,
+  CameraKeyframe,
+  StagePivot,
+} from "../types";
 import { sortedLayers } from "./layerUtils";
 import { sampleLayerAt } from "./keyframes";
 import {
@@ -132,6 +138,8 @@ export async function renderLayersOnContext(
     staticHandwrite?: boolean;
     /** レイヤーグループ（ステージ）。Layer.groupId で所属したレイヤーに一括変換を掛ける。 */
     groups?: LayerGroup[];
+    /** カメラ変換（Phase3 C-1）。groupId 一致レイヤーに pivot 基準の scale+移動を上掛け。 */
+    cameras?: CameraSpec[];
   } = {},
 ): Promise<void> {
   staticHandwriteFlag = opts.staticHandwrite === true;
@@ -142,15 +150,38 @@ export async function renderLayersOnContext(
     ctx.fillRect(0, 0, FINAL_W, FINAL_H);
   }
 
-  // レイヤーグループ（ステージ）の事前計算: id→group と pivot（バウンディングボックス中心）。
+  // ステージ変換（グループ/カメラ）の事前計算。
   const groupsById = new Map<string, LayerGroup>();
-  const groupPivot = new Map<string, { x: number; y: number }>();
-  if (opts.groups) {
-    for (const g of opts.groups) {
-      groupsById.set(g.id, g);
-      groupPivot.set(g.id, computeGroupPivot(g, layers));
+  if (opts.groups) for (const g of opts.groups) groupsById.set(g.id, g);
+  const cameraByGroup = new Map<string, CameraSpec>();
+  if (opts.cameras) for (const c of opts.cameras) cameraByGroup.set(c.groupId, c);
+  // groupId → バウンディングボックス（pivot 解決用）。camera/group どちらでも使う。
+  const bboxByGroup = new Map<
+    string,
+    { minX: number; minY: number; maxX: number; maxY: number }
+  >();
+  const collectBBox = (gid: string) => {
+    if (bboxByGroup.has(gid)) return;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    let n = 0;
+    for (const l of layers) {
+      if (l.groupId !== gid) continue;
+      n++;
+      minX = Math.min(minX, l.x);
+      minY = Math.min(minY, l.y);
+      maxX = Math.max(maxX, l.x + l.width);
+      maxY = Math.max(maxY, l.y + l.height);
     }
-  }
+    bboxByGroup.set(
+      gid,
+      n === 0 ? { minX: 0, minY: 0, maxX: 100, maxY: 100 } : { minX, minY, maxX, maxY },
+    );
+  };
+  for (const g of groupsById.keys()) collectBBox(g);
+  for (const g of cameraByGroup.keys()) collectBBox(g);
 
   const t = opts.atTimeSec;
   for (const layer of sortedLayers(layers)) {
@@ -160,11 +191,17 @@ export async function renderLayersOnContext(
     // 時刻指定があればキーフレーム補間を反映
     const drawTarget = t !== undefined ? applyKeyframesAtTime(layer, t) : layer;
 
-    const grp = layer.groupId ? groupsById.get(layer.groupId) : undefined;
-    if (grp) {
-      // グループ変換を ctx に掛けて包む（位置・文字サイズ・線幅すべて一緒にスケール）。
-      const tr = sampleGroupTransform(grp, t);
-      const pv = groupPivot.get(grp.id) ?? { x: 50, y: 50 };
+    // ステージ変換（カメラ優先・無ければグループ）。camera/group どちらも groupId で対応。
+    const gid = layer.groupId;
+    const cam = gid ? cameraByGroup.get(gid) : undefined;
+    const grp = gid && !cam ? groupsById.get(gid) : undefined;
+    if (gid && (cam || grp)) {
+      const bbox = bboxByGroup.get(gid)!;
+      const pivotSpec = cam ? cam.pivot : grp!.pivot;
+      const pv = resolveStagePivot(pivotSpec, bbox);
+      const tr = cam
+        ? sampleCameraTransform(cam, t)
+        : sampleGroupTransform(grp!, t);
       const px = (pv.x / 100) * FINAL_W;
       const py = (pv.y / 100) * FINAL_H;
       ctx.save();
@@ -195,27 +232,74 @@ export async function renderLayersOnContext(
   }
 }
 
-/** グループの拡大基準点 %（pivot 指定が無ければ所属レイヤーのバウンディングボックス中心）。 */
-function computeGroupPivot(
-  g: LayerGroup,
-  layers: Layer[],
+/** pivot 指定（名前 or [x,y]）を bbox 上の % 座標に解決。既定は bbox 中心。 */
+function resolveStagePivot(
+  pivot: StagePivot | [number, number] | undefined,
+  bbox: { minX: number; minY: number; maxX: number; maxY: number },
 ): { x: number; y: number } {
-  if (g.pivot) return { x: g.pivot[0], y: g.pivot[1] };
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let n = 0;
-  for (const l of layers) {
-    if (l.groupId !== g.id) continue;
-    n++;
-    minX = Math.min(minX, l.x);
-    minY = Math.min(minY, l.y);
-    maxX = Math.max(maxX, l.x + l.width);
-    maxY = Math.max(maxY, l.y + l.height);
+  if (Array.isArray(pivot)) return { x: pivot[0], y: pivot[1] };
+  const cx = (bbox.minX + bbox.maxX) / 2;
+  const cy = (bbox.minY + bbox.maxY) / 2;
+  switch (pivot) {
+    case "top-left":
+      return { x: bbox.minX, y: bbox.minY };
+    case "top":
+      return { x: cx, y: bbox.minY };
+    case "top-right":
+      return { x: bbox.maxX, y: bbox.minY };
+    case "left":
+      return { x: bbox.minX, y: cy };
+    case "right":
+      return { x: bbox.maxX, y: cy };
+    case "bottom-left":
+      return { x: bbox.minX, y: bbox.maxY };
+    case "bottom":
+      return { x: cx, y: bbox.maxY };
+    case "bottom-right":
+      return { x: bbox.maxX, y: bbox.maxY };
+    default:
+      return { x: cx, y: cy };
   }
-  if (n === 0) return { x: 50, y: 50 };
-  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+/** カメラ変換を時刻 t で求める（kfs t は startSec 起点の相対秒。startSec 未満は恒等）。 */
+function sampleCameraTransform(
+  cam: CameraSpec,
+  t: number | undefined,
+): { ox: number; oy: number; scale: number; opacity: number } {
+  const identity = { ox: 0, oy: 0, scale: 1, opacity: 1 };
+  const kfs = cam.kfs ? [...cam.kfs].sort((a, b) => a.t - b.t) : [];
+  if (kfs.length === 0) return identity;
+  const resolve = (kf: CameraKeyframe) => ({
+    ox: kf.x ?? 0,
+    oy: kf.y ?? 0,
+    scale: kf.scale ?? 1,
+    opacity: kf.opacity ?? 1,
+  });
+  if (t === undefined) return resolve(kfs[kfs.length - 1]); // 静的 PNG は最終状態
+  const start = cam.startSec ?? 0;
+  if (cam.startSec !== undefined && t < start) return identity; // 区間前は変換なし
+  const rel = t - start;
+  if (rel <= kfs[0].t) return resolve(kfs[0]);
+  if (rel >= kfs[kfs.length - 1].t) return resolve(kfs[kfs.length - 1]);
+  const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const a = kfs[i];
+    const b = kfs[i + 1];
+    if (rel >= a.t && rel <= b.t) {
+      const span = b.t - a.t;
+      const k = span <= 0 ? 1 : easeOf(b.ease)((rel - a.t) / span);
+      const ra = resolve(a);
+      const rb = resolve(b);
+      return {
+        ox: lerp(ra.ox, rb.ox, k),
+        oy: lerp(ra.oy, rb.oy, k),
+        scale: lerp(ra.scale, rb.scale, k),
+        opacity: lerp(ra.opacity, rb.opacity, k),
+      };
+    }
+  }
+  return identity;
 }
 
 /** グループ変換を時刻 t で求める（kfs があれば絶対秒で補間、無ければ静的値）。 */
@@ -601,6 +685,103 @@ function applyLayerFilter(ctx: CanvasRenderingContext2D, layer: Layer): void {
   ctx.filter = cur + css;
 }
 
+/**
+ * 崩壊/砂化（§6）。レイヤー内容を一旦 offscreen に描き、セル（粒）に分割して
+ * 進捗 p(0..1) で崩落/飛散・フェードさせる。color:"inherit" は本体ピクセルをそのまま粒に。
+ * 決定論（seed=layer.id）で preview/export 一致。呼び出し時 ctx はレイヤー原点に平行移動済み。
+ */
+async function drawDisintegrating(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  p: number,
+  resolveSrc: LayerSourceResolver,
+  videoFrameSources: Map<string, CanvasImageSource> | undefined,
+  animAtTimeSec: number,
+): Promise<void> {
+  const dis = layer.disintegrate!;
+  const tw = Math.max(1, Math.ceil(w));
+  const th = Math.max(1, Math.ceil(h));
+  // 1) 本体ピクセルを offscreen に（形状クリップ込みで）描く
+  const temp = new OffscreenCanvas(tw, th);
+  const tctx = temp.getContext("2d") as CanvasRenderingContext2D | null;
+  if (!tctx) return;
+  if (!isMarkerShape(layer.shape) && !(layer.type === "comment" && layer.bubble)) {
+    applyShapeClip(tctx, layer, w, h);
+  }
+  await drawLayerContentInBox(
+    tctx,
+    layer,
+    w,
+    h,
+    resolveSrc,
+    videoFrameSources,
+    animAtTimeSec,
+  );
+
+  // 2) セル（粒）に分割して崩落
+  const pxScale = FINAL_W / 360;
+  // 粒数が過大にならないようセル px に下限（cols*rows ≲ 2600）
+  let cellPx = Math.max(3, (dis.cell ?? 8) * pxScale);
+  cellPx = Math.max(cellPx, Math.sqrt((w * h) / 2600));
+  const cols = Math.max(1, Math.ceil(w / cellPx));
+  const rows = Math.max(1, Math.ceil(h / cellPx));
+  const dir = dis.direction ?? "down";
+  const gravity = dis.gravity ?? 1;
+  const fade = dis.fade !== false;
+  const ease = easeOf(dis.ease ?? "easeInQuad");
+  const inherit = !dis.color || dis.color === "inherit";
+  const rng = mulberry32(hashSeed((layer.id || "dis") + "disintegrate"));
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const r1 = rng();
+      const r2 = rng();
+      const r3 = rng();
+      const sx = c * cellPx;
+      const sy = r * cellPx;
+      const cw = Math.min(cellPx, w - sx);
+      const ch = Math.min(cellPx, h - sy);
+      if (cw <= 0 || ch <= 0) continue;
+      // スタッガ: down=上の行から / up=下の行から / scatter=一斉
+      const base =
+        dir === "up" ? 1 - r / rows : dir === "scatter" ? 0 : r / rows;
+      const start = base * 0.4 + r3 * 0.05;
+      const lp = Math.max(0, Math.min(1, (p - start) / Math.max(0.001, 1 - start)));
+      const m = ease(lp);
+      let dx = 0;
+      let dy = 0;
+      let rot = 0;
+      if (dir === "scatter") {
+        const ang = r1 * Math.PI * 2;
+        const dist = m * (w * 0.6 + r2 * w * 0.5);
+        dx = Math.cos(ang) * dist;
+        dy = Math.sin(ang) * dist + m * m * h * 0.6 * gravity;
+        rot = (r2 - 0.5) * m * 4;
+      } else {
+        const sign = dir === "up" ? -1 : 1;
+        dx = (r1 - 0.5) * cellPx * 5 * m;
+        dy = sign * m * m * (h * 1.2 + r2 * h) * gravity;
+        rot = (r2 - 0.5) * m * 2;
+      }
+      const alpha = fade ? Math.max(0, 1 - m) : 1;
+      if (alpha <= 0.003) continue;
+      ctx.save();
+      ctx.globalAlpha *= alpha;
+      ctx.translate(sx + cw / 2 + dx, sy + ch / 2 + dy);
+      if (rot) ctx.rotate(rot);
+      if (inherit) {
+        ctx.drawImage(temp, sx, sy, cw, ch, -cw / 2, -ch / 2, cw, ch);
+      } else {
+        ctx.fillStyle = dis.color as string;
+        ctx.fillRect(-cw / 2, -ch / 2, cw, ch);
+      }
+      ctx.restore();
+    }
+  }
+}
+
 async function drawLayer(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
@@ -627,6 +808,32 @@ async function drawLayer(
     ctx.translate(-w / 2, -h / 2);
   } else {
     ctx.translate(x, y);
+  }
+
+  // 崩壊/砂化（§6・exit 系）: 開始後は自身のピクセルを粒に分解して崩落させ、崩れ切ったら非表示。
+  if (layer.disintegrate && animAtTimeSec !== undefined) {
+    const dis = layer.disintegrate;
+    const dur = Math.max(0.05, dis.duration ?? 1.2);
+    const dt = animAtTimeSec - layer.startSec - (dis.t ?? 0);
+    if (dt > dur) {
+      ctx.restore();
+      return; // 崩れ切った後は完全に消す（本体を残さない）
+    }
+    if (dt >= 0) {
+      await drawDisintegrating(
+        ctx,
+        layer,
+        w,
+        h,
+        dt / dur,
+        resolveSrc,
+        videoFrameSources,
+        animAtTimeSec,
+      );
+      ctx.restore();
+      return;
+    }
+    // dt<0（崩壊前）は通常描画へフォールスルー
   }
 
   // 入退場/ambient と motion を計算（適用は flip 有無で分岐）。

@@ -407,6 +407,7 @@ export async function exportTemplateWebCodecs(
           videoFrameSources.size > 0 ? videoFrameSources : undefined,
         applyAnim: true,
         groups: template.groups,
+        cameras: template.cameras,
       });
       ctx.filter = "none";
       ctx.restore();
@@ -470,12 +471,14 @@ export async function exportTemplateWebCodecs(
             applyAnim: true,
             videoFrameSources: vfs,
             groups: template.groups,
+        cameras: template.cameras,
           });
           await renderLayersOnContext(cc, template.layers, resolveSrc, {
             atTimeSec: snapTr.te,
             applyAnim: true,
             videoFrameSources: vfs,
             groups: template.groups,
+        cameras: template.cameras,
           });
           ctx.clearRect(0, 0, dims.width, dims.height);
           composeSnapshotTransition(

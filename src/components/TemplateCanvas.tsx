@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer, TransitionSpec, LayerGroup } from "../types";
+import type { Layer, TransitionSpec, LayerGroup, CameraSpec } from "../types";
 import { templateDimensions } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
@@ -66,6 +66,8 @@ interface Props {
   transitions?: TransitionSpec[];
   /** レイヤーグループ（ステージ）。Layer.groupId で所属したレイヤーを一括変換。 */
   groups?: LayerGroup[];
+  /** カメラ変換（Phase3 C-1）。groupId 一致レイヤーに scale+移動を上掛け。 */
+  cameras?: CameraSpec[];
   selectedLayerId: string | null;
   /** 複数選択中の全 id。未指定なら [selectedLayerId] 相当 */
   selectedLayerIds?: string[];
@@ -101,6 +103,7 @@ export function TemplateCanvas({
   layers,
   transitions,
   groups,
+  cameras,
   selectedLayerId,
   selectedLayerIds,
   onLayerSelect,
@@ -162,6 +165,8 @@ export function TemplateCanvas({
   transitionsRef.current = transitions;
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
+  const camerasRef = useRef(cameras);
+  camerasRef.current = cameras;
   // 編集中レイヤーは Canvas 描画から除外（DOM textarea を重ねて二重描画を避ける）
   const initW = Math.round(Math.min(CANVAS_MAX_W_PX, 360));
   const [canvasSize, setCanvasSize] = useState({
@@ -374,6 +379,7 @@ export function TemplateCanvas({
         // 停止/スクラブ中は手書きを全文表示（編集レイアウト安定）。再生中は時刻どおり書き進む。
         staticHandwrite: !isPlayingRef.current,
         groups: groupsRef.current,
+        cameras: camerasRef.current,
       });
       octx.filter = "none";
       octx.restore();

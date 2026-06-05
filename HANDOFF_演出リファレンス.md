@@ -191,6 +191,43 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
   - `kfs:[{t(絶対秒), offsetX?, offsetY?, scale?, opacity?, ease?}]` で**時間アニメ**（例: シーン全体を隅に縮小）。
 - 使い所: ステージを隅に畳む(PinP風) / コールアウト等を1単位で出し入れ / シーン丸ごとフェード切替 / インフォグラフ一式を一括スケール。
 
+### カメラ変換 `cameras`（Phase3 C-1・「描きながらズーム」）🆕
+`groups` と同じステージ変換を、**curio-gen Phase3 仕様の形**で書ける（推奨）。各メンバーの entry/draw-on/kfs は生きたまま、その描画結果に scale+移動を上掛けする＝**marker-graph が draw-on で伸びる × 全体が俯瞰へズーム、を同時**に出せる。
+```jsonc
+"cameras": [{
+  "groupId": "expgraph",
+  "startSec": 60.5, "endSec": 69.4,     // この区間だけ有効（外は恒等）
+  "pivot": "bottom-left",                // center/top/left/right/各corner or [x,y]%。bottom-left=原点固定で引く
+  "kfs": [                               // t は startSec 起点の相対秒
+    { "t": 0, "scale": 2.4, "x": 0, "y": 0 },
+    { "t": 4, "scale": 0.8, "x": 0, "y": 0, "ease": "easeOutCubic" }
+  ]
+}]
+```
+- レイヤー側は `groupId:"expgraph"` で所属。pivot 名は**グループの bounding box** 上の点に解決（bottom-left=左下＝原点を固定）。
+- 受け入れ例(#7): `marker-graph(draw-on 4s)` ＋ 軸/グリッド(同 groupId) ＋ 上記 camera で、曲線が伸びながら全体が俯瞰へ引け、原点が常に画面内。
+- 注: §1-1（kfs が draw-on を抑止）は**該当しない** — `draw-on`(marker/handwrite/arc-sweep) は transform系 entry とは別系統で、`kfs` があっても進捗が走る。**単層で「draw-on で描く × kfs で width/height/scale ズーム」は併用可（C-2 §1-1 成立）。** `reveal` も kfs リサイズ後の box に追従する（C-2 §1-2 成立）。`kfs` が抑止するのは fade/slide/pop 等の transform系 entry のみ（kfs が transform を駆動するため）。
+
+## 9.6 崩壊/砂化 `disintegrate`（Phase3 §6・exit 系）🆕
+
+対象（text/image/shape/color）の**描画ピクセルを粒に分解して崩落/飛散**させて消す。`particles` と違い
+**本体そのもの**が粒になる（color:"inherit" で本体色を継承＝「その物が崩れた」）。
+```jsonc
+"disintegrate": {
+  "t": 1.5,                 // startSec 相対秒。ここで崩壊開始（既定0）
+  "duration": 1.2,          // 崩れ切るまで（既定1.2）。以降 endSec まで非表示
+  "direction": "down",      // down(落下・既定) | up(舞い上がる) | scatter(四散)
+  "gravity": 1.0,
+  "cell": 8,                // 粒サイズ目安 px（design基準。小=砂/大=破片）
+  "color": "inherit",       // inherit(既定)=本体ピクセル色 / "#hex"=単色
+  "fade": true,
+  "ease": "easeInQuad"
+}
+```
+- 崩壊開始まで通常表示 → `t`〜`t+duration` で粒に分解して落ち、終了後はレイヤー消滅（本体を残さない）。
+- kfs/entry と独立（exit 段）。`direction:"down"` は上の行から順に崩れる。
+- 受け入れ例(#8): `text "¥1,000,000"` ＋ `disintegrate{down, color:inherit, 1.2s}` で、文字が自身の色の粒に分解して落下→完全消滅。
+
 ## 10. 音声（`type:"audio"`）✅
 `source`(絶対パス) / `volume`(0..1) / `audioFadeIn` / `audioFadeOut` / `audioLoop` / `playbackRate`(0.05..4) /
 ダッキング: `duckBy:[layerId]`(列挙レイヤーの表示中に音量を下げる) / `duckAmount`(既定0.3) / `duckAttackMs`(250) / `duckReleaseMs`(800)。

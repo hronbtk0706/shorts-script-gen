@@ -595,6 +595,46 @@ export type LayerMask =
       borderRadius?: number;
     };
 
+/** カメラ/グループ変換の基準点（名前指定）。グループのバウンディングボックス上の点に解決される。 */
+export type StagePivot =
+  | "center"
+  | "top-left"
+  | "top"
+  | "top-right"
+  | "left"
+  | "right"
+  | "bottom-left"
+  | "bottom"
+  | "bottom-right";
+
+/**
+ * カメラ変換のキーフレーム（Phase3 §2-2）。`t` はカメラの startSec 起点の相対秒。
+ * scale=拡大率 / x,y=平行移動 %（キャンバス基準）/ opacity=倍率。
+ */
+export interface CameraKeyframe {
+  t: number;
+  scale?: number;
+  x?: number;
+  y?: number;
+  opacity?: number;
+  ease?: KeyframeEase;
+}
+
+/**
+ * カメラ変換（Phase3 §2 C-1）。`groupId` 一致レイヤーの描画結果に、pivot 基準の
+ * scale + 平行移動を「上から」乗算する。メンバー自身の entry/draw-on/kfs はそのまま生きる
+ * （描きながらズーム、を同時実現）。`startSec` 外では恒等（変換なし）。kfs は startSec 起点の相対秒。
+ */
+export interface CameraSpec {
+  groupId: string;
+  /** カメラが有効な区間。startSec 未満は恒等。未指定なら kfs t を絶対秒として扱う。 */
+  startSec?: number;
+  endSec?: number;
+  /** 変換の基準点（名前 or [x,y]%・既定 center＝グループ bbox 中心）。 */
+  pivot?: StagePivot | [number, number];
+  kfs: CameraKeyframe[];
+}
+
 /**
  * レイヤーグループ（ステージ）の変換キーフレーム（絶対秒 t で補間）。
  * offset は % (キャンバス基準)、scale 倍率、opacity 倍率。
@@ -622,10 +662,34 @@ export interface LayerGroup {
   scale?: number;
   /** 不透明度倍率（既定 1）。 */
   opacity?: number;
-  /** 拡大の基準点 %（既定はグループ所属レイヤーのバウンディングボックス中心）。 */
-  pivot?: [number, number];
+  /** 拡大の基準点（名前 or [x,y]%・既定はグループ bbox 中心）。 */
+  pivot?: StagePivot | [number, number];
   /** 変換を時間で動かすキーフレーム（絶対秒）。あれば静的値より優先。 */
   kfs?: LayerGroupKeyframe[];
+}
+
+/**
+ * 崩壊/砂化エフェクト（Phase3 §6・exit 系）。対象（text/image/shape/color）の描画ピクセルを
+ * 粒に分解し、崩落/飛散させて消す。`color:"inherit"` で本体のピクセル色を継承（その物が崩れた感）。
+ * `t`(startSec相対秒) で崩壊開始、`duration` で崩れ切り、以降 endSec まで非表示。kfs/entry と独立。
+ */
+export interface DisintegrateSpec {
+  /** 崩壊開始（startSec 相対秒・既定 0）。 */
+  t?: number;
+  /** 崩れ切るまでの秒（既定 1.2）。 */
+  duration?: number;
+  /** 崩れ方（既定 "down"=落下 / "up"=舞い上がる / "scatter"=四散）。 */
+  direction?: "down" | "up" | "scatter";
+  /** 落下の強さ（既定 1）。 */
+  gravity?: number;
+  /** 粒のサイズ目安 px（design 360 基準・既定 8。小=砂 / 大=破片）。 */
+  cell?: number;
+  /** 粒の色。"inherit"(既定)=本体ピクセル色を継承 / "#hex"=単色。 */
+  color?: "inherit" | string;
+  /** 落ちながらフェードアウト（既定 true）。 */
+  fade?: boolean;
+  /** 動きのイージング（既定 easeInQuad）。 */
+  ease?: KeyframeEase;
 }
 
 /** v2 Timeline 型レイヤー */
@@ -704,6 +768,8 @@ export interface Layer {
   motion?: Motion;
   /** 所属するレイヤーグループ（ステージ）の id。VideoTemplate.groups の id と対応。 */
   groupId?: string;
+  /** 崩壊/砂化エフェクト（exit 系・自身のピクセルを粒に分解して崩落させる）。 */
+  disintegrate?: DisintegrateSpec;
   /** タイムライン上の開始秒（動画全体の何秒目に表示開始） */
   startSec: number;
   /** タイムライン上の終了秒 */
@@ -937,6 +1003,8 @@ export interface VideoTemplate {
   transitions?: TransitionSpec[];
   /** レイヤーグループ（ステージ）。Layer.groupId で所属。一括縮小/移動/フェード用。 */
   groups?: LayerGroup[];
+  /** カメラ変換（Phase3 C-1）。groupId 一致レイヤーに pivot 基準の scale+移動を上掛け。 */
+  cameras?: CameraSpec[];
   /** @deprecated 旧版互換: 単一動画のインポート結果。新版は importedCommentBundles を使用 */
   importedComments?: ExtractedComment[];
   /** @deprecated 旧版互換: 上の取得元情報 */

@@ -1234,6 +1234,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               layers={template.layers}
               transitions={template.transitions}
               groups={template.groups}
+              cameras={template.cameras}
               selectedLayerId={selectedLayerId}
               selectedLayerIds={selectedLayerIds}
               onLayerSelect={handleLayerSelect}
