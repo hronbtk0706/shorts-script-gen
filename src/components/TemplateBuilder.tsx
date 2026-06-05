@@ -117,6 +117,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
     setSelectedLayerIds(id === null ? [] : [id]);
   }, []);
   const [showGrid, setShowGrid] = useState(false);
+  const [showSafeArea, setShowSafeArea] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
@@ -1232,11 +1233,13 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
             <TemplateCanvas
               layers={template.layers}
               transitions={template.transitions}
+              groups={template.groups}
               selectedLayerId={selectedLayerId}
               selectedLayerIds={selectedLayerIds}
               onLayerSelect={handleLayerSelect}
               onLayerUpdate={updateLayer}
               showGrid={showGrid}
+              showSafeArea={showSafeArea}
               currentTimeSec={playheadSec}
               isPlaying={isPlaying}
               aspect={template.aspect ?? "vertical"}
@@ -1421,6 +1424,15 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               />
               グリッド
             </label>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showSafeArea}
+                onChange={(e) => setShowSafeArea(e.target.checked)}
+                className="h-3 w-3"
+              />
+              セーフエリア
+            </label>
             {selectedLayer && !selectedLayerInTime && (
               <span className="px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px]">
                 ⚠ 選択は非表示
@@ -1511,6 +1523,15 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
                   className="h-3 w-3"
                 />
                 グリッド
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showSafeArea}
+                  onChange={(e) => setShowSafeArea(e.target.checked)}
+                  className="h-3 w-3"
+                />
+                セーフエリア
               </label>
               {selectedLayer && !selectedLayerInTime && (
                 <span className="px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 text-[10px]">

@@ -180,6 +180,17 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 
 ---
 
+## 9.5 レイヤーグループ（ステージ）`groups` 🆕
+
+複数レイヤーを**ひとまとまり（ステージ）として一括で縮小/移動/フェード**する。ctx 変換で包むので
+位置だけでなく文字サイズ・線幅も一緒に正しくスケールする。preview/export とも反映。
+
+- レイヤー側: `groupId:"<id>"` で所属させる。
+- top-level: `groups: [{ id, offsetX?, offsetY?, scale?, opacity?, pivot?:[x,y], kfs? }]`
+  - `offsetX/Y`(% 移動) / `scale`(拡大率) / `opacity`(倍率)。`pivot` 未指定は**所属レイヤーのバウンディングボックス中心**。
+  - `kfs:[{t(絶対秒), offsetX?, offsetY?, scale?, opacity?, ease?}]` で**時間アニメ**（例: シーン全体を隅に縮小）。
+- 使い所: ステージを隅に畳む(PinP風) / コールアウト等を1単位で出し入れ / シーン丸ごとフェード切替 / インフォグラフ一式を一括スケール。
+
 ## 10. 音声（`type:"audio"`）✅
 `source`(絶対パス) / `volume`(0..1) / `audioFadeIn` / `audioFadeOut` / `audioLoop` / `playbackRate`(0.05..4) /
 ダッキング: `duckBy:[layerId]`(列挙レイヤーの表示中に音量を下げる) / `duckAmount`(既定0.3) / `duckAttackMs`(250) / `duckReleaseMs`(800)。
@@ -198,6 +209,9 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 - **折れ線グラフ**🆕: `shape:"marker-graph"` + `graphData:[…]` + `entryAnimation:"draw-on"`。`markerRoughness:0` で直線。
 - **プログレスバー**: トラック=`shape:"rounded"`(灰) を敷き、その上に塗り=`shape:"rounded"` を `entryAnimation:"grow-right"`(左基準で伸びる)。塗りレイヤーの `width%` が到達値（例 80%地点に置けば 80% 進捗）。
 - **ラジアルゲージ**: トラック=`shape:"arc"`(`arcEnd:360`,`arcInnerRadius:0.62`,灰) を敷き、その上に値=`shape:"arc"`(`arcEnd:値の角度`,同 innerRadius,`entryAnimation:"arc-sweep"`)。
+- **ローワーサード（名前テロップ帯）**🆕: 帯=`shape:"rounded"` + 細いアクセント=`shape:"rect"`（左端）+ 名前=`comment`(大) + 肩書=`comment`(小)。全部 `entryAnimation:"slide-left"` でスッと入る。画面下 1/3 に配置。
+- **コールアウト吹き出し（引き出し線つき）**🆕: 対象を `shape:"marker-circle"`(`draw-on`)で丸囲み + `comment` に `bubble:{shape,tail:{tipX,tipY,baseWidth}}` を付けて tail を対象へ向ける（または `shape:"marker-line"` で引き出し線）。
+- **セーフエリアガイド**🆕: プレビュー上部ツールバーの「セーフエリア」チェックで action(3.5%)/title(5%) 枠を表示（プレビュー専用・出力には出ない）。
 
 ---
 

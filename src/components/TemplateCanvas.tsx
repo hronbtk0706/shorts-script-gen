@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Moveable from "react-moveable";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Layer, TransitionSpec } from "../types";
+import type { Layer, TransitionSpec, LayerGroup } from "../types";
 import { templateDimensions } from "../types";
 import { sortedLayers } from "../lib/layerUtils";
 import { sampleLayerAt } from "../lib/keyframes";
@@ -64,6 +64,8 @@ interface Props {
   layers: Layer[];
   /** Phase2 §C: 場面転換（fade-black/zoom）。最終合成に適用。 */
   transitions?: TransitionSpec[];
+  /** レイヤーグループ（ステージ）。Layer.groupId で所属したレイヤーを一括変換。 */
+  groups?: LayerGroup[];
   selectedLayerId: string | null;
   /** 複数選択中の全 id。未指定なら [selectedLayerId] 相当 */
   selectedLayerIds?: string[];
@@ -76,6 +78,8 @@ interface Props {
   canvasBackground?: string;
   /** グリッド表示 */
   showGrid?: boolean;
+  /** セーフエリアガイド（プレビュー専用・action 93% / title 90% の枠）。 */
+  showSafeArea?: boolean;
   /** 指定時刻に可視なレイヤーだけ表示（未指定なら全レイヤー） */
   currentTimeSec?: number;
   /** タイムライン再生中かどうか（動画レイヤー再生同期用） */
@@ -96,12 +100,14 @@ const CANVAS_HEIGHT_RATIO = 0.82;
 export function TemplateCanvas({
   layers,
   transitions,
+  groups,
   selectedLayerId,
   selectedLayerIds,
   onLayerSelect,
   onLayerUpdate,
   canvasBackground = "#111",
   showGrid = false,
+  showSafeArea = false,
   currentTimeSec,
   isPlaying = false,
   aspect = "vertical",
@@ -154,6 +160,8 @@ export function TemplateCanvas({
   layersRef.current = layers;
   const transitionsRef = useRef(transitions);
   transitionsRef.current = transitions;
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
   // 編集中レイヤーは Canvas 描画から除外（DOM textarea を重ねて二重描画を避ける）
   const initW = Math.round(Math.min(CANVAS_MAX_W_PX, 360));
   const [canvasSize, setCanvasSize] = useState({
@@ -365,6 +373,7 @@ export function TemplateCanvas({
         videoFrameSources: frameSources.size > 0 ? frameSources : undefined,
         // 停止/スクラブ中は手書きを全文表示（編集レイアウト安定）。再生中は時刻どおり書き進む。
         staticHandwrite: !isPlayingRef.current,
+        groups: groupsRef.current,
       });
       octx.filter = "none";
       octx.restore();
@@ -529,6 +538,38 @@ export function TemplateCanvas({
             backgroundSize: `${CANVAS_W_PX / 10}px ${CANVAS_H_PX / 10}px`,
           }}
         />
+      )}
+      {/* セーフエリアガイド（プレビュー専用）: 外=action-safe(3.5%余白) / 内=title-safe(5%余白) */}
+      {showSafeArea && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              position: "absolute",
+              left: "3.5%",
+              top: "3.5%",
+              right: "3.5%",
+              bottom: "3.5%",
+              border: "1px solid rgba(255, 215, 0, 0.55)",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              left: "5%",
+              top: "5%",
+              right: "5%",
+              bottom: "5%",
+              border: "1px solid rgba(255, 90, 90, 0.6)",
+            }}
+          />
+        </div>
       )}
       {/* レイヤー群は shake 用 inner div でラップ（グリッド/Moveable は揺らさない） */}
       <div style={screenShakeStyle}>

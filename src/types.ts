@@ -595,6 +595,39 @@ export type LayerMask =
       borderRadius?: number;
     };
 
+/**
+ * レイヤーグループ（ステージ）の変換キーフレーム（絶対秒 t で補間）。
+ * offset は % (キャンバス基準)、scale 倍率、opacity 倍率。
+ */
+export interface LayerGroupKeyframe {
+  t: number;
+  offsetX?: number;
+  offsetY?: number;
+  scale?: number;
+  opacity?: number;
+  ease?: KeyframeEase;
+}
+
+/**
+ * レイヤーグループ（ステージ）。`Layer.groupId` で所属させた複数レイヤーを
+ * ひとまとまりとして一括で縮小/移動/フェードする。ctx 変換で包むので位置だけでなく
+ * 文字サイズ・線幅も一緒に正しくスケールする。preview/export とも renderLayersOnContext で適用。
+ */
+export interface LayerGroup {
+  id: string;
+  /** 移動量 %（キャンバス基準・既定 0）。 */
+  offsetX?: number;
+  offsetY?: number;
+  /** 拡大率（pivot 基準・既定 1）。 */
+  scale?: number;
+  /** 不透明度倍率（既定 1）。 */
+  opacity?: number;
+  /** 拡大の基準点 %（既定はグループ所属レイヤーのバウンディングボックス中心）。 */
+  pivot?: [number, number];
+  /** 変換を時間で動かすキーフレーム（絶対秒）。あれば静的値より優先。 */
+  kfs?: LayerGroupKeyframe[];
+}
+
 /** v2 Timeline 型レイヤー */
 export interface Layer {
   id: string;
@@ -669,6 +702,8 @@ export interface Layer {
   /** テキストのフォントファミリ（CSS font-family 文字列。未指定 = システム既定スタック） */
   fontFamily?: string;
   motion?: Motion;
+  /** 所属するレイヤーグループ（ステージ）の id。VideoTemplate.groups の id と対応。 */
+  groupId?: string;
   /** タイムライン上の開始秒（動画全体の何秒目に表示開始） */
   startSec: number;
   /** タイムライン上の終了秒 */
@@ -900,6 +935,8 @@ export interface VideoTemplate {
   layers: Layer[];
   /** Phase2 §C: 場面転換（fade-black/zoom のみ適用、wipe/push/dissolve は未対応）。 */
   transitions?: TransitionSpec[];
+  /** レイヤーグループ（ステージ）。Layer.groupId で所属。一括縮小/移動/フェード用。 */
+  groups?: LayerGroup[];
   /** @deprecated 旧版互換: 単一動画のインポート結果。新版は importedCommentBundles を使用 */
   importedComments?: ExtractedComment[];
   /** @deprecated 旧版互換: 上の取得元情報 */

@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Layer } from "../types";
+import type { Layer, LayerGroup } from "../types";
 import { sortedLayers } from "./layerUtils";
 import { sampleLayerAt } from "./keyframes";
 import {
@@ -130,6 +130,8 @@ export async function renderLayersOnContext(
     /** 手書き（筆順）を全文表示(p=1)で描く。preview が停止/スクラブ中に渡す
      * （編集レイアウト安定用。実 export は渡さない＝時刻どおりに書き進む）。 */
     staticHandwrite?: boolean;
+    /** レイヤーグループ（ステージ）。Layer.groupId で所属したレイヤーに一括変換を掛ける。 */
+    groups?: LayerGroup[];
   } = {},
 ): Promise<void> {
   staticHandwriteFlag = opts.staticHandwrite === true;
@@ -140,6 +142,16 @@ export async function renderLayersOnContext(
     ctx.fillRect(0, 0, FINAL_W, FINAL_H);
   }
 
+  // レイヤーグループ（ステージ）の事前計算: id→group と pivot（バウンディングボックス中心）。
+  const groupsById = new Map<string, LayerGroup>();
+  const groupPivot = new Map<string, { x: number; y: number }>();
+  if (opts.groups) {
+    for (const g of opts.groups) {
+      groupsById.set(g.id, g);
+      groupPivot.set(g.id, computeGroupPivot(g, layers));
+    }
+  }
+
   const t = opts.atTimeSec;
   for (const layer of sortedLayers(layers)) {
     if (layer.type === "video" && opts.skipVideoLayers) continue;
@@ -147,14 +159,99 @@ export async function renderLayersOnContext(
     if (t !== undefined && (t < layer.startSec || t >= layer.endSec)) continue;
     // 時刻指定があればキーフレーム補間を反映
     const drawTarget = t !== undefined ? applyKeyframesAtTime(layer, t) : layer;
-    await drawLayer(
-      ctx as CanvasRenderingContext2D,
-      drawTarget,
-      resolveSrc,
-      opts.videoFrameSources,
-      opts.applyAnim ? t : undefined,
-    );
+
+    const grp = layer.groupId ? groupsById.get(layer.groupId) : undefined;
+    if (grp) {
+      // グループ変換を ctx に掛けて包む（位置・文字サイズ・線幅すべて一緒にスケール）。
+      const tr = sampleGroupTransform(grp, t);
+      const pv = groupPivot.get(grp.id) ?? { x: 50, y: 50 };
+      const px = (pv.x / 100) * FINAL_W;
+      const py = (pv.y / 100) * FINAL_H;
+      ctx.save();
+      ctx.translate(px + (tr.ox / 100) * FINAL_W, py + (tr.oy / 100) * FINAL_H);
+      ctx.scale(tr.scale, tr.scale);
+      ctx.translate(-px, -py);
+      const ld =
+        tr.opacity !== 1
+          ? ({ ...drawTarget, opacity: (drawTarget.opacity ?? 1) * tr.opacity } as Layer)
+          : drawTarget;
+      await drawLayer(
+        ctx as CanvasRenderingContext2D,
+        ld,
+        resolveSrc,
+        opts.videoFrameSources,
+        opts.applyAnim ? t : undefined,
+      );
+      ctx.restore();
+    } else {
+      await drawLayer(
+        ctx as CanvasRenderingContext2D,
+        drawTarget,
+        resolveSrc,
+        opts.videoFrameSources,
+        opts.applyAnim ? t : undefined,
+      );
+    }
   }
+}
+
+/** グループの拡大基準点 %（pivot 指定が無ければ所属レイヤーのバウンディングボックス中心）。 */
+function computeGroupPivot(
+  g: LayerGroup,
+  layers: Layer[],
+): { x: number; y: number } {
+  if (g.pivot) return { x: g.pivot[0], y: g.pivot[1] };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let n = 0;
+  for (const l of layers) {
+    if (l.groupId !== g.id) continue;
+    n++;
+    minX = Math.min(minX, l.x);
+    minY = Math.min(minY, l.y);
+    maxX = Math.max(maxX, l.x + l.width);
+    maxY = Math.max(maxY, l.y + l.height);
+  }
+  if (n === 0) return { x: 50, y: 50 };
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+/** グループ変換を時刻 t で求める（kfs があれば絶対秒で補間、無ければ静的値）。 */
+function sampleGroupTransform(
+  g: LayerGroup,
+  t: number | undefined,
+): { ox: number; oy: number; scale: number; opacity: number } {
+  const bo = { ox: g.offsetX ?? 0, oy: g.offsetY ?? 0, scale: g.scale ?? 1, opacity: g.opacity ?? 1 };
+  if (!g.kfs || g.kfs.length === 0 || t === undefined) return bo;
+  const kfs = [...g.kfs].sort((a, b) => a.t - b.t);
+  const resolve = (kf: (typeof kfs)[number]) => ({
+    ox: kf.offsetX ?? bo.ox,
+    oy: kf.offsetY ?? bo.oy,
+    scale: kf.scale ?? bo.scale,
+    opacity: kf.opacity ?? bo.opacity,
+  });
+  if (t <= kfs[0].t) return resolve(kfs[0]);
+  if (t >= kfs[kfs.length - 1].t) return resolve(kfs[kfs.length - 1]);
+  const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+  for (let i = 0; i < kfs.length - 1; i++) {
+    const a = kfs[i];
+    const b = kfs[i + 1];
+    if (t >= a.t && t <= b.t) {
+      const span = b.t - a.t;
+      const k = span <= 0 ? 1 : easeOf(b.ease)((t - a.t) / span);
+      const ra = resolve(a);
+      const rb = resolve(b);
+      return {
+        ox: lerp(ra.ox, rb.ox, k),
+        oy: lerp(ra.oy, rb.oy, k),
+        scale: lerp(ra.scale, rb.scale, k),
+        opacity: lerp(ra.opacity, rb.opacity, k),
+      };
+    }
+  }
+  return bo;
 }
 
 /** 指定時刻でのキーフレーム補間値を layer に適用した新しい Layer を返す（グローバル時刻 t） */
