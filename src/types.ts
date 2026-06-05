@@ -32,7 +32,10 @@ export type LayerShape =
   | "marker-burst" // 集中線（焦点へ放射状）
   // 数値サージ（curio-gen 依頼書 ④）。markerFrom→markerTo を急加速イージング(expo-out)で
   // 一気に描き、終端に三角ヘッド + 着弾フラッシュ。entryAnimation:"draw-on" で駆動。
-  | "marker-surge";
+  | "marker-surge"
+  // 折れ線グラフ。graphData(数値配列)を箱内にスケールして結ぶ。entryAnimation:"draw-on" で
+  // 左から描き進む。線色=fillColor、太さ=markerWidth、揺れ=markerRoughness(0で直線推奨)。
+  | "marker-graph";
 
 /** 画面全体エフェクトの種類（type === "effect" の layer.effectKind で指定）。
  *  effect layer は pixel を出力せず、[startSec, endSec] の間 最終合成フレーム全体に効果を適用する。 */
@@ -79,6 +82,22 @@ export type HandwriteTip = "chalk" | "pen" | "marker" | "pencil";
 export type SurfaceKind = "none" | "blackboard" | "whiteboard" | "notebook";
 
 /**
+ * 手書きの「書き上がり後」に同じ手書きタッチで追い書きする注釈。
+ * 本文を全画書き終えた直後に、ペン先が続けて引く（draw-on と同じ進捗機構に乗る）。
+ * - none: なし（既定）
+ * - underline: 各行の下に手書きの下線
+ * - box: 本文全体を囲むラフな手書き矩形
+ * - strike: 各行の中央に取り消し線（1 本）
+ * - double-strike: 各行の中央に「二本線で訂正」
+ */
+export type HandwriteAnnotate =
+  | "none"
+  | "underline"
+  | "box"
+  | "strike"
+  | "double-strike";
+
+/**
  * 手書き「筆順」ライトオン（curio-gen 依頼書・本命）。
  * これがある text(comment) レイヤーは文字を一画ずつ「書かれていく」アニメで描画する。
  * - 日本語（漢字・かな）は KanjiVG、ASCII は Hershey 単線フォントの筆順を使う（Phase B で同梱）。
@@ -97,6 +116,16 @@ export interface HandwriteSpec {
   jitter?: number;
   /** 線の太さ design(360) 基準 px（未指定 ≒ fontSize*0.07）。 */
   strokeWidth?: number;
+  /**
+   * 書き味の緩急 0..1（既定 0・人による速度のばらつき）。
+   * 画ごとに書く速度を決定論乱数（seed=layer.id）で揺らす。0=一定（従来どおり）、
+   * 1=最も大きく緩急がつく。order(書き順)は変えない（ランダム筆順ではない）。
+   */
+  tempo?: number;
+  /** 書き上がり後に追い書きする注釈（下線/囲み/取り消し/二本線訂正）。既定 none。 */
+  annotate?: HandwriteAnnotate;
+  /** 注釈の色（未指定なら本文インク色 ink を流用）。訂正を赤にしたい時などに使う。 */
+  annotateColor?: string;
 }
 
 /**
@@ -142,7 +171,9 @@ export type EntryAnimation =
   | "draw-on"
   // テキスト専用（curio-gen 依頼書 ③）。縦に潰れて(scaleY 1→0)、中央で text→flipTo に
   // 差し替え、後半 0→1 で戻るパタパタ式の値札フリップ。flipTo / flipAtSec と併用。
-  | "flip-swap";
+  | "flip-swap"
+  // 判子のように大きく現れて叩きつけ、わずかに反動して定位置に収まる（強調・インパクト）。
+  | "stamp";
 
 export type ExitAnimation =
   | "none"
@@ -188,7 +219,8 @@ export type CharAnimation =
   | "slide-right"
   | "pop-each"
   | "shake-each"
-  | "blink-each";
+  | "blink-each"
+  | "scale-pulse-each";
 
 /** 単語単位のキネティック演出（テキスト専用） */
 export type KineticAnimation =
@@ -382,7 +414,12 @@ export interface DrawnEffectParams {
     | "heart"
     | "star"
     | "bubble"
-    | "spark";
+    | "spark"
+    | "snow"
+    | "rain"
+    | "leaves"
+    | "petals"
+    | "smoke";
   /** particles: 生成レート（個/秒）。 */
   rate?: number;
   /** particles: 生成総数の上限（必須級・上限到達で生成停止）。 */
@@ -564,9 +601,10 @@ export interface Layer {
   markerRoughness?: number; // 手書き揺れ量 0..2。既定 1.0
   markerFrom?: { x: number; y: number }; // marker-arrow/line 始点（box 内 %）。既定 左下
   markerTo?: { x: number; y: number }; // marker-arrow/line 終点（box 内 %）。既定 右上
-  markerHead?: "none" | "triangle"; // marker-arrow/line の先端ヘッド。既定 arrow=triangle / line=none
+  markerHead?: "none" | "triangle" | "open"; // marker-arrow/line の先端ヘッド。triangle=塗り三角 / open=手書き風の開いた矢じり(2本線)。既定 arrow=triangle / line=none
   markerCount?: number; // marker-burst の集中線本数。既定 12
   markerOvershoot?: number; // marker-surge の終端オーバーシュート量（線長比 0..0.5。既定 0.1）
+  graphData?: number[]; // marker-graph 用のデータ値配列（最小2点）。箱内に min..max でスケール
   source?: "auto" | "user" | string;
   fillColor?: string;
   /** color/shape の塗りをグラデーションに（fillColor より優先・rect/rounded/circle に適用）。 */

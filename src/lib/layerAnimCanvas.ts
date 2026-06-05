@@ -183,6 +183,17 @@ export function computeCanvasAnim(
         // 原点は中央(originY=0.5)のまま。preview computeLayerAnimStyle と一致。
         sy = Math.max(0.001, Math.abs(p - 0.5) * 2);
         break;
+      case "stamp": {
+        // 判子: 2.0 倍から easeOutBack で叩きつけ（中盤 1.0 を下回って微反動）→ 1.0 へ。
+        // 軽い傾きが 0 に戻る。preview computeLayerAnimStyle と数式一致。
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        const eb = 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+        sx = sy = Math.max(0.001, 2.0 - eb);
+        rot = ((1 - e) * -4 * Math.PI) / 180;
+        opacity *= Math.min(1, p * 3);
+        break;
+      }
     }
   }
 

@@ -195,12 +195,13 @@ export function computeMarker(
       const a: Pt = { x: (from.x / 100) * w, y: (from.y / 100) * h };
       const b: Pt = { x: (to.x / 100) * w, y: (to.y / 100) * h };
       const full = jitterLine(a, b, amp * 0.6, 40, wob);
-      const t = truncate(full, p);
-      if (t.length) strokes.push(t);
-      // ヘッド有無: arrow 既定 triangle / line 既定 none。p>=0.85 で出す
       const head =
         layer.markerHead ?? (shape === "marker-arrow" ? "triangle" : "none");
-      if (head === "triangle" && p >= 0.85) {
+      if (head === "open") {
+        // open: 矢じりも draw-on で手書きする。進捗を 軸(0〜0.8)→barb左(0.8〜0.9)→
+        // barb右(0.9〜1.0) に割り当て、ペンが軸を描いてから矢じり2本を続けて描く。
+        const ts = truncate(full, localP(p, 0, 0.8));
+        if (ts.length) strokes.push(ts);
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const len = Math.hypot(dx, dy) || 1;
@@ -208,14 +209,43 @@ export function computeMarker(
         const uy = dy / len;
         const px = -uy;
         const py = ux;
-        const hd = Math.min(Math.max(len * 0.22, 12 * pxScale), 46 * pxScale);
-        const back = hd * 0.9;
-        const wide = hd * 0.5;
-        arrowHead = [
-          { x: b.x, y: b.y },
-          { x: b.x - ux * back + px * wide, y: b.y - uy * back + py * wide },
-          { x: b.x - ux * back - px * wide, y: b.y - uy * back - py * wide },
-        ];
+        const hd = Math.min(Math.max(len * 0.2, 12 * pxScale), 42 * pxScale);
+        const wide = hd * 0.6;
+        const tip: Pt = { x: b.x, y: b.y };
+        const left: Pt = {
+          x: b.x - ux * hd + px * wide,
+          y: b.y - uy * hd + py * wide,
+        };
+        const right: Pt = {
+          x: b.x - ux * hd - px * wide,
+          y: b.y - uy * hd - py * wide,
+        };
+        // barb は「先端 → 外側」の向きに描く（ペン先が tip から払うイメージ）。
+        const tl = truncate(jitterLine(tip, left, amp * 0.5, 6, wob), localP(p, 0.8, 0.9));
+        const trb = truncate(jitterLine(tip, right, amp * 0.5, 6, wob), localP(p, 0.9, 1));
+        if (tl.length) strokes.push(tl);
+        if (trb.length) strokes.push(trb);
+      } else {
+        const t = truncate(full, p);
+        if (t.length) strokes.push(t);
+        // ヘッド有無: arrow 既定 triangle / line 既定 none。p>=0.85 で塗り三角を出す
+        if (head === "triangle" && p >= 0.85) {
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const ux = dx / len;
+          const uy = dy / len;
+          const px = -uy;
+          const py = ux;
+          const hd = Math.min(Math.max(len * 0.22, 12 * pxScale), 46 * pxScale);
+          const back = hd * 0.9;
+          const wide = hd * 0.5;
+          arrowHead = [
+            { x: b.x, y: b.y },
+            { x: b.x - ux * back + px * wide, y: b.y - uy * back + py * wide },
+            { x: b.x - ux * back - px * wide, y: b.y - uy * back - py * wide },
+          ];
+        }
       }
       break;
     }
@@ -272,6 +302,38 @@ export function computeMarker(
       const fa = ep < 0.78 ? 0 : Math.sin(((ep - 0.78) / 0.22) * Math.PI);
       if (fa > 0.001) {
         flash = { x: b.x, y: b.y, r: Math.max(8, 26 * pxScale), alpha: fa };
+      }
+      break;
+    }
+    case "marker-graph": {
+      // 折れ線グラフ: graphData を箱内に min..max でスケールして結ぶ。draw-on は p で truncate。
+      const data = layer.graphData ?? [];
+      if (data.length >= 2) {
+        const gm = Math.min(w, h) * 0.08; // 箱内マージン
+        let minV = Infinity;
+        let maxV = -Infinity;
+        for (const v of data) {
+          if (v < minV) minV = v;
+          if (v > maxV) maxV = v;
+        }
+        const range = maxV - minV || 1;
+        const left = gm;
+        const right = w - gm;
+        const top = gm;
+        const bottom = h - gm;
+        const pts: Pt[] = data.map((v, idx) => ({
+          x: left + (idx / (data.length - 1)) * (right - left),
+          y: bottom - ((v - minV) / range) * (bottom - top), // 下=小 / 上=大
+        }));
+        // 各区間をサンプリングして jitter を乗せつつ 1 本のポリラインに連結（truncate がスムーズ）。
+        const full: Pt[] = [];
+        for (let s = 0; s < pts.length - 1; s++) {
+          const seg = jitterLine(pts[s], pts[s + 1], amp * 0.4, 6, wob);
+          if (s === 0) full.push(...seg);
+          else full.push(...seg.slice(1));
+        }
+        const t = truncate(full, p);
+        if (t.length) strokes.push(t);
       }
       break;
     }

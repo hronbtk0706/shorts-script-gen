@@ -27,6 +27,8 @@ export type MeasureFn = (text: string, fontPx: number) => number;
 export interface HandwriteRender {
   /** 描くべきストローク（truncate 済みポリライン・box px）。 */
   strokes: Pt[][];
+  /** 書き上がり後の注釈ストローク（下線/囲み/取消・本文と別色で描けるよう分離）。 */
+  annotateStrokes: Pt[][];
   /** ペン先（現在描いている画の先端）。idle / 完成時は null。 */
   penTip: { x: number; y: number; angle: number } | null;
   /** char-sweep フォールバック文字（box px・clip=0..1 の左→右出現率）。 */
@@ -192,9 +194,12 @@ export function computeHandwrite(
 
   // --- 2) 全画/フォールバックを書き順に 1 列化（box px へ写像 + jitter）---
   type Seg =
-    | { kind: "stroke"; pts: Pt[]; len: number }
+    | { kind: "stroke"; pts: Pt[]; len: number; annotate?: boolean }
     | { kind: "sweep"; x: number; y: number; w: number; h: number; ch: string; len: number };
   const segs: Seg[] = [];
+
+  // 注釈（下線/囲み）の幾何に使う行ごとの矩形（box px）。
+  const lineBoxes: { left: number; right: number; top: number; bottom: number; centerY: number }[] = [];
 
   // 揺れ幅は固定 px ではなく fontPx 比例にする（小さい字で相対的に揺れすぎて「ぐにゃぐにゃ」に
   // なるのを防ぐ）。既定は控えめ。jitter を上げると手書き感を強められる。
@@ -207,6 +212,13 @@ export function computeHandwrite(
     const cellTop = centerY - fontPx / 2;
     lineBaselines.push(cellTop + baselineNorm * fontPx);
     let cellLeft = (w - line.widthPx) / 2;
+    lineBoxes.push({
+      left: cellLeft,
+      right: cellLeft + line.widthPx,
+      top: cellTop,
+      bottom: cellTop + fontPx,
+      centerY: cellTop + fontPx / 2,
+    });
     for (const c of line.chars) {
       if (c.glyph) {
         for (const stroke of c.glyph.strokes) {
@@ -234,6 +246,72 @@ export function computeHandwrite(
     }
   }
 
+  // --- 2.5) 書き上がり後の注釈（下線/囲み/取り消し/二本線訂正）を seg 末尾に足す ---
+  // 本文ストロークの後ろに置くことで、全画書き終えた後に同じ進捗機構で「追い書き」される。
+  const annotate = layer.handwrite?.annotate ?? "none";
+  if (annotate !== "none" && lineBoxes.length > 0) {
+    const arng = mulberry32(hashSeed((layer.id || "handwrite") + "annot"));
+    const awob = makeWobble(arng);
+    const annotAmp = fontPx * 0.02 + jitterAmp; // 注釈は本文より少しラフに
+    const pad = fontPx * 0.12; // 行端より少しはみ出す手書きらしさ
+
+    // 直線を seg 数ぶんサンプルして jitter を乗せたポリラインにする。
+    const roughLine = (x0: number, y0: number, x1: number, y1: number): Pt[] => {
+      const N = 14;
+      const raw: Pt[] = [];
+      for (let i = 0; i <= N; i++) {
+        const s = i / N;
+        raw.push({ x: x0 + (x1 - x0) * s, y: y0 + (y1 - y0) * s });
+      }
+      return jitterPolyline(raw, annotAmp, awob);
+    };
+    const pushLine = (pts: Pt[]) => {
+      segs.push({ kind: "stroke", pts, len: Math.max(0.001, polylineLength(pts)), annotate: true });
+    };
+
+    if (annotate === "box") {
+      // 全行を囲む 1 本のラフ矩形（左上→右上→右下→左下→左上）。
+      let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+      for (const b of lineBoxes) {
+        if (b.left < left) left = b.left;
+        if (b.right > right) right = b.right;
+        if (b.top < top) top = b.top;
+        if (b.bottom > bottom) bottom = b.bottom;
+      }
+      const m = pad * 1.5;
+      left -= m; right += m; top -= m; bottom += m;
+      const N = 16;
+      const corners: [number, number][] = [
+        [left, top], [right, top], [right, bottom], [left, bottom], [left, top],
+      ];
+      const raw: Pt[] = [];
+      for (let c = 0; c < corners.length - 1; c++) {
+        const [x0, y0] = corners[c];
+        const [x1, y1] = corners[c + 1];
+        for (let i = 0; i < N; i++) {
+          const s = i / N;
+          raw.push({ x: x0 + (x1 - x0) * s, y: y0 + (y1 - y0) * s });
+        }
+      }
+      raw.push({ x: corners[0][0], y: corners[0][1] });
+      pushLine(jitterPolyline(raw, annotAmp, awob));
+    } else {
+      for (let li = 0; li < lineBoxes.length; li++) {
+        const b = lineBoxes[li];
+        if (annotate === "underline") {
+          const y = lineBaselines[li] + fontPx * 0.08;
+          pushLine(roughLine(b.left - pad, y, b.right + pad, y));
+        } else if (annotate === "strike") {
+          pushLine(roughLine(b.left - pad, b.centerY, b.right + pad, b.centerY));
+        } else if (annotate === "double-strike") {
+          const d = fontPx * 0.08;
+          pushLine(roughLine(b.left - pad, b.centerY - d, b.right + pad, b.centerY - d));
+          pushLine(roughLine(b.left - pad, b.centerY + d, b.right + pad, b.centerY + d));
+        }
+      }
+    }
+  }
+
   // --- 3) 書き秒（writeDur）と進捗 p ---
   const strokeCount = Math.max(1, segs.length);
   const speed = Math.max(0.1, layer.handwrite?.speed ?? 1);
@@ -241,13 +319,23 @@ export function computeHandwrite(
   const writeDur = (layer.entryDuration ?? autoDur) / speed;
   const p = forceFull ? 1 : Math.max(0, Math.min(1, tRel / Math.max(0.0001, writeDur)));
 
-  // --- 4) 進捗窓（長さ重み + 画間ギャップ）---
-  const totalLen = segs.reduce((s, seg) => s + seg.len, 0) || 1;
-  const meanLen = totalLen / strokeCount;
-  const gap = 0.1 * meanLen; // ペンを上げる間
-  const denom = totalLen + strokeCount * gap;
+  // --- 4) 進捗窓（時間重み + 画間ギャップ）---
+  // 時間重み tw は基本は画の長さ。tempo>0 のとき画ごとに決定論乱数で速度を揺らす
+  // （tw を伸ばすと「ゆっくり書く画」になる）。tempo=0 なら tw=len で従来挙動に一致。
+  const tempo = Math.max(0, Math.min(1, layer.handwrite?.tempo ?? 0));
+  const trng = mulberry32(hashSeed((layer.id || "handwrite") + "tempo"));
+  const timeW = segs.map((seg) => {
+    const r = trng(); // 0..1（必ず全 seg ぶん消費して決定論を保つ）
+    const factor = 1 + (r - 0.5) * 2 * tempo * 0.7; // tempo=1 で ±0.7 倍
+    return Math.max(seg.len * 0.25, seg.len * factor);
+  });
+  const totalTW = timeW.reduce((s, w) => s + w, 0) || 1;
+  const meanTW = totalTW / strokeCount;
+  const gap = 0.1 * meanTW; // ペンを上げる間
+  const denom = totalTW + strokeCount * gap;
 
   const outStrokes: Pt[][] = [];
+  const outAnnotate: Pt[][] = [];
   const outSweeps: HandwriteRender["sweeps"] = [];
   let penTip: HandwriteRender["penTip"] = null;
 
@@ -255,16 +343,17 @@ export function computeHandwrite(
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i];
     const start = (cum + i * gap) / denom;
-    const end = (cum + seg.len + i * gap) / denom;
-    cum += seg.len;
+    const end = (cum + timeW[i] + i * gap) / denom;
+    cum += timeW[i];
     const lp = localP(p, start, end);
     const active = !forceFull && p > start && p < end;
     if (seg.kind === "stroke") {
+      const sink = seg.annotate ? outAnnotate : outStrokes;
       if (lp >= 1) {
-        outStrokes.push(seg.pts);
+        sink.push(seg.pts);
       } else if (lp > 0) {
         const tr = truncate(seg.pts, lp);
-        if (tr.length) outStrokes.push(tr);
+        if (tr.length) sink.push(tr);
       }
       if (active) {
         penTip = pointAtFraction(seg.pts, lp);
@@ -284,5 +373,5 @@ export function computeHandwrite(
     }
   }
 
-  return { strokes: outStrokes, penTip, sweeps: outSweeps, lineBaselines, writeDur };
+  return { strokes: outStrokes, annotateStrokes: outAnnotate, penTip, sweeps: outSweeps, lineBaselines, writeDur };
 }

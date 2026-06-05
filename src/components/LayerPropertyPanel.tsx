@@ -23,6 +23,7 @@ import {
 } from "../lib/providers/tts";
 import { loadSettings } from "../lib/storage";
 import { isMarkerShape } from "../lib/markerShape";
+import { detectBeats, buildScalePulseKeyframes } from "../lib/beatDetect";
 import { ColorSwatches, recordColorUsed } from "./ColorSwatches";
 
 const SAY_VOICES = [
@@ -558,6 +559,12 @@ export function LayerPropertyPanel({
   // ナレーション生成で使う TTS プロバイダ / 声の選択（設定からデフォルト読込）
   const [narrProvider, setNarrProvider] = useState<string>("voicevox");
   const [narrVoice, setNarrVoice] = useState<string>("3");
+  // 音ハメ（#8）: 拍検出 → scale キーフレーム生成の UI 状態
+  const [beatAudioId, setBeatAudioId] = useState<string>("");
+  const [beatSensitivity, setBeatSensitivity] = useState<number>(0.5);
+  const [beatPeak, setBeatPeak] = useState<number>(1.15);
+  const [beatBusy, setBeatBusy] = useState<boolean>(false);
+  const [beatMsg, setBeatMsg] = useState<string>("");
   useEffect(() => {
     loadSettings()
       .then((s) => {
@@ -1152,6 +1159,127 @@ export function LayerPropertyPanel({
             再生ヘッドを動かして「＋追加」を押すとその時刻に現在値が記録されます。
             2 点以上で線形補間されます。
           </div>
+
+          {/* 音ハメ（#8）: 音声の拍を検出して scale パルスのキーフレームを自動生成 */}
+          {(() => {
+            const audioLayers = allLayers.filter(
+              (l) => l.type === "audio" && typeof l.source === "string" && l.source,
+            );
+            if (audioLayers.length === 0) return null;
+            const selectedAudio =
+              audioLayers.find((l) => l.id === beatAudioId) ?? audioLayers[0];
+            const runBeatSync = async () => {
+              if (!selectedAudio?.source) return;
+              setBeatBusy(true);
+              setBeatMsg("解析中…");
+              try {
+                const beats = await detectBeats(selectedAudio.source, {
+                  sensitivity: beatSensitivity,
+                });
+                const rate = selectedAudio.playbackRate ?? 1;
+                const globalBeats = beats.map(
+                  (t) => selectedAudio.startSec + t / Math.max(0.01, rate),
+                );
+                const win = {
+                  startSec: primary.startSec,
+                  endSec: primary.endSec,
+                };
+                const frames = buildScalePulseKeyframes(globalBeats, win, {
+                  peak: beatPeak,
+                });
+                const used = globalBeats.filter(
+                  (t) => t >= win.startSec && t <= win.endSec,
+                ).length;
+                const nextKf: LayerKeyframes = {
+                  ...(primary.keyframes ?? {}),
+                  scale: { enabled: true, frames },
+                };
+                onChange({ keyframes: nextKf });
+                setBeatMsg(
+                  used > 0
+                    ? `${used} 拍を scale に書き込みました`
+                    : "拍が見つかりませんでした（感度を上げるかレイヤーの表示区間を確認）",
+                );
+              } catch (e) {
+                setBeatMsg(
+                  "解析に失敗: " + (e instanceof Error ? e.message : String(e)),
+                );
+              } finally {
+                setBeatBusy(false);
+              }
+            };
+            const clearScale = () => {
+              const nextKf: LayerKeyframes = { ...(primary.keyframes ?? {}) };
+              delete nextKf.scale;
+              onChange({ keyframes: nextKf });
+              setBeatMsg("scale キーフレームを消去しました");
+            };
+            return (
+              <div className="border border-purple-200 dark:border-purple-800 rounded px-1.5 py-1.5 mb-2 space-y-1.5 bg-purple-50/40 dark:bg-purple-900/10">
+                <div className="text-[10px] font-medium text-purple-700 dark:text-purple-300">
+                  🎵 音ハメ（拍で scale パルス）
+                </div>
+                <div className="grid grid-cols-[52px_1fr] items-center gap-1">
+                  <label className="text-gray-600 text-[10px]">音源</label>
+                  <select
+                    value={selectedAudio.id}
+                    onChange={(e) => setBeatAudioId(e.target.value)}
+                    className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                  >
+                    {audioLayers.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.id}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {sliderInput(
+                  "感度",
+                  beatSensitivity,
+                  (v) => setBeatSensitivity(Math.max(0, Math.min(1, v))),
+                  0,
+                  1,
+                  0.05,
+                )}
+                {sliderInput(
+                  "強さ",
+                  beatPeak,
+                  (v) => setBeatPeak(Math.max(1, Math.min(2, v))),
+                  1,
+                  2,
+                  0.05,
+                  "x",
+                )}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    disabled={beatBusy}
+                    onClick={runBeatSync}
+                    className="flex-1 text-[10px] px-1.5 py-1 rounded bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white"
+                  >
+                    {beatBusy ? "解析中…" : "拍に合わせて生成"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={beatBusy}
+                    onClick={clearScale}
+                    className="text-[10px] px-1.5 py-1 rounded bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 disabled:opacity-50"
+                  >
+                    クリア
+                  </button>
+                </div>
+                {beatMsg && (
+                  <div className="text-[9px] text-gray-500 dark:text-gray-400">
+                    {beatMsg}
+                  </div>
+                )}
+                <div className="text-[9px] text-gray-400">
+                  ※ 下の scale トラックに書き込まれます。手で微調整も可。
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="space-y-1.5">
             {KEYFRAME_PROPS.map((p) => {
               const track: KeyframeTrack | undefined =
@@ -1510,22 +1638,27 @@ export function LayerPropertyPanel({
             {(common("shape") === "marker-arrow" ||
               common("shape") === "marker-line" ||
               common("shape") === "marker-surge") && (
-              <label className="flex items-center gap-1 text-[11px]">
-                <input
-                  type="checkbox"
-                  checked={
-                    (common("markerHead") ??
-                      (common("shape") === "marker-arrow"
-                        ? "triangle"
-                        : "none")) === "triangle"
+              <div className="grid grid-cols-[70px_1fr] items-center gap-1 text-[11px]">
+                <label className="text-gray-600">先端の矢じり</label>
+                <select
+                  value={
+                    common("markerHead") ??
+                    (common("shape") === "marker-arrow" ? "triangle" : "none")
                   }
                   onChange={(e) =>
-                    onChange({ markerHead: e.target.checked ? "triangle" : "none" })
+                    onChange({
+                      markerHead: e.target.value as NonNullable<
+                        Layer["markerHead"]
+                      >,
+                    })
                   }
-                  className="h-3 w-3"
-                />
-                先端に矢じり
-              </label>
+                  className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                >
+                  <option value="none">なし</option>
+                  <option value="triangle">三角（塗り）</option>
+                  <option value="open">手書き（開いた線）</option>
+                </select>
+              </div>
             )}
             {(common("shape") === "marker-arrow" ||
               common("shape") === "marker-line" ||
@@ -2004,9 +2137,52 @@ export function LayerPropertyPanel({
                     0.5,
                     "px",
                   )}
-                  <div className="text-[10px] text-amber-600 dark:text-amber-400">
-                    日本語の本物の筆順は次更新で対応（現在は左→右の掃出しで表示）
+                  {sliderInput(
+                    "緩急",
+                    primary.handwrite.tempo ?? 0,
+                    (v) =>
+                      onChange({
+                        handwrite: {
+                          ...primary.handwrite!,
+                          tempo: Math.max(0, Math.min(1, v)),
+                        },
+                      }),
+                    0,
+                    1,
+                    0.05,
+                  )}
+                  <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+                    <label className="text-gray-600">書き上げ後</label>
+                    <select
+                      value={primary.handwrite.annotate ?? "none"}
+                      onChange={(e) =>
+                        onChange({
+                          handwrite: {
+                            ...primary.handwrite!,
+                            annotate: e.target.value as NonNullable<
+                              Layer["handwrite"]
+                            >["annotate"],
+                          },
+                        })
+                      }
+                      className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                    >
+                      <option value="none">注釈なし</option>
+                      <option value="underline">下線</option>
+                      <option value="box">囲み</option>
+                      <option value="strike">取り消し線</option>
+                      <option value="double-strike">二本線で訂正</option>
+                    </select>
                   </div>
+                  {(primary.handwrite.annotate ?? "none") !== "none" &&
+                    colorInput(
+                      "注釈色",
+                      primary.handwrite.annotateColor,
+                      (v) =>
+                        onChange({
+                          handwrite: { ...primary.handwrite!, annotateColor: v },
+                        }),
+                    )}
                 </div>
               )}
             </div>

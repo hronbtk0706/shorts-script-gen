@@ -2133,6 +2133,17 @@ export function computeLayerAnimStyle(
         // 文字列差し替え（text→flipTo）は resolveDynamicText が担当。
         parts.push(`scaleY(${Math.max(0.001, Math.abs(p - 0.5) * 2)})`);
         break;
+      case "stamp": {
+        // 判子: 2.0 倍から easeOutBack で叩きつけ → 1.0。軽い傾きが 0 へ。
+        // export computeCanvasAnim と数式一致。
+        const c1 = 1.70158;
+        const c3 = c1 + 1;
+        const eb = 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+        const s = Math.max(0.001, 2.0 - eb);
+        parts.push(`scale(${s.toFixed(3)}) rotate(${((1 - e) * -4).toFixed(2)}deg)`);
+        opacity *= Math.min(1, p * 3);
+        break;
+      }
     }
   }
 
@@ -2318,6 +2329,9 @@ function AudioLayerPlayer({
   const sourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
   const resolved = resolveSrcForWebview(layer.source);
+  // 再生開始時の seek に使う最新の currentTimeSec（effect の依存に入れずに参照する）
+  const currentTimeRef = useRef(currentTimeSec);
+  currentTimeRef.current = currentTimeSec;
 
   // Web Audio グラフを必要時に一度だけ構築（autoplay policy 対策で suspended の可能性あり）
   const ensureAudioGraph = (): GainNode | null => {
@@ -2373,7 +2387,9 @@ function AudioLayerPlayer({
       target = target % dur;
     }
     if (target < 0) target = 0;
-    if (Math.abs(a.currentTime - target) > 0.15) {
+    // 許容ズレ。音ハメ等の同期精度のため 150ms→50ms に狭める。
+    // 両クロックとも実時間で進むためズレの蓄積は遅く、補正(seek)の頻度は低い。
+    if (Math.abs(a.currentTime - target) > 0.05) {
       try {
         a.currentTime = target;
       } catch {
@@ -2457,6 +2473,19 @@ function AudioLayerPlayer({
       }
       const rate = Math.max(0.05, Math.min(4, layer.playbackRate ?? 1));
       a.playbackRate = rate;
+      // 再生開始時にプレイヘッド位置へ seek してから鳴らす（音声の鳴り始め遅延による
+      // 映像とのズレを抑え、音ハメの同期精度を上げる）。
+      let startTarget = (currentTimeRef.current - layer.startSec) * rate;
+      const dur0 = a.duration;
+      if (layer.audioLoop && dur0 && isFinite(dur0) && startTarget > dur0) {
+        startTarget = startTarget % dur0;
+      }
+      if (startTarget < 0) startTarget = 0;
+      try {
+        a.currentTime = startTarget;
+      } catch {
+        /* noop */
+      }
       a.play()
         .then(() => {
           // play() 後にも再度設定（一部ブラウザは play で rate を 1 にリセットする）

@@ -190,6 +190,9 @@ const CONFETTI_PALETTE = [
 
 const HEART_PALETTE = ["#FF5C8A", "#FF3D6E", "#FF8FB3", "#E5484D"];
 
+const LEAF_PALETTE = ["#C0531F", "#E08A2B", "#B8860B", "#8B4513", "#D2691E", "#A0522D"];
+const PETAL_PALETTE = ["#FFD1E8", "#FFC0DA", "#FFE3F1", "#FAB6D4"];
+
 /** ハート形のパス（原点中心・サイズ s）。 */
 function heartPath(ctx: CanvasRenderingContext2D, s: number): void {
   const k = s / 16;
@@ -415,6 +418,81 @@ export function drawParticles(
       ctx.fillStyle = p.color ?? "#FFFFFF";
       ctx.beginPath();
       ctx.arc(x, y, sz * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (kind === "rain") {
+      // 雨: 細い縦ストリーク。速め・ほぼ直線（wind で少し斜め）。
+      const len = sz * (1.8 + r2 * 1.4);
+      const slant = wind * 10 * pxScale;
+      ctx.save();
+      ctx.globalAlpha = (0.22 + r3 * 0.3) * depthA;
+      ctx.strokeStyle = p.color ?? "rgba(185,215,255,0.95)";
+      ctx.lineWidth = Math.max(1, sz * 0.13);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + slant, y + len);
+      ctx.stroke();
+      ctx.restore();
+    } else if (kind === "snow") {
+      // 雪: 柔らかい白丸＋微光（ゆっくり・よく揺れる）。
+      ctx.save();
+      ctx.globalAlpha = (0.7 + r3 * 0.3) * depthA;
+      ctx.fillStyle = p.color ?? "#FFFFFF";
+      ctx.shadowColor = "rgba(255,255,255,0.9)";
+      ctx.shadowBlur = sz * 0.6;
+      ctx.beginPath();
+      ctx.arc(x, y, sz * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (kind === "leaves") {
+      // 落ち葉: 楕円の葉が回転＋翻りでひらひら（秋色）。
+      const base = p.color ?? LEAF_PALETTE[i % LEAF_PALETTE.length];
+      const rot = t * ((r3 < 0.5 ? -1 : 1) * (0.8 + r1 * 2)) + r2 * 6.283;
+      const flip = Math.cos(t * (1.5 + r4 * 2.5) + r1 * 6.283);
+      ctx.save();
+      ctx.globalAlpha = depthA;
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.scale(1, Math.max(0.15, Math.abs(flip)));
+      ctx.fillStyle = base;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, sz * 0.62, sz * 0.32, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = shade(base, -0.3); // 葉脈
+      ctx.lineWidth = Math.max(1, sz * 0.05);
+      ctx.beginPath();
+      ctx.moveTo(-sz * 0.62, 0);
+      ctx.lineTo(sz * 0.62, 0);
+      ctx.stroke();
+      ctx.restore();
+    } else if (kind === "petals") {
+      // 花びら: 小さなピンクの楕円が漂いながら回る。
+      const base = p.color ?? PETAL_PALETTE[i % PETAL_PALETTE.length];
+      const rot = t * ((r3 < 0.5 ? -1 : 1) * (0.6 + r1 * 1.4)) + r2 * 6.283;
+      const flip = Math.cos(t * (1.1 + r4 * 1.8) + r1 * 6.283);
+      ctx.save();
+      ctx.globalAlpha = (0.8 + depth * 0.2) * depthA;
+      ctx.translate(x, y);
+      ctx.rotate(rot);
+      ctx.scale(1, Math.max(0.25, Math.abs(flip)));
+      ctx.fillStyle = base;
+      ctx.beginPath();
+      // しずく型の花びら（片側を尖らせる）
+      ctx.ellipse(0, 0, sz * 0.5, sz * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (kind === "smoke") {
+      // 煙/もや: 大きく薄いグレーの丸が漂いながら膨らみ薄れる。
+      const puff = sz * (1.8 + prog * 1.6);
+      ctx.save();
+      ctx.globalAlpha = (0.1 + r3 * 0.1) * (1 - prog) * depthA;
+      const g = ctx.createRadialGradient(x, y, puff * 0.1, x, y, puff);
+      g.addColorStop(0, p.color ?? "rgba(170,170,180,0.6)");
+      g.addColorStop(1, "rgba(170,170,180,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, puff, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     } else {

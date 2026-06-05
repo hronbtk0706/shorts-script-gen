@@ -1296,6 +1296,26 @@ function drawHandwriteShape(
   }
   ctx.globalAlpha = 1;
 
+  // --- 注釈ストローク（下線/囲み/取り消し）。本文と別色（annotateColor）で描ける ---
+  if (render.annotateStrokes.length > 0) {
+    const annotInk = layer.handwrite?.annotateColor ?? ink;
+    ctx.strokeStyle = annotInk;
+    ctx.lineWidth = Math.max(1, lineW);
+    ctx.globalAlpha = layer.surface === "blackboard" ? 0.92 : 1;
+    for (const stroke of render.annotateStrokes) {
+      if (stroke.length < 2) continue;
+      if (chalk) {
+        drawChalkStroke(ctx, stroke, lineW, annotInk);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(stroke[0].x, stroke[0].y);
+        for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // --- sweep フォールバック文字（左→右クリップ出現）---
   if (render.sweeps.length > 0) {
     ctx.fillStyle = ink;
@@ -2035,6 +2055,13 @@ export function computeCharAnimState(
       return {
         ...base,
         opacity: 0.35 + 0.65 * Math.abs(Math.sin(localTime * 6 + globalIdx * 0.6)),
+      };
+    }
+    case "scale-pulse-each": {
+      // 字ごとに位相をずらして鼓動（拡大縮小の波）。preview renderAnimatedText と一致。
+      return {
+        ...base,
+        scale: 1 + 0.18 * Math.sin(localTime * Math.PI * 2 * 1.5 + globalIdx * 0.5),
       };
     }
     default:
