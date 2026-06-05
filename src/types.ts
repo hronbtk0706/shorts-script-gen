@@ -144,6 +144,8 @@ export interface CounterSpec {
   separator?: boolean; // 3桁区切りカンマ（既定 true）
   decimals?: number; // 小数桁（既定 0）
   ease?: "out" | "linear" | "in" | "inout"; // 既定 "out"
+  /** 表示方式。"roll"=オドメーター（各桁が縦にロールする機械式カウンター）。既定 "plain"（通常テキスト）。 */
+  style?: "plain" | "roll";
 }
 
 export type EntryAnimation =

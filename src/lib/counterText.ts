@@ -74,6 +74,26 @@ export function computeCounterText(
 }
 
 /**
+ * counter の「整形前の生の値」を返す（オドメーター描画など、文字列でなく数値が要る用）。
+ * computeCounterText と同じ ease / clamp ロジックを共有する。
+ */
+export function computeCounterValue(
+  c: CounterSpec,
+  localTimeSec: number,
+  playing: boolean,
+): number {
+  const from = Number(c.from);
+  const to = Number(c.to);
+  const dur = Number(c.durationSec);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) {
+    return Number.isFinite(to) ? to : Number.isFinite(from) ? from : 0;
+  }
+  if (!Number.isFinite(dur) || dur <= 0) return to;
+  const p = !playing ? 1 : Math.max(0, Math.min(1, localTimeSec / dur));
+  return from + (to - from) * easeCounter(p, c.ease ?? "out");
+}
+
+/**
  * counter / flip-swap によって毎フレーム決まる「表示文字列」を返す。どちらでもなければ null。
  * preview（renderAnimatedText）と export（drawLayerContentInBox の comment 分岐）が共有し、
  * 表示文字列の決定を 1 か所に集約して preview=export を保証する。

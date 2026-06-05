@@ -106,6 +106,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 ### カウントアップ `counter` ✅（`comment` に付与。`text` を無視して数値表示）
 `{ from, to, durationSec, prefix?, suffix?, separator?(3桁区切り 既定true), decimals?, ease?("out"|"linear"|"in"|"inout") }`
 例: `counter:{from:5000,to:10000,durationSec:3,suffix:"マルク"}` → 3秒で 5,000→10,000マルク。停止時は to。
+- 🆕 `style:"roll"` で**オドメーター**（各桁が縦にロールする機械式カウンター）。prefix/suffix/区切り/小数点は静的、各桁がロール。先頭ゼロは出さない。`"plain"`(既定)は通常テキスト。
 
 ### 手書き筆順 `handwrite` ✅（`comment`。一画ずつ「書かれていく」）
 `{ order:"normal", speed?, tip?, jitter?(0..2), strokeWidth?, tempo?🆕, annotate?🆕, annotateColor?🆕 }`

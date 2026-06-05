@@ -16,7 +16,7 @@ import {
   drawParticles,
   drawSteam,
 } from "./effectShape";
-import { resolveDynamicText } from "./counterText";
+import { resolveDynamicText, computeCounterValue } from "./counterText";
 import { bubbleFullPath } from "./bubble";
 import {
   computeMarker,
@@ -880,6 +880,15 @@ async function drawLayerContentInBox(
         // 手書き（筆順）ライトオン。これがあれば通常テキスト描画の代わりに筆順アニメで描く。
         if (hasHandwrite(layer)) {
           drawHandwriteShape(ctx, layer, w, h, animAtTimeSec);
+          break;
+        }
+        // オドメーター（counter.style:"roll"）: 各桁が縦にロールする機械式カウンター。
+        if (layer.counter?.style === "roll") {
+          if (layer.fillColor) {
+            ctx.fillStyle = parseRgba(layer.fillColor);
+            ctx.fillRect(0, 0, w, h);
+          }
+          drawOdometer(ctx, layer, w, h, animAtTimeSec);
           break;
         }
         if (layer.bubble) {
@@ -1777,6 +1786,95 @@ function resolveTextFill(
   return layer.textGradient
     ? buildLinearGradient(ctx, layer.textGradient, w, h)
     : fallback;
+}
+
+/**
+ * オドメーター（counter.style:"roll"）。各桁を縦にロールさせる機械式カウンター。
+ * 値計算は computeCounterValue を共有（preview 書き出し表示＝export 一致）。
+ * 桁セル幅は 0..9 の最大幅で固定し、現在桁が上へ抜け次桁が下から来る（カウントアップ）。
+ * prefix/suffix/区切りカンマ/小数点は静的、整数・小数の各桁がロールする。先頭ゼロは出さない。
+ */
+function drawOdometer(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  animAtTimeSec?: number,
+): void {
+  const c = layer.counter;
+  if (!c) return;
+  const scale = FINAL_W / 360;
+  const fontSize = (layer.fontSize ?? 48) * scale;
+  ctx.font = buildTextFontString(layer);
+  ctx.fillStyle = layer.fontColor ?? "#fff";
+  ctx.textBaseline = "alphabetic";
+  const glyphAdj = glyphCenterOffset(ctx, fontSize);
+
+  const playing = animAtTimeSec !== undefined;
+  const tRel = (animAtTimeSec ?? layer.startSec) - layer.startSec;
+  const value = computeCounterValue(c, tRel, playing);
+  const decimals = Math.max(0, Math.floor(c.decimals ?? 0));
+  const separator = c.separator ?? true;
+  const neg = value < 0;
+  const absV = Math.abs(value);
+  const intDigits = Math.max(
+    1,
+    Math.floor(Math.log10(Math.max(1, Math.floor(absV)))) + 1,
+  );
+
+  // 桁セル幅 = 0..9 の最大幅（桁の値が変わっても横ブレしない）
+  let dw = 0;
+  for (let i = 0; i < 10; i++) dw = Math.max(dw, ctx.measureText(String(i)).width);
+
+  type Tok =
+    | { kind: "static"; ch: string; wpx: number }
+    | { kind: "digit"; place: number; wpx: number };
+  const tokens: Tok[] = [];
+  const pushStatic = (ch: string) =>
+    tokens.push({ kind: "static", ch, wpx: ctx.measureText(ch).width });
+  if (c.prefix) pushStatic(c.prefix);
+  if (neg) pushStatic("-");
+  for (let k = intDigits - 1; k >= 0; k--) {
+    tokens.push({ kind: "digit", place: k, wpx: dw });
+    if (separator && k > 0 && k % 3 === 0) pushStatic(",");
+  }
+  if (decimals > 0) {
+    pushStatic(".");
+    for (let d = 1; d <= decimals; d++) tokens.push({ kind: "digit", place: -d, wpx: dw });
+  }
+  if (c.suffix) pushStatic(c.suffix);
+
+  const total = tokens.reduce((a, t) => a + t.wpx, 0);
+  let x = (w - total) / 2;
+  const yMid = h / 2;
+  const lineH = fontSize * 1.12; // ロールのセル高
+  const yBase = yMid + glyphAdj; // alphabetic baseline で字面中央
+
+  for (const t of tokens) {
+    if (t.kind === "static") {
+      ctx.textAlign = "left";
+      ctx.fillText(t.ch, x, yBase);
+    } else {
+      const cont = absV / Math.pow(10, t.place);
+      const base = Math.floor(cont);
+      const f = cont - base;
+      const digit = ((base % 10) + 10) % 10;
+      const next = (digit + 1) % 10;
+      // ロール量: 1の位と小数は連続ロール。十の位以上は「下位が繰り上がる瞬間
+      // （f≥0.9＝下位が9.x）」だけロールし、それ以外は静止＝半端な二重表示にしない。
+      const rollFrac = t.place <= 0 ? f : f < 0.9 ? 0 : (f - 0.9) * 10;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, yMid - lineH / 2, t.wpx, lineH);
+      ctx.clip();
+      ctx.textAlign = "center";
+      const cxCell = x + t.wpx / 2;
+      ctx.fillText(String(digit), cxCell, yBase - rollFrac * lineH);
+      ctx.fillText(String(next), cxCell, yBase + (1 - rollFrac) * lineH);
+      ctx.restore();
+    }
+    x += t.wpx;
+  }
 }
 
 function drawText(
