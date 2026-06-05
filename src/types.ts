@@ -569,6 +569,32 @@ export interface ExpressionKeyframe {
   fadeIn?: number;
 }
 
+/** 画像/動画を切り抜くマスクの形状（図形マスク用）。 */
+export type MaskShapeKind =
+  | "circle"
+  | "rounded"
+  | "rect"
+  | "star"
+  | "heart"
+  | "diamond"
+  | "hexagon";
+
+/** 画像/動画レイヤーのマスク（文字型 or 図形型でくり抜く）。 */
+export type LayerMask =
+  | {
+      type: "text";
+      /** くり抜く文字。箱幅に自動フィットして大きく表示する。 */
+      text: string;
+      /** フォントファミリ（未指定 = システム既定スタック）。 */
+      fontFamily?: string;
+    }
+  | {
+      type: "shape";
+      shape: MaskShapeKind;
+      /** rounded の角丸半径（design 360 基準 px・既定 24）。 */
+      borderRadius?: number;
+    };
+
 /** v2 Timeline 型レイヤー */
 export interface Layer {
   id: string;
@@ -762,6 +788,13 @@ export interface Layer {
    * 未指定 = 既存の shape/borderRadius 挙動（通常の矩形テキストボックス）。
    */
   bubble?: BubbleStyle;
+  /**
+   * 画像/動画レイヤーを「文字の形」または「図形の形」でくり抜いて表示するマスク。
+   * 内側だけ素材が見え、外は透明。canvas 経路（書き出し表示=export）で描く。
+   * - text: 指定文字の形に素材を流し込む（フォントは箱幅に自動フィット）。
+   * - shape: 円/角丸/星/ハート/ダイヤ/六角形/矩形の形にくり抜く。
+   */
+  mask?: LayerMask;
 
   // -----------------------------------------------------------------------
   // character レイヤー専用フィールド (type === "character" のときのみ意味を持つ)

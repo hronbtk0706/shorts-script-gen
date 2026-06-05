@@ -32,6 +32,10 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 塗り: `fillColor`(#hex) / `fillGradient: {from, to, angle?}`(rect/rounded/circle に適用・fillColor優先)。
 枠: `border: {width, color}` / `borderRadius`(rounded用)。
 画像/動画: `crop: {x,y,width,height}`(素材%) / `chromaKey: {color, threshold?, smoothness?}`(指定色を透過)。
+🆕 マスク切り抜き `mask`（画像/動画を文字や図形の形にくり抜く・canvas経路＝書き出し表示/exportで反映）:
+- `{type:"text", text:"歴史", fontFamily?}` … 文字の形に素材を流し込む（箱幅に自動フィットで大きく表示）
+- `{type:"shape", shape:"circle"|"rounded"(+borderRadius)|"rect"|"star"|"heart"|"diamond"|"hexagon"}` … 図形の形にくり抜く
+- 円にするには箱を**ピクセルで正方形**に（横は width%×1920 = height%×1080）。
 
 ---
 

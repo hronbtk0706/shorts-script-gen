@@ -743,6 +743,115 @@ function drawImageMaybeChroma(
  * 位置・回転・入退場 transform・クリップは呼び出し側の責務。
  * flip warp では一旦オフスクリーンへ平面描画するために切り出した。
  */
+/**
+ * 画像/動画レイヤーをマスク（文字型/図形型）でくり抜いて描く。
+ * 素材を cover フィットで offscreen に描き、destination-in でマスク内側だけ残して本キャンバスへ。
+ * preview(書き出し表示)/export とも drawLayer→ここを通るので一致する。
+ */
+async function drawMaskedMedia(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+  resolveSrc: LayerSourceResolver,
+  videoFrameSources?: Map<string, CanvasImageSource>,
+): Promise<void> {
+  const mask = layer.mask;
+  if (!mask) return;
+  const tw = Math.max(1, Math.ceil(w));
+  const th = Math.max(1, Math.ceil(h));
+  const temp = new OffscreenCanvas(tw, th);
+  const tctx = temp.getContext("2d") as CanvasRenderingContext2D | null;
+  if (!tctx) return;
+
+  // 1) 素材を cover フィットで offscreen に描く
+  const drawCover = (src: CanvasImageSource, srcW: number, srcH: number) => {
+    const crop = layer.crop;
+    const sx = crop ? (crop.x / 100) * srcW : 0;
+    const sy = crop ? (crop.y / 100) * srcH : 0;
+    const sw = crop ? (crop.width / 100) * srcW : srcW;
+    const sh = crop ? (crop.height / 100) * srcH : srcH;
+    const scl = Math.max(w / sw, h / sh);
+    const drawW = sw * scl;
+    const drawH = sh * scl;
+    drawImageMaybeChroma(
+      tctx,
+      src,
+      sx,
+      sy,
+      sw,
+      sh,
+      (w - drawW) / 2,
+      (h - drawH) / 2,
+      drawW,
+      drawH,
+      layer,
+      w,
+      h,
+    );
+  };
+  const frameSource =
+    layer.type === "video" ? videoFrameSources?.get(layer.id) : undefined;
+  if (frameSource) {
+    const fs = frameSource as unknown as Record<string, number>;
+    const srcW =
+      fs.displayWidth || fs.codedWidth || fs.videoWidth || fs.naturalWidth || fs.width || w;
+    const srcH =
+      fs.displayHeight || fs.codedHeight || fs.videoHeight || fs.naturalHeight || fs.height || h;
+    drawCover(frameSource, srcW, srcH);
+  } else {
+    const src = await resolveSrc(layer);
+    if (!src) return;
+    const img = await loadImage(src);
+    const imgW = img.width || (img as HTMLImageElement).naturalWidth || w;
+    const imgH = img.height || (img as HTMLImageElement).naturalHeight || h;
+    drawCover(img, imgW, imgH);
+  }
+
+  // 2) マスクで destination-in（マスク内側だけ素材を残す）
+  tctx.save();
+  tctx.globalCompositeOperation = "destination-in";
+  tctx.fillStyle = "#fff";
+  if (mask.type === "text") {
+    const fam = mask.fontFamily
+      ? `${mask.fontFamily}, ${TEXT_DEFAULT_FONT_STACK}`
+      : TEXT_DEFAULT_FONT_STACK;
+    let fontPx = h * 0.92;
+    tctx.font = `bold ${fontPx}px ${fam}`;
+    const measured = tctx.measureText(mask.text).width || 1;
+    const maxW = w * 0.94;
+    if (measured > maxW) {
+      fontPx *= maxW / measured;
+      tctx.font = `bold ${fontPx}px ${fam}`;
+    }
+    tctx.textAlign = "center";
+    tctx.textBaseline = "middle";
+    tctx.fillText(mask.text, w / 2, h / 2);
+  } else {
+    const s = mask.shape;
+    if (s === "circle") {
+      tctx.beginPath();
+      tctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2);
+      tctx.fill();
+    } else if (s === "rounded") {
+      const r = (mask.borderRadius ?? 24) * (FINAL_W / 360);
+      roundRectPath(tctx, 0, 0, w, h, Math.min(r, w / 2, h / 2));
+      tctx.fill();
+    } else if (s === "star" || s === "heart" || s === "diamond" || s === "hexagon") {
+      maskShapePath(tctx, s, w, h);
+      tctx.fill();
+    } else {
+      tctx.beginPath();
+      tctx.rect(0, 0, w, h);
+      tctx.fill();
+    }
+  }
+  tctx.restore();
+
+  // 3) 本キャンバスへ
+  ctx.drawImage(temp, 0, 0, tw, th);
+}
+
 async function drawLayerContentInBox(
   ctx: CanvasRenderingContext2D,
   layer: Layer,
@@ -757,6 +866,12 @@ async function drawLayerContentInBox(
       case "image":
       case "video":
       case "character": {
+        // マスク（文字型/図形型くり抜き）: 素材を offscreen に cover 描画 → destination-in で
+        // マスク内側だけ残す → 本キャンバスへ。image/video のみ対応。
+        if (layer.mask && (layer.type === "image" || layer.type === "video")) {
+          await drawMaskedMedia(ctx, layer, w, h, resolveSrc, videoFrameSources);
+          break;
+        }
         // 動画 / キャラレイヤーで videoFrameSources に登録があれば、現在フレームを
         // 直接 drawImage する (WebCodecs エクスポート経路)。
         // character は事前に composeCharacterLayerVideo で焼いた .webm を
