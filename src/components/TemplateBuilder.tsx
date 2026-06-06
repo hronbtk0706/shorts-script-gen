@@ -21,7 +21,7 @@ import {
   migrateTextToComment,
   makeLayer,
 } from "../lib/layerUtils";
-import { saveTemplate, makeTemplateId } from "../lib/templateStore";
+import { saveTemplate, makeTemplateId, listTemplates } from "../lib/templateStore";
 import {
   createPresetFromLayers,
   deletePreset,
@@ -108,6 +108,10 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   }, [historyIdx]);
 
   const [playheadSec, setPlayheadSec] = useState(0);
+  // 再生クロックの分離: 正確な再生位置を 60fps で ref に保持し、キャンバスはこれを読む
+  // （プレビュー60fpsのまま）。React state(playheadSec) の更新は再生中だけ ~24fps に間引いて、
+  // タイムライン等の毎フレーム再描画（重いテンプレでカクつく原因）を減らす。
+  const playheadRef = useRef(0);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
   // プライマリ選択（最後に選んだもの。PropertyPanel 等の単一参照用）
   const selectedLayerId =
@@ -120,6 +124,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const [showSafeArea, setShowSafeArea] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -293,26 +298,41 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const canUndo = historyIdx > 0;
   const canRedo = historyIdx < history.length - 1;
 
-  // requestAnimationFrame でタイムライン再生
+  // playheadRef を state に同期。停止中は常に追従。再生中でも「大きく飛んだ」
+  // （外部 seek・先頭/末尾ジャンプ）ときだけ ref を合わせ、rAF の連続更新が
+  // 外部 seek を打ち消さないようにする。
+  useEffect(() => {
+    if (!isPlaying || Math.abs(playheadSec - playheadRef.current) > 0.4) {
+      playheadRef.current = playheadSec;
+    }
+  }, [playheadSec, isPlaying]);
+
+  // requestAnimationFrame でタイムライン再生。
+  // 正確な位置は playheadRef に 60fps で持ち（キャンバスはこれを読んで60fps描画）、
+  // React state(playheadSec) は ~24fps に間引いて更新（タイムライン等の再描画を激減）。
   useEffect(() => {
     if (!isPlaying) return;
     let rafId = 0;
     let lastTs = performance.now();
+    let lastStateTs = lastTs;
     const tick = (ts: number) => {
       const dt = (ts - lastTs) / 1000;
       lastTs = ts;
-      setPlayheadSec((prev) => {
-        const next = prev + dt;
-        if (next >= template.totalDuration) {
-          // ループ: 先頭に戻す（停止したければ setIsPlaying(false) にする）
-          return 0;
-        }
-        return next;
-      });
+      let next = playheadRef.current + dt;
+      if (next >= template.totalDuration) next = 0; // ループ
+      playheadRef.current = next; // 60fps: キャンバスが参照（滑らか）
+      if (ts - lastStateTs >= 42) {
+        // ~24fps で UI/音声/タイムラインの state を更新
+        lastStateTs = ts;
+        setPlayheadSec(next);
+      }
       rafId = requestAnimationFrame(tick);
     };
     rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
+    return () => {
+      cancelAnimationFrame(rafId);
+      setPlayheadSec(playheadRef.current); // 停止時に正確な位置へ反映
+    };
   }, [isPlaying, template.totalDuration]);
 
   const togglePlay = () => {
@@ -674,6 +694,66 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  // 編集中テンプレをディスクから読み直す（別PC同期・外部編集の反映用）。
+  // 未保存の編集は破棄される。新規未保存テンプレ（保存前）は対象外。
+  const handleReload = async () => {
+    const effectiveId = editing?.id ?? committedId;
+    if (!effectiveId) {
+      setSaveMsg({ type: "err", text: "未保存の新規テンプレは再読み込みできません" });
+      setTimeout(() => setSaveMsg(null), 2500);
+      return;
+    }
+    if (
+      dirty &&
+      !window.confirm(
+        "未保存の編集を破棄して、ディスクに保存されている内容で読み直します。よろしいですか？",
+      )
+    ) {
+      return;
+    }
+    setReloading(true);
+    setSaveMsg(null);
+    try {
+      const all = await listTemplates();
+      const found = all.find((t) => t.id === effectiveId);
+      if (!found) {
+        setSaveMsg({
+          type: "err",
+          text: "ディスクにこのテンプレが見つかりません（未保存？）",
+        });
+        setTimeout(() => setSaveMsg(null), 2500);
+        return;
+      }
+      // initial と同じ移行を適用
+      const migrated = migrateTextToComment(found.layers);
+      const reloaded: VideoTemplate = {
+        ...found,
+        layers: migrateAudioToNegativeZ(migrated),
+      };
+      // 状態リセット（initial useEffect と同じ思想 + 選択/再生位置もクリア）
+      skipHistoryRef.current = true;
+      dirtySetSkipRef.current = true;
+      setTemplateState(reloaded);
+      setHistory([reloaded]);
+      setHistoryIdx(0);
+      setDirty(false);
+      setCommittedId(reloaded.id);
+      setSelectedLayerIds([]);
+      setPlayheadSec(0);
+      setIsPlaying(false);
+      setSaveMsg({ type: "ok", text: "ディスクから再読み込みしました" });
+      setTimeout(() => setSaveMsg(null), 2000);
+    } catch (e) {
+      console.error("[TemplateBuilder] reload failed:", e);
+      setSaveMsg({
+        type: "err",
+        text: `再読み込み失敗: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      setReloading(false);
     }
   };
 
@@ -1166,6 +1246,15 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
       </button>
       <button
         type="button"
+        onClick={handleReload}
+        disabled={reloading || saving}
+        className="px-3 py-1 rounded bg-slate-600 hover:bg-slate-700 text-white text-xs disabled:bg-gray-400"
+        title="保存済みのこのテンプレをディスクから読み直す（未保存の編集は破棄）。別PCで同期した内容を反映する時などに使う"
+      >
+        {reloading ? "読込中..." : "再読み込み"}
+      </button>
+      <button
+        type="button"
         onClick={handleSave}
         disabled={saving}
         className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-xs disabled:bg-gray-400"
@@ -1242,6 +1331,7 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
               showGrid={showGrid}
               showSafeArea={showSafeArea}
               currentTimeSec={playheadSec}
+              playheadRef={playheadRef}
               isPlaying={isPlaying}
               aspect={template.aspect ?? "vertical"}
             />

@@ -84,6 +84,9 @@ interface Props {
   showSafeArea?: boolean;
   /** 指定時刻に可視なレイヤーだけ表示（未指定なら全レイヤー） */
   currentTimeSec?: number;
+  /** 再生中の正確な再生位置（60fps 更新の ref）。合成キャンバスはこれを読んで
+   *  React state の間引き(24fps)に影響されず 60fps で描画する。未指定なら currentTimeSec を使う。 */
+  playheadRef?: { current: number };
   /** タイムライン再生中かどうか（動画レイヤー再生同期用） */
   isPlaying?: boolean;
   /** 出力アスペクト比。未指定なら 9:16 (旧テンプレ互換) */
@@ -112,6 +115,7 @@ export function TemplateCanvas({
   showGrid = false,
   showSafeArea = false,
   currentTimeSec,
+  playheadRef,
   isPlaying = false,
   aspect = "vertical",
 }: Props) {
@@ -123,6 +127,19 @@ export function TemplateCanvas({
   const isInTime = (l: Layer) =>
     currentTimeSec === undefined ||
     (currentTimeSec >= l.startSec && currentTimeSec < l.endSec);
+  // 動画は startSec の少し前からマウントして preload="auto" で先読みする
+  // （背景動画の切替時に「読み込み待ちで真っ暗」になるのを防ぐ）。
+  const VIDEO_PRELOAD_LEAD_SEC = 1.5;
+  const VIDEO_PRELOAD_TAIL_SEC = 0.5;
+  // 音声も同様に startSec の手前から <audio preload="auto"> をマウントしてデコード/バッファを
+  // 先読みする。startSec ちょうどでマウントするとロード待ちでナレーションが鳴り始め遅延・
+  // 短尺だと区間を過ぎて欠落する（実際の発音は AudioLayerPlayer 側で in-time のときだけ）。
+  const AUDIO_PRELOAD_LEAD_SEC = 1.5;
+  const AUDIO_PRELOAD_TAIL_SEC = 0.3;
+  const isAudioMounted = (l: Layer) =>
+    currentTimeSec === undefined ||
+    (currentTimeSec >= l.startSec - AUDIO_PRELOAD_LEAD_SEC &&
+      currentTimeSec < l.endSec + AUDIO_PRELOAD_TAIL_SEC);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const targetRef = useRef<HTMLDivElement | null>(null);
@@ -159,6 +176,22 @@ export function TemplateCanvas({
   // 手書き（筆順）の「停止/スクラブ中は全文表示」用に再生状態を ref で保持。
   const isPlayingRef = useRef(isPlaying);
   isPlayingRef.current = isPlaying;
+  // 性能計測（Shift+P で ON/OFF）: 合成にかかった時間と実FPS を表示してボトルネック特定用。
+  const perfRef = useRef({
+    emaTotal: 0, // renderExportFrame 全体 ms（指数移動平均）
+    emaLayers: 0, // renderLayersOnContext だけの ms
+    emaFps: 0,
+    lastTick: 0,
+    layerCount: 0,
+    vidInTime: 0, // 今描画すべき動画レイヤー数
+    vidReady: 0, // そのうち readyState>=2（描画可能）な数
+    vidMounted: 0, // DOM に存在する <video> 総数（先読み含む）
+    blackAlpha: 0, // fade-black トランジションの黒被せ量（0..1）
+    snap: false, // wipe/push/dissolve トランジション中か
+    flashAlpha: 0, // 白フラッシュ量
+  });
+  const [showPerf, setShowPerf] = useState(false);
+  const [perfText, setPerfText] = useState("");
   const layersRef = useRef(layers);
   layersRef.current = layers;
   const transitionsRef = useRef(transitions);
@@ -301,6 +334,8 @@ export function TemplateCanvas({
     if (!visible || !container) return;
     if (renderingRef.current) return; // 直列化（rAF が await するので通常は重ならない）
     renderingRef.current = true;
+    const _perfT0 = performance.now();
+    let _layersMs = 0;
     try {
       const dims = templateDimensions({ aspect });
       if (
@@ -313,7 +348,12 @@ export function TemplateCanvas({
       const off = offscreenRef.current;
       const octx = off.getContext("2d");
       if (!octx) return;
-      const t = timeRef.current;
+      // 再生中は 60fps の playheadRef を読む（React state の間引きに影響されず滑らか）。
+      // 停止/スクラブ中は timeRef（= currentTimeSec 同期）を使う。
+      const t =
+        isPlayingRef.current && playheadRef
+          ? playheadRef.current
+          : timeRef.current;
       const ov = dragOverrideRef.current;
       const editId = editingLayerIdRef.current;
       const curLayers = layersRef.current
@@ -323,18 +363,25 @@ export function TemplateCanvas({
         .map((l) => (ov && l.id === ov.id ? { ...l, ...ov } : l));
       // 動画/キャラの現在フレーム: プレビューの DOM 内 <video>/<canvas> をそのまま使う
       const frameSources = new Map<string, CanvasImageSource>();
+      let _vidInTime = 0;
+      let _vidReady = 0;
       for (const l of curLayers) {
         if (l.type !== "video" && l.type !== "character") continue;
         if (t < l.startSec || t >= l.endSec) continue;
+        if (l.type === "video") _vidInTime++;
         const el = container.querySelector<HTMLElement>(
           `[data-layer-id="${l.id}"] video, [data-layer-id="${l.id}"] canvas`,
         );
         if (el instanceof HTMLVideoElement && el.readyState >= 2) {
           frameSources.set(l.id, el);
+          if (l.type === "video") _vidReady++;
         } else if (el instanceof HTMLCanvasElement && el.width > 0) {
           frameSources.set(l.id, el);
         }
       }
+      perfRef.current.vidInTime = _vidInTime;
+      perfRef.current.vidReady = _vidReady;
+      perfRef.current.vidMounted = container.querySelectorAll("video").length;
       const resolveSrc = async (l: Layer): Promise<string | null> => {
         const s = l.source;
         if (!s || s === "auto" || s === "user" || s === "") return null;
@@ -353,6 +400,8 @@ export function TemplateCanvas({
       const fx = computeScreenEffects(layersRef.current, t, dims.width / 360);
       // §C transition（fade-black/zoom）。export と同式・同窓。
       const tr = computeTransition(transitionsRef.current, t);
+      perfRef.current.blackAlpha = tr.blackAlpha;
+      perfRef.current.flashAlpha = fx.flashAlpha;
       const totalScale = fx.scale * tr.scale;
       const cx = dims.width / 2;
       const cy = dims.height / 2;
@@ -371,6 +420,7 @@ export function TemplateCanvas({
       if (fx.blurPx > 0) octxFilterParts.push(`blur(${fx.blurPx.toFixed(2)}px)`);
       if (fx.gradeFilter) octxFilterParts.push(fx.gradeFilter);
       if (octxFilterParts.length > 0) octx.filter = octxFilterParts.join(" ");
+      const _layT0 = performance.now();
       await renderLayersOnContext(octx, curLayers, resolveSrc, {
         atTimeSec: t,
         applyAnim: true,
@@ -381,6 +431,8 @@ export function TemplateCanvas({
         groups: groupsRef.current,
         cameras: camerasRef.current,
       });
+      _layersMs = performance.now() - _layT0;
+      perfRef.current.layerCount = curLayers.length;
       octx.filter = "none";
       octx.restore();
       if (fx.flashAlpha > 0) {
@@ -431,6 +483,7 @@ export function TemplateCanvas({
       // §C wipe/push/dissolve: 窓中は前シーン(ts)を別途描画して後シーンと合成
       // （export は窓開始フレームを保持。preview は時刻独立なので ts を再レンダリング＝窓中だけ負荷増）
       const snapTr = computeSnapshotTransition(transitionsRef.current, t);
+      perfRef.current.snap = !!snapTr;
       if (snapTr) {
         const prev = new OffscreenCanvas(dims.width, dims.height);
         const cur = new OffscreenCanvas(dims.width, dims.height);
@@ -474,16 +527,29 @@ export function TemplateCanvas({
       console.warn("[export-preview] render failed", e);
     } finally {
       renderingRef.current = false;
+      const totalMs = performance.now() - _perfT0;
+      const p = perfRef.current;
+      const a = p.emaTotal === 0 ? 1 : 0.2; // 初回は即反映、以降は EMA
+      p.emaTotal = p.emaTotal * (1 - a) + totalMs * a;
+      p.emaLayers = p.emaLayers * (1 - a) + _layersMs * a;
     }
-  }, [aspect]);
+  }, [aspect, playheadRef]);
 
   // 再生中: rAF ループで動画も含めて毎フレーム合成（ネイティブ再生を借りるのでバッファ不要）
   useEffect(() => {
     if (!showExport || !isPlaying) return;
     let active = true;
     let raf = 0;
+    perfRef.current.lastTick = 0;
     const tick = async () => {
       if (!active) return;
+      const now = performance.now();
+      const p = perfRef.current;
+      if (p.lastTick > 0) {
+        const fps = 1000 / Math.max(1, now - p.lastTick);
+        p.emaFps = p.emaFps === 0 ? fps : p.emaFps * 0.8 + fps * 0.2;
+      }
+      p.lastTick = now;
       await renderExportFrame();
       if (active) raf = requestAnimationFrame(tick);
     };
@@ -493,6 +559,39 @@ export function TemplateCanvas({
       cancelAnimationFrame(raf);
     };
   }, [showExport, isPlaying, renderExportFrame]);
+
+  // 性能メーター: Shift+P で ON/OFF（入力欄ではない時のみ）。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        el &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable);
+      if (!typing && e.shiftKey && (e.key === "P" || e.key === "p")) {
+        e.preventDefault();
+        setShowPerf((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // 性能メーター表示の更新（ON の間だけ 4回/秒）。
+  useEffect(() => {
+    if (!showPerf) {
+      setPerfText("");
+      return;
+    }
+    const id = window.setInterval(() => {
+      const p = perfRef.current;
+      setPerfText(
+        `合成 ${p.emaTotal.toFixed(1)}ms · ${p.emaFps.toFixed(0)}fps · ${p.layerCount}層 · 動画 ${p.vidReady}/${p.vidInTime} · 黒${p.blackAlpha.toFixed(2)}${p.snap ? " WIPE" : ""}${p.flashAlpha > 0 ? ` 白${p.flashAlpha.toFixed(2)}` : ""}`,
+      );
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [showPerf]);
 
   // 停止中: 時刻/レイヤー変更時に 1 度だけ合成（編集も即反映。idle で CPU を回さない）
   useEffect(() => {
@@ -545,6 +644,26 @@ export function TemplateCanvas({
           }}
         />
       )}
+      {/* 性能メーター（Shift+P）: 合成時間・FPS を表示してボトルネック特定用 */}
+      {showPerf && perfText && (
+        <div
+          style={{
+            position: "absolute",
+            top: 4,
+            left: 4,
+            zIndex: 10001,
+            pointerEvents: "none",
+            background: "rgba(0,0,0,0.7)",
+            color: perfRef.current.emaTotal > 16.7 ? "#ff6b6b" : "#7CFC9B",
+            font: "11px ui-monospace, monospace",
+            padding: "2px 6px",
+            borderRadius: 4,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {perfText}
+        </div>
+      )}
       {/* セーフエリアガイド（プレビュー専用）: 外=action-safe(3.5%余白) / 内=title-safe(5%余白) */}
       {showSafeArea && (
         <div
@@ -580,13 +699,32 @@ export function TemplateCanvas({
       {/* レイヤー群は shake 用 inner div でラップ（グリッド/Moveable は揺らさない） */}
       <div style={screenShakeStyle}>
         {sortedLayers(layers)
-          .filter(
-            (layer) =>
-              isInTime(layer) &&
-              !layer.hidden &&
-              layer.type !== "audio" &&
-              layer.type !== "effect",
-          )
+          .filter((layer) => {
+            if (
+              layer.hidden ||
+              layer.type === "audio" ||
+              layer.type === "effect"
+            )
+              return false;
+            // 再生中: 合成キャンバス(前面)が全レイヤーを描くので、裏の DOM レイヤーは見えない。
+            // フレーム取得が要る video/character だけ DOM に残し、それ以外（image/text/color/
+            // shape/comment）は再生中マウントしない → 毎フレームの React 再描画を激減（品質そのまま）。
+            if (
+              isPlaying &&
+              layer.type !== "video" &&
+              layer.type !== "character"
+            ) {
+              return false;
+            }
+            // 動画は先読みのため startSec の手前からマウント（canvas は in-time のみ描画）。
+            if (layer.type === "video" && currentTimeSec !== undefined) {
+              return (
+                currentTimeSec >= layer.startSec - VIDEO_PRELOAD_LEAD_SEC &&
+                currentTimeSec < layer.endSec + VIDEO_PRELOAD_TAIL_SEC
+              );
+            }
+            return isInTime(layer);
+          })
           .map((layer) => (
             <LayerView
               key={layer.id}
@@ -693,9 +831,10 @@ export function TemplateCanvas({
         />
       )}
 
-      {/* 音声レイヤー（視覚なし、<audio> を playhead 同期） */}
+      {/* 音声レイヤー（視覚なし、<audio> を playhead 同期）。
+          startSec の手前から先読みマウント（発音は AudioLayerPlayer が in-time 判定）。 */}
       {layers
-        .filter((l) => l.type === "audio" && !l.hidden && isInTime(l))
+        .filter((l) => l.type === "audio" && !l.hidden && isAudioMounted(l))
         .map((layer) => (
           <AudioLayerPlayer
             key={layer.id}
@@ -2434,16 +2573,25 @@ function AudioLayerPlayer({
       target = target % dur;
     }
     if (target < 0) target = 0;
-    // 許容ズレ。音ハメ等の同期精度のため 150ms→50ms に狭める。
-    // 両クロックとも実時間で進むためズレの蓄積は遅く、補正(seek)の頻度は低い。
-    if (Math.abs(a.currentTime - target) > 0.05) {
+    // 許容ズレ。再生中は大きめ(250ms)に取り、playhead の微小ジッタ（重いテンプレで
+    // React 再描画が詰まると起きる）での再 seek を避ける。<audio> の再生中 seek は
+    // プチノイズ（音割れ）の原因になるため。停止/スクラブ中は精密に追従（音ハメ用）。
+    // 再生中の初回同期は play 開始時の seek（下の play 効果）が担当するので問題ない。
+    const tol = isPlaying ? 0.25 : 0.05;
+    if (Math.abs(a.currentTime - target) > tol) {
       try {
         a.currentTime = target;
       } catch {
         /* noop */
       }
     }
-  }, [currentTimeSec, layer.startSec, layer.audioLoop, layer.playbackRate]);
+  }, [
+    currentTimeSec,
+    layer.startSec,
+    layer.audioLoop,
+    layer.playbackRate,
+    isPlaying,
+  ]);
 
   // 音量（GainNode 経由で 0..1 制約を回避してフェードを反映）
   useEffect(() => {
@@ -2507,11 +2655,15 @@ function AudioLayerPlayer({
   }, [layer.playbackRate, layer.id]);
 
   // play/pause（再生開始時に再生速度も再適用 — メタデータ読み込み前に設定したものが
-  // ロード完了で 1.0 にリセットされるブラウザ実装の対策）
+  // ロード完了で 1.0 にリセットされるブラウザ実装の対策）。
+  // in-time（startSec〜endSec）の間だけ発音する。startSec 手前の先読みマウント中は
+  // preload="auto" でバッファだけ進め、再生はしない（鳴り始めの遅延を消すため）。
+  const inTime =
+    currentTimeSec >= layer.startSec && currentTimeSec < layer.endSec;
   useEffect(() => {
     const a = audioRef.current;
     if (!a) return;
-    if (isPlaying) {
+    if (isPlaying && inTime) {
       // Web Audio グラフを既に構築済み（volume>1）の場合のみ resume。
       // autoplay policy で suspended になっている可能性があるため。
       // 通常音量レイヤーは直結なのでグラフを作らない（無音事故防止）。
@@ -2544,7 +2696,7 @@ function AudioLayerPlayer({
     } else {
       a.pause();
     }
-  }, [isPlaying, layer.playbackRate]);
+  }, [isPlaying, inTime, layer.playbackRate]);
 
   if (!resolved) return null;
 
@@ -2599,18 +2751,26 @@ function VideoLayerContent({
     }
   }, [currentTimeSec, layer.startSec, layer.playbackRate, layer.videoLoop]);
 
-  // isPlaying に応じて play/pause
+  // isPlaying に応じて play/pause。先読みマウント中（startSec 前）は再生せず
+  // preload buffering だけ。in-time になったら再生。状態変化時のみ play/pause を
+  // 呼ぶ（毎フレーム呼ばない）。
+  const videoPlayStateRef = useRef<boolean | null>(null);
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (isPlaying) {
+    const inTime =
+      currentTimeSec >= layer.startSec && currentTimeSec < layer.endSec;
+    const shouldPlay = isPlaying && inTime;
+    if (videoPlayStateRef.current === shouldPlay) return;
+    videoPlayStateRef.current = shouldPlay;
+    if (shouldPlay) {
       v.play().catch(() => {
         /* user gesture 要件などで失敗する可能性あり。無視 */
       });
     } else {
       v.pause();
     }
-  }, [isPlaying]);
+  }, [isPlaying, currentTimeSec, layer.startSec, layer.endSec]);
 
   // 再生速度（video レイヤーでも音声と同じく playbackRate を反映）
   useEffect(() => {
