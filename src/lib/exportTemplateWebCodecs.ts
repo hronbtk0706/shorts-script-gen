@@ -22,7 +22,7 @@ import {
   BufferTarget,
   CanvasSource,
   AudioBufferSource,
-  QUALITY_HIGH,
+  QUALITY_VERY_HIGH,
   Input,
   BlobSource,
   Mp4InputFormat,
@@ -197,7 +197,9 @@ export async function exportTemplateWebCodecs(
   });
   const videoSource = new CanvasSource(canvas, {
     codec: "avc", // h264
-    bitrate: QUALITY_HIGH,
+    // YouTube 1080p30 SDR 推奨は 8 Mbps。QUALITY_HIGH(係数2≒6Mbps) では
+    // グラデのバンディング/動きのにじみが出るため QUALITY_VERY_HIGH(係数4≒12Mbps) に引き上げ。
+    bitrate: QUALITY_VERY_HIGH,
   });
   output.addVideoTrack(videoSource, { frameRate: FPS });
 

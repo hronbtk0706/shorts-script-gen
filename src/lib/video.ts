@@ -4,7 +4,8 @@
  * かつてここには ffmpeg + filter_complex ベースの動画合成
  * (`generateVideoFromTemplate` → Rust `compose_template_video`) があったが、
  * WebCodecs 経路 (exportTemplateWebCodecs.ts) に一本化したため撤去した。
- * 画質プリセットも廃止（WebCodecs は常に QUALITY_HIGH 固定）。
+ * 画質プリセットは廃止（WebCodecs 固定）。ビットレートは YouTube 推奨を満たすため
+ * QUALITY_VERY_HIGH（1080p で約 12 Mbps）固定（exportTemplateWebCodecs.ts / characterRender.ts）。
  * ProgressUpdate は ExportModal が進捗表示に使うため残している。
  */
 

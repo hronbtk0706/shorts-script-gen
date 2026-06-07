@@ -66,6 +66,19 @@ export function getCompositionCanvasDimensions(): { width: number; height: numbe
   return { width: FINAL_W, height: FINAL_H };
 }
 
+/**
+ * 画像/動画の縮小描画を高品質補間にする。
+ * Canvas 2D の既定は imageSmoothingQuality="low" で、大きい素材を 1080 に縮小すると
+ * ジャギ/モアレが出やすい。"high" にすると縮小がなめらかになる（preview/export 共通の
+ * drawImage チョークポイントで呼ぶ）。
+ */
+function enableHQSmoothing(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+) {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+}
+
 /** 1レイヤーの画像/動画ソースを解決する関数。動画は1フレーム目を静止画として使う想定 */
 export type LayerSourceResolver = (layer: Layer) => Promise<string | null>;
 
@@ -143,6 +156,7 @@ export async function renderLayersOnContext(
   } = {},
 ): Promise<void> {
   staticHandwriteFlag = opts.staticHandwrite === true;
+  enableHQSmoothing(ctx);
   if (opts.transparent) {
     ctx.clearRect(0, 0, FINAL_W, FINAL_H);
   } else {
@@ -517,6 +531,7 @@ async function drawLayerContentOnly(
   resolveSrc: LayerSourceResolver,
 ): Promise<void> {
   ctx.save();
+  enableHQSmoothing(ctx);
   // opacity は Rust 側で colorchannelmixer=aa=... により適用されるため、ここでは焼き込まない
   // （以前は二重適用で opacity 0.5 が出力 0.25 になる致命傷があった）
   ctx.globalAlpha = 1;
@@ -1025,6 +1040,7 @@ function drawImageMaybeChroma(
   h: number,
 ): void {
   const ck = layer.chromaKey;
+  enableHQSmoothing(ctx);
   if (!ck) {
     ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
     return;
@@ -1037,6 +1053,7 @@ function drawImageMaybeChroma(
     ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
     return;
   }
+  enableHQSmoothing(tctx);
   tctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
   applyChromaKey(tctx, tw, th, ck);
   ctx.drawImage(temp, 0, 0);

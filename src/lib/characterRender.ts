@@ -14,7 +14,7 @@ import {
   WebMOutputFormat,
   BufferTarget,
   CanvasSource,
-  QUALITY_HIGH,
+  QUALITY_VERY_HIGH,
 } from "mediabunny";
 import { invoke } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
@@ -135,7 +135,8 @@ export async function composeCharacterLayerVideo(
     });
     const videoSource = new CanvasSource(canvas, {
       codec: "vp9",
-      bitrate: QUALITY_HIGH,
+      // 最終 mp4 (exportTemplateWebCodecs) の引き上げに合わせ、キャラ事前焼きも高ビットレート化。
+      bitrate: QUALITY_VERY_HIGH,
       alpha: "keep",
     });
     output.addVideoTrack(videoSource, { frameRate: fps });
