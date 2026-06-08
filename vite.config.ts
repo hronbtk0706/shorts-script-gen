@@ -8,6 +8,17 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
 
+  // ヘッドレス描画用の 2 つ目の HTML エントリ（curio-gen D9 ゲート）。
+  // main=編集アプリ / render=renderLayersOnContext だけ回す軽量ページ。
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        render: "render.html",
+      },
+    },
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors

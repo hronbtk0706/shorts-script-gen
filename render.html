@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>render (headless)</title>
+  </head>
+  <body>
+    <!--
+      ヘッドレス・フレーム描画専用エントリ（curio-gen の D9 ゲート用）。
+      編集 UI / React は読み込まず、renderEntry が renderLayersOnContext を回して
+      PNG を書き出すだけ。Tauri が `--render-frames` モードのときに隠しウィンドウで開く。
+      character/video テクスチャは使わないので Live2D Core も読み込まない。
+    -->
+    <script type="module" src="/src/renderEntry.ts"></script>
+  </body>
+</html>

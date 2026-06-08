@@ -2019,11 +2019,161 @@ async fn wait_for_oauth_callback(listener: TcpListener) -> Result<String, String
 }
 
 
+// ========================================================================
+// ヘッドレス・フレーム描画（curio-gen の D9 ゲート用）
+//
+// curio-gen は `node scripts/render-frames.mjs --template … --times … --out …`
+// という純粋な node CLI を subprocess で叩く。その node ラッパーが内部でこの exe を
+// `--render-frames …` 付きで spawn し、隠しウィンドウ (render.html) で本物の
+// renderLayersOnContext を回して各秒の PNG を書き出す。
+//
+// release ビルドは windows_subsystem="windows" なので stdout がパイプに乗らない。
+// そこで exe は `<out>/manifest.json` をファイル出力し、node ラッパーがそれを読んで
+// 自前の stdout に流す（GUI exe の stdout 問題を回避しつつ curio-gen の契約を維持）。
+// ========================================================================
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RenderArgs {
+    /// テンプレ JSON の中身（exe が --template のファイルを読んで埋める）
+    template_json: String,
+    /// 描画する秒（カンマ区切りをパース済み）
+    times: Vec<f64>,
+    /// PNG / manifest.json の出力先ディレクトリ（絶対パス）
+    out_dir: String,
+    /// 出力幅（省略時は templateDimensions）
+    width: Option<u32>,
+    /// 出力高さ（省略時は templateDimensions）
+    height: Option<u32>,
+}
+
+/// `--render-frames` モードの引数を managed state として保持する。
+struct RenderState(Option<RenderArgs>);
+
+/// CLI 引数から `--render-frames` モードの RenderArgs を組み立てる。
+/// `--render-frames` が無ければ None（＝通常のアプリ起動）。
+fn parse_render_cli() -> Option<RenderArgs> {
+    let argv: Vec<String> = std::env::args().collect();
+    if !argv.iter().any(|a| a == "--render-frames") {
+        return None;
+    }
+    let mut template_path: Option<String> = None;
+    let mut times_raw: Option<String> = None;
+    let mut out_dir: Option<String> = None;
+    let mut width: Option<u32> = None;
+    let mut height: Option<u32> = None;
+    let mut i = 0;
+    while i < argv.len() {
+        match argv[i].as_str() {
+            "--template" => {
+                template_path = argv.get(i + 1).cloned();
+                i += 1;
+            }
+            "--times" => {
+                times_raw = argv.get(i + 1).cloned();
+                i += 1;
+            }
+            "--out" => {
+                out_dir = argv.get(i + 1).cloned();
+                i += 1;
+            }
+            "--width" => {
+                width = argv.get(i + 1).and_then(|s| s.parse::<u32>().ok());
+                i += 1;
+            }
+            "--height" => {
+                height = argv.get(i + 1).and_then(|s| s.parse::<u32>().ok());
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    // テンプレ読み込み（失敗時は空文字 → renderEntry 側で JSON.parse が throw → exit 1）
+    let template_json = template_path
+        .as_deref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    let times: Vec<f64> = times_raw
+        .as_deref()
+        .map(|s| {
+            s.split(',')
+                .filter_map(|x| x.trim().parse::<f64>().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(RenderArgs {
+        template_json,
+        times,
+        out_dir: out_dir.unwrap_or_default(),
+        width,
+        height,
+    })
+}
+
+/// renderEntry（render.html）が起動直後に呼ぶ。描画すべき引数を返す。
+#[tauri::command]
+fn get_render_args(state: tauri::State<RenderState>) -> Option<RenderArgs> {
+    state.0.clone()
+}
+
+/// renderEntry が 1 フレーム分の PNG を base64 で渡してくる。out_dir に保存して絶対パスを返す。
+#[tauri::command]
+fn save_render_frame_png(
+    out_dir: String,
+    filename: String,
+    base64_data: String,
+) -> Result<String, String> {
+    let dir = PathBuf::from(&out_dir);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir out: {e}"))?;
+    let path = dir.join(format!("{}.png", filename));
+    let bytes = general_purpose::STANDARD
+        .decode(base64_data.as_bytes())
+        .map_err(|e| format!("base64 decode: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("write png: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// renderEntry が全フレーム完了（or 失敗）したら呼ぶ。manifest.json を書いてプロセスを終了する。
+/// ok=true → exit 0 / ok=false → exit 1。node ラッパーは manifest.json を読んで stdout に流す。
+#[tauri::command]
+fn finish_render(app: tauri::AppHandle, out_dir: String, manifest_json: String, ok: bool) {
+    if !out_dir.is_empty() {
+        let dir = PathBuf::from(&out_dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("manifest.json"), &manifest_json);
+    }
+    app.exit(if ok { 0 } else { 1 });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let render_args = parse_render_cli();
+    let is_render_mode = render_args.is_some();
     tauri::Builder::default()
         .manage(VoicevoxChild(Mutex::new(None)))
-        .setup(|app| {
+        .manage(RenderState(render_args))
+        .setup(move |app| {
+            if is_render_mode {
+                // ヘッドレス描画モード: 編集 UI は出さず、非表示の render.html ウィンドウだけ作る。
+                // 先に render ウィンドウを作ってから main を閉じる（ウィンドウ 0 個での自動終了を避ける）。
+                tauri::WebviewWindowBuilder::new(
+                    app,
+                    "render",
+                    tauri::WebviewUrl::App("render.html".into()),
+                )
+                .visible(false)
+                .build()?;
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.close();
+                }
+                return Ok(());
+            }
+            // 通常起動: config の main ウィンドウは visible:false で作られるのでここで表示する。
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
             if !is_voicevox_running() {
                 if let Some(exe) = find_voicevox() {
                     if let Ok(child) = hidden_cmd(&exe).spawn() {
@@ -2088,6 +2238,9 @@ pub fn run() {
             migrate_legacy_audio_dirs,
             list_template_assets,
             delete_template_asset,
+            get_render_args,
+            save_render_frame_png,
+            finish_render,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
