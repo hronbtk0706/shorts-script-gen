@@ -86,6 +86,27 @@
   毎フレーム `applyKeyframesAtTime`（`sampleLayerAt` 経由）で補間値を `drawLayer` に渡す
 - **opacity のキーフレーム補間も WebCodecs では対応済み**（旧 ffmpeg 経路では未対応だったが撤去済み）
 
+## ビルド運用（重要）— 「ビルドして」はデスクトップのショートカットまで反映する
+
+ユーザーは普段、アプリを **デスクトップのショートカット**から起動する。その実体は
+**NSIS インストール先** `%LOCALAPPDATA%\shorts-script-gen\shorts-script-gen.exe`。
+Tauri はフロント `dist/` を **exe に埋め込んでビルド**するため、ソースや `dist/` を更新しても
+起動済み exe は変わらない。さらに `npm run tauri build` が更新するのは
+`src-tauri\target\release\` の exe であって、**ショートカットが指す AppData の
+インストール済み exe は setup.exe を実行するまで古いまま**。
+
+そのため「ビルドして」と言われたら、原則 **ショートカットに反映されるところまで**を完了とする:
+
+1. アプリを終了してから `npm run tauri build`（起動中は exe ロックで os error 5）。
+   → `tsc && vite build` で `dist/` を exe に埋め込み、release コンパイル + NSIS installer 生成。
+2. 生成された `src-tauri\target\release\bundle\nsis\shorts-script-gen_<ver>_x64-setup.exe` を
+   **サイレント再インストール**: `Start-Process <setup> -ArgumentList "/S" -Wait`。
+3. `%LOCALAPPDATA%\shorts-script-gen\shorts-script-gen.exe` の LastWriteTime が更新されたか確認。
+
+- 手早い動作確認だけなら `npm run tauri dev`（exe 埋め込み不要で速い・HMR）を使う/案内してよい。
+  ショートカット版へ恒久反映する必要があるときは上の 3 ステップ。
+- フロント側のみの変更でも、exe への再埋め込みのため `tauri build` は必要（`npm run build` だけでは不可）。
+
 ## ブランチ運用（重要・デフォルト挙動を上書き）
 
 - このリポジトリは **`main` 1 本で運用**する（ユーザーが一人で触るため feature ブランチ不要）。

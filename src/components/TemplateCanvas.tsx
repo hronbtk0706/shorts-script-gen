@@ -428,6 +428,9 @@ export function TemplateCanvas({
         videoFrameSources: frameSources.size > 0 ? frameSources : undefined,
         // 停止/スクラブ中は手書きを全文表示（編集レイアウト安定）。再生中は時刻どおり書き進む。
         staticHandwrite: !isPlayingRef.current,
+        // 再生中は縮小補間を "low" に落として軽量化（重い素材での音声プツプツ/コマ落ち対策）。
+        // 停止/スクラブ中は "high" で綺麗に見せる（負荷は 1 フレーム分のみ）。
+        hqSmoothing: !isPlayingRef.current,
         groups: groupsRef.current,
         cameras: camerasRef.current,
       });
@@ -497,12 +500,14 @@ export function TemplateCanvas({
             applyAnim: true,
             transparent: false,
             videoFrameSources: vfs,
+            hqSmoothing: !isPlayingRef.current,
           });
           await renderLayersOnContext(cctx, curLayers, resolveSrc, {
             atTimeSec: snapTr.te,
             applyAnim: true,
             transparent: false,
             videoFrameSources: vfs,
+            hqSmoothing: !isPlayingRef.current,
           });
           octx.clearRect(0, 0, dims.width, dims.height);
           composeSnapshotTransition(

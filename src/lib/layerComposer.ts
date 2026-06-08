@@ -66,17 +66,24 @@ export function getCompositionCanvasDimensions(): { width: number; height: numbe
   return { width: FINAL_W, height: FINAL_H };
 }
 
+// 縮小補間の品質。エクスポート/停止プレビューは "high"（ジャギ/モアレ抑制）、
+// リアルタイム再生プレビューは "low"（高品質補間はメインスレッドを食い、重い素材で
+// 音声アンダーラン=プツプツやコマ落ちを起こすため）。renderLayersOnContext が
+// opts.hqSmoothing で都度セットし、内部の各 drawImage チョークポイントが参照する。
+let hqSmoothingFlag = true;
+
 /**
- * 画像/動画の縮小描画を高品質補間にする。
+ * 画像/動画の縮小描画の補間品質を ctx に適用する。
  * Canvas 2D の既定は imageSmoothingQuality="low" で、大きい素材を 1080 に縮小すると
- * ジャギ/モアレが出やすい。"high" にすると縮小がなめらかになる（preview/export 共通の
- * drawImage チョークポイントで呼ぶ）。
+ * ジャギ/モアレが出やすい。"high" にすると縮小がなめらかになるが負荷が高いので、
+ * リアルタイム再生では hqSmoothingFlag=false にして "low" に戻す
+ * （preview/export 共通の drawImage チョークポイントで呼ぶ）。
  */
 function enableHQSmoothing(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
 ) {
   ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
+  ctx.imageSmoothingQuality = hqSmoothingFlag ? "high" : "low";
 }
 
 /** 1レイヤーの画像/動画ソースを解決する関数。動画は1フレーム目を静止画として使う想定 */
@@ -153,9 +160,14 @@ export async function renderLayersOnContext(
     groups?: LayerGroup[];
     /** カメラ変換（Phase3 C-1）。groupId 一致レイヤーに pivot 基準の scale+移動を上掛け。 */
     cameras?: CameraSpec[];
+    /** 縮小補間を高品質("high")にするか。既定 true（エクスポート/停止プレビュー）。
+     * リアルタイム再生プレビューは false を渡して "low" にし、負荷を下げる
+     * （重い素材での音声プツプツ/コマ落ち対策）。 */
+    hqSmoothing?: boolean;
   } = {},
 ): Promise<void> {
   staticHandwriteFlag = opts.staticHandwrite === true;
+  hqSmoothingFlag = opts.hqSmoothing !== false;
   enableHQSmoothing(ctx);
   if (opts.transparent) {
     ctx.clearRect(0, 0, FINAL_W, FINAL_H);
@@ -510,6 +522,9 @@ export async function composeLayerContentPng(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context を取得できませんでした");
 
+  // オフラインの PNG 焼きは常に高品質補間（renderLayersOnContext を通らないため、
+  // 直前の再生プレビューで false にされたグローバルが残らないよう明示リセット）。
+  hqSmoothingFlag = true;
   if (padL || padT) ctx.translate(padL, padT);
   await drawLayerContentOnly(ctx, layer, w, h, resolveSrc);
 
