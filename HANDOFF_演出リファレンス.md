@@ -19,6 +19,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 |---|---|---|
 | `color` | 単色/グラデの矩形（背景等） | `fillColor` / `fillGradient` |
 | `shape` | 図形・マーカー注釈 | `shape` ほか（§5） |
+| `icon` 🆕 | 線アイコン（“物体”の可視化・Lucide 同梱） | `icon`(名前) / `fillColor`(色) / `iconStrokeWidth`（§5.5） |
 | `comment` | テキスト（テロップ/吹き出し/手書き/カウンター） | `text` / `fontSize` 等（§4,§6） |
 | `image` | 画像 | `source`(絶対パス) / `crop` / `chromaKey` |
 | `video` | 動画 | `source` / `videoLoop` / `playbackRate` / `crop` / `chromaKey` |
@@ -85,6 +86,27 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 - `markerHead`: 先端の矢じり（line/arrow/surge）
   - `none` / `triangle`(塗り三角) / `open`🆕（**手書き風の開いた2本線**。塗らずストロークで描くので本文線と同じタッチ。**矢じりも draw-on で順に手書きされる**＝軸→矢じり左→右）
 - `markerCount`: `marker-burst` の線本数（既定12）
+
+---
+
+## 5.5 線アイコン `type:"icon"` 🆕（“物体”の可視化・Lucide 同梱）
+
+“量・動き”は `shape`、**“物体”（カード/スマホ/銀行/コーヒー/コイン/鍵/天びん…）は `icon`** で演じる。
+ベクター＝任意解像度で綺麗、`fillColor` で何色にも染まる。**preview=export（render-frames）一致**。
+
+```json
+{ "type": "icon", "icon": "coffee", "fillColor": "#FFC857",
+  "x": 40, "y": 40, "width": 12, "height": 12,
+  "zIndex": 44, "startSec": 3, "endSec": 6.6,
+  "entryAnimation": "pop", "kfs": [{"t":0,"x":40},{"t":1.4,"x":28}] }
+```
+
+- **`icon`**: Lucide 名。別名 `yen`→`japanese-yen` / `bank`→`landmark` / `card`→`credit-card` / `phone`→`smartphone` / `cart`→`shopping-cart` / `money`/`cash`→`banknote` / `coin`→`coins` / `alert`/`warning`→`circle-alert` / `balance`→`scale`。
+- **`fillColor`**: 線/塗りの色（既定 `#FFFFFF`）。**`kfs` の `fillColor` で色アニメ可**（検証済）。
+- **`iconStrokeWidth`**（任意・既定 2）: 線の太さ（24-viewBox 単位）。
+- box 内 **contain**（縦横比保持・中央・切れない）。共通プロパティ（kfs/entry/ambient/filter 等）も効く。
+- 同梱語彙（約40）: coins banknote wallet credit-card piggy-bank hand-coins dollar-sign japanese-yen percent receipt / user users store landmark building factory / smartphone gift package shopping-cart truck lock key / hourglass clock calendar flame check x circle-alert eye ban / arrow-right arrow-left-right trending-up trending-down scale globe lightbulb coffee。
+- 同梱外名は `npm run icons:sync`（or build の prebuild）でビルド時に取り込む。**取りこぼしは placeholder（破線四角＋名前）+warn**（空白にしない）。
 
 ---
 

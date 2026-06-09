@@ -16,6 +16,7 @@ import {
 } from "./animKeyframes";
 import { hasMotionPath, sampleMotionPath } from "./motionPath";
 import { computeLayerFilterCss } from "./layerFilter";
+import { drawIconOnCanvas } from "./icons";
 import {
   drawSpeedlines,
   drawSpotlight,
@@ -580,6 +581,16 @@ async function drawLayerContentOnly(
         }
         break;
       }
+      case "icon":
+        drawIconOnCanvas(
+          ctx,
+          layer.icon,
+          w,
+          h,
+          layer.fillColor ?? "#FFFFFF",
+          layer.iconStrokeWidth ?? 2,
+        );
+        break;
       case "color":
       case "shape":
         if (layer.shape === "arc") {
@@ -1312,6 +1323,17 @@ async function drawLayerContentInBox(
         // 未指定レイヤーは何も描画しない（透過）
         break;
       }
+      case "icon":
+        // 同梱 Lucide 線アイコンを contain 描画（同期・ベクター）。色=fillColor、太さ=iconStrokeWidth。
+        drawIconOnCanvas(
+          ctx,
+          layer.icon,
+          w,
+          h,
+          layer.fillColor ?? "#FFFFFF",
+          layer.iconStrokeWidth ?? 2,
+        );
+        break;
       case "color":
       case "shape":
         if (layer.shape === "arc") {

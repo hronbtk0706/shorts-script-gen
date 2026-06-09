@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "id": "_test_icons",
+  "name": "icon プリミティブ検証",
+  "createdAt": "2026-06-09T00:00:00.000Z",
+  "totalDuration": 8,
+  "aspect": "vertical",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "x": 0, "y": 0, "width": 100, "height": 100,
+      "zIndex": 0, "opacity": 1,
+      "fillColor": "#1b2330",
+      "startSec": 0, "endSec": 8
+    },
+    {
+      "id": "ic_coffee",
+      "type": "icon",
+      "icon": "coffee",
+      "fillColor": "#FFFFFF",
+      "iconStrokeWidth": 2,
+      "x": 10, "y": 12, "width": 22, "height": 12,
+      "zIndex": 10, "opacity": 1,
+      "startSec": 0, "endSec": 8,
+      "entryAnimation": "pop"
+    },
+    {
+      "id": "ic_coffee_gold",
+      "type": "icon",
+      "icon": "coffee",
+      "fillColor": "#FFC857",
+      "x": 40, "y": 12, "width": 22, "height": 12,
+      "zIndex": 11, "opacity": 1,
+      "startSec": 0, "endSec": 8
+    },
+    {
+      "id": "ic_scale",
+      "type": "icon",
+      "icon": "scale",
+      "fillColor": "#3A7D6E",
+      "x": 70, "y": 12, "width": 22, "height": 12,
+      "zIndex": 12, "opacity": 1,
+      "startSec": 0, "endSec": 8
+    },
+    {
+      "id": "ic_wallet_kfs",
+      "type": "icon",
+      "icon": "wallet",
+      "fillColor": "#FFC857",
+      "x": 20, "y": 35, "width": 24, "height": 14,
+      "zIndex": 13, "opacity": 1,
+      "startSec": 0, "endSec": 8,
+      "kfs": [
+        { "t": 0, "x": 20, "fillColor": "#FFC857" },
+        { "t": 2, "x": 56, "fillColor": "#3A7D6E" }
+      ]
+    },
+    {
+      "id": "ic_yen",
+      "type": "icon",
+      "icon": "yen",
+      "fillColor": "#FFFFFF",
+      "x": 38, "y": 58, "width": 24, "height": 14,
+      "zIndex": 14, "opacity": 1,
+      "startSec": 0, "endSec": 8
+    },
+    {
+      "id": "ic_unknown",
+      "type": "icon",
+      "icon": "definitely-not-an-icon",
+      "fillColor": "#FF6B6B",
+      "x": 38, "y": 80, "width": 24, "height": 12,
+      "zIndex": 15, "opacity": 1,
+      "startSec": 0, "endSec": 8
+    }
+  ]
+}

@@ -45,6 +45,18 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
         shape: "rounded",
         borderRadius: 8,
       };
+    case "icon":
+      return {
+        ...base,
+        // 同梱 Lucide 線アイコン。色は fillColor（線/塗り）、太さは iconStrokeWidth。
+        // contain 描画なので正方形寄りの箱が綺麗（既定 12%×12% ≒ 正方）。
+        shape: "rect",
+        icon: "coffee",
+        fillColor: "#FFFFFF",
+        iconStrokeWidth: 2,
+        width: defaults.width ?? 12,
+        height: defaults.height ?? 12,
+      };
     case "comment":
       return {
         ...base,

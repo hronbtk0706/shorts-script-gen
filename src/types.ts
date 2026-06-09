@@ -9,7 +9,8 @@ export type LayerType =
   | "comment"
   | "audio"
   | "character"
-  | "effect";
+  | "effect"
+  | "icon";
 
 export type LayerShape =
   | "rect"
@@ -731,6 +732,15 @@ export interface Layer {
   markerOvershoot?: number; // marker-surge の終端オーバーシュート量（線長比 0..0.5。既定 0.1）
   graphData?: number[]; // marker-graph 用のデータ値配列（最小2点）。箱内に min..max でスケール
   source?: "auto" | "user" | string;
+  /**
+   * type === "icon" 専用: 同梱 Lucide 線アイコンの名前（例 "coffee" / "wallet"）。
+   * 別名（"yen"→"japanese-yen" 等）も解決する。未知名は placeholder（破線四角＋名前）で描画。
+   * 線/塗りの色は `fillColor`（既定 #FFFFFF）、線の太さは `iconStrokeWidth`（24-viewBox 単位・既定 2）。
+   * box 内は contain（縦横比保持・中央・切れない）。kfs の fillColor 補間で色アニメも可。
+   */
+  icon?: string;
+  /** type === "icon" 専用: 線の太さ（24-viewBox 単位・既定 2）。アイコン拡大に従い太さも拡大。 */
+  iconStrokeWidth?: number;
   fillColor?: string;
   /** color/shape の塗りをグラデーションに（fillColor より優先・rect/rounded/circle に適用）。 */
   fillGradient?: TextGradient;

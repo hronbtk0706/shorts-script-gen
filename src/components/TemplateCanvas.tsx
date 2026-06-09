@@ -12,6 +12,7 @@ import {
 } from "../lib/animKeyframes";
 import { hasMotionPath, sampleMotionPath } from "../lib/motionPath";
 import { computeLayerFilterCss } from "../lib/layerFilter";
+import { buildIconSvgMarkup } from "../lib/icons";
 import { drawGrain } from "../lib/effectShape";
 import { computeDuckMultiplier } from "../lib/ducking";
 import {
@@ -1457,6 +1458,41 @@ function renderLayerContent(
           layer={layer}
           currentTimeSec={currentTimeSec}
           isPlaying={isPlaying}
+        />
+      );
+    }
+    case "icon": {
+      // 同梱 Lucide 線アイコンを inline <svg> で contain 描画（同期・export の drawIconOnCanvas と一致）。
+      const color = layer.fillColor ?? "#FFFFFF";
+      const markup = buildIconSvgMarkup(layer.icon, color, layer.iconStrokeWidth ?? 2);
+      if (!markup) {
+        // 未知名: export と同じ「見える placeholder」（破線四角＋名前）。
+        const label = (layer.icon ?? "").trim() || "icon?";
+        return (
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: `2px dashed ${color}`,
+              opacity: 0.7,
+              color,
+              fontSize: 10,
+              textAlign: "center",
+              overflow: "hidden",
+              boxSizing: "border-box",
+            }}
+          >
+            {label}
+          </div>
+        );
+      }
+      return (
+        <div
+          style={{ width: "100%", height: "100%" }}
+          dangerouslySetInnerHTML={{ __html: markup }}
         />
       );
     }

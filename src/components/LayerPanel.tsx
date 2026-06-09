@@ -132,6 +132,7 @@ const LAYER_TYPE_LABELS: Record<LayerType, { icon: string; label: string }> = {
   video: { icon: "🎬", label: "動画" },
   color: { icon: "🎨", label: "単色" },
   shape: { icon: "🟡", label: "図形" },
+  icon: { icon: "❖", label: "アイコン" },
   comment: { icon: "📝", label: "テキスト" },
   audio: { icon: "🎵", label: "音声" },
   character: { icon: "🎭", label: "キャラ" },

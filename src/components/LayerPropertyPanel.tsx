@@ -23,6 +23,7 @@ import {
 } from "../lib/providers/tts";
 import { loadSettings } from "../lib/storage";
 import { isMarkerShape } from "../lib/markerShape";
+import { ICON_NAMES, iconExists } from "../lib/icons";
 import { detectBeats, buildScalePulseKeyframes } from "../lib/beatDetect";
 import { ColorSwatches, recordColorUsed } from "./ColorSwatches";
 
@@ -441,6 +442,7 @@ type SectionId =
   | "timing"
   | "geometry"
   | "shape"
+  | "icon"
   | "border"
   | "fill"
   | "text"
@@ -461,6 +463,7 @@ const TAB_OF_SECTION: Record<SectionId, PropTab> = {
   timing: "basic",
   geometry: "basic",
   shape: "style",
+  icon: "style",
   border: "style",
   fill: "style",
   text: "basic",
@@ -825,6 +828,7 @@ export function LayerPropertyPanel({
   const allHaveType = (types: Layer["type"][]): boolean =>
     list.every((l) => types.includes(l.type));
   const showFill = allHaveType(["color", "shape"]);
+  const showIcon = allHaveType(["icon"]);
   const showText = allHaveType(["comment"]);
   const showSource = allHaveType(["image", "video"]);
   const showAudio = allHaveType(["audio"]);
@@ -839,6 +843,7 @@ export function LayerPropertyPanel({
     comment: "📝",
     color: "🎨",
     shape: "⬜",
+    icon: "❖",
     audio: "🎵",
     character: "🎭",
     effect: "💥",
@@ -1561,6 +1566,48 @@ export function LayerPropertyPanel({
             )}
           </Section>
         )}
+
+      {showIcon && (
+      <Section id="icon" title="アイコン" open={isOpen("icon")} onToggle={toggle} currentTab={activeTab}>
+        <div className="text-[11px] space-y-1.5">
+          <div className="grid grid-cols-[70px_1fr] items-center gap-1">
+            <label className="text-gray-600 dark:text-gray-400">名前</label>
+            <input
+              type="text"
+              list="icon-name-list"
+              value={common("icon") ?? ""}
+              placeholder="coffee, wallet, scale …"
+              onChange={(e) => onChange({ icon: e.target.value.trim() })}
+              className="px-1 py-0.5 text-[11px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+            />
+            <datalist id="icon-name-list">
+              {ICON_NAMES.map((n) => (
+                <option key={n} value={n} />
+              ))}
+            </datalist>
+          </div>
+          {common("icon") && !iconExists(common("icon")) && (
+            <div className="text-[10px] text-amber-600 dark:text-amber-400">
+              未同梱の名前です。プレビューは placeholder（破線四角）。npm run icons:sync で取り込めます。
+            </div>
+          )}
+          {colorInput("色", common("fillColor") ?? "#FFFFFF", (c) =>
+            onChange({ fillColor: c }),
+          )}
+          {sliderInput(
+            "線の太さ",
+            common("iconStrokeWidth") ?? 2,
+            (v) => onChange({ iconStrokeWidth: Math.max(0.5, v) }),
+            0.5,
+            6,
+            0.5,
+          )}
+          <div className="text-[10px] text-gray-500">
+            線アイコン（Lucide）。箱内 contain（縦横比保持・切れない）。色は kfs の fillColor でアニメ可。
+          </div>
+        </div>
+      </Section>
+      )}
 
       {!allAudio && (
       <Section id="shape" title="形状" open={isOpen("shape")} onToggle={toggle} currentTab={activeTab}>

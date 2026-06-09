@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/gen-icons.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
+    "icons:sync": "node scripts/gen-icons.mjs",
     "build:glyphs": "node scripts/build-handwrite-glyphs.mjs"
   },
   "dependencies": {
@@ -36,6 +38,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "hersheytext": "^2.0.0",
+    "lucide-static": "^1.17.0",
     "svg-path-properties": "^2.0.2",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.8.3",
