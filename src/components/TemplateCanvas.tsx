@@ -1462,12 +1462,18 @@ function renderLayerContent(
       );
     }
     case "icon": {
-      // 同梱 Lucide 線アイコンを inline <svg> で contain 描画（同期・export の drawIconOnCanvas と一致）。
+      // 同梱 Lucide 線アイコン or inline SVG(layer.svg) を inline <svg> で contain 描画
+      // （同期・export の drawIconOnCanvas と一致）。
       const color = layer.fillColor ?? "#FFFFFF";
-      const markup = buildIconSvgMarkup(layer.icon, color, layer.iconStrokeWidth ?? 2);
+      const markup = buildIconSvgMarkup(
+        layer.icon,
+        color,
+        layer.iconStrokeWidth ?? 2,
+        layer.svg,
+      );
       if (!markup) {
-        // 未知名: export と同じ「見える placeholder」（破線四角＋名前）。
-        const label = (layer.icon ?? "").trim() || "icon?";
+        // 未知名 / inline 解釈不能: export と同じ「見える placeholder」（破線四角＋名前）。
+        const label = (layer.icon ?? "").trim() || (layer.svg ? "svg?" : "icon?");
         return (
           <div
             style={{

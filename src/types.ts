@@ -739,6 +739,14 @@ export interface Layer {
    * box 内は contain（縦横比保持・中央・切れない）。kfs の fillColor 補間で色アニメも可。
    */
   icon?: string;
+  /**
+   * type === "icon" 専用: inline SVG の inner markup（Lucide 流・viewBox 24×24 前提）。
+   * 指定時は `icon` 名の解決の代わりにこの markup を使う（未指定なら従来通り名前解決＝後方互換）。
+   * curio-gen が Lucide 原本から派生させた“状態違い”アイコンを template に直書きする用途。
+   * 色は `fillColor` / 太さは `iconStrokeWidth` / contain は名前アイコンと共通適用（kfs の fillColor 色アニメも効く）。
+   * 安全のため描画前に shape 要素（path/line/circle/ellipse/rect/polyline/polygon）＋幾何属性のみへサニタイズする。
+   */
+  svg?: string;
   /** type === "icon" 専用: 線の太さ（24-viewBox 単位・既定 2）。アイコン拡大に従い太さも拡大。 */
   iconStrokeWidth?: number;
   fillColor?: string;

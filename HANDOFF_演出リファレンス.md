@@ -19,7 +19,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 |---|---|---|
 | `color` | 単色/グラデの矩形（背景等） | `fillColor` / `fillGradient` |
 | `shape` | 図形・マーカー注釈 | `shape` ほか（§5） |
-| `icon` 🆕 | 線アイコン（“物体”の可視化・Lucide 同梱） | `icon`(名前) / `fillColor`(色) / `iconStrokeWidth`（§5.5） |
+| `icon` 🆕 | 線アイコン（“物体”の可視化・Lucide 同梱 or inline SVG） | `icon`(名前) / `svg`(inline markup) / `fillColor`(色) / `iconStrokeWidth`（§5.5） |
 | `comment` | テキスト（テロップ/吹き出し/手書き/カウンター） | `text` / `fontSize` 等（§4,§6） |
 | `image` | 画像 | `source`(絶対パス) / `crop` / `chromaKey` |
 | `video` | 動画 | `source` / `videoLoop` / `playbackRate` / `crop` / `chromaKey` |
@@ -102,7 +102,8 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 ```
 
 - **`icon`**: Lucide 名。別名 `yen`→`japanese-yen` / `bank`→`landmark` / `card`→`credit-card` / `phone`→`smartphone` / `cart`→`shopping-cart` / `money`/`cash`→`banknote` / `coin`→`coins` / `alert`/`warning`→`circle-alert` / `balance`→`scale`。
-- **`fillColor`**: 線/塗りの色（既定 `#FFFFFF`）。**`kfs` の `fillColor` で色アニメ可**（検証済）。
+- **`svg`**（任意）🆕: inline SVG の inner markup（Lucide 流・viewBox 24×24 前提。例 `"<path d='…'/><circle …/>"`）。指定時は `icon` 名解決の代わりにこれを描く（未指定なら従来通り名前解決＝**後方互換**）。色=`fillColor`/太さ=`iconStrokeWidth`/contain/kfs は名前アイコンと**共通**（同じタッチで揃う）。Lucide に状態違いが無い“物体”は curio が原本から派生 SVG を直書きして使う。**安全のため shape 要素（path/line/circle/ellipse/rect/polyline/polygon）＋幾何属性のみへサニタイズ**（`<script>`/`on*` は除去）。直接子の shape のみ（g 入れ子は不可）。
+- **`fillColor`**: 線/塗りの色（既定 `#FFFFFF`）。**`kfs` の `fillColor` で色アニメ可**（検証済。`svg` inline でも同様に効く）。
 - **`iconStrokeWidth`**（任意・既定 2）: 線の太さ（24-viewBox 単位）。
 - box 内 **contain**（縦横比保持・中央・切れない）。共通プロパティ（kfs/entry/ambient/filter 等）も効く。
 - 同梱語彙（約40）: coins banknote wallet credit-card piggy-bank hand-coins dollar-sign japanese-yen percent receipt / user users store landmark building factory / smartphone gift package shopping-cart truck lock key / hourglass clock calendar flame check x circle-alert eye ban / arrow-right arrow-left-right trending-up trending-down scale globe lightbulb coffee。

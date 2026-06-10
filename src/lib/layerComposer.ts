@@ -589,6 +589,7 @@ async function drawLayerContentOnly(
           h,
           layer.fillColor ?? "#FFFFFF",
           layer.iconStrokeWidth ?? 2,
+          layer.svg,
         );
         break;
       case "color":
@@ -1324,7 +1325,7 @@ async function drawLayerContentInBox(
         break;
       }
       case "icon":
-        // 同梱 Lucide 線アイコンを contain 描画（同期・ベクター）。色=fillColor、太さ=iconStrokeWidth。
+        // 同梱 Lucide 線アイコン or inline SVG(layer.svg) を contain 描画（同期・ベクター）。色=fillColor、太さ=iconStrokeWidth。
         drawIconOnCanvas(
           ctx,
           layer.icon,
@@ -1332,6 +1333,7 @@ async function drawLayerContentInBox(
           h,
           layer.fillColor ?? "#FFFFFF",
           layer.iconStrokeWidth ?? 2,
+          layer.svg,
         );
         break;
       case "color":

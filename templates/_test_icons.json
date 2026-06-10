@@ -70,9 +70,34 @@
       "type": "icon",
       "icon": "definitely-not-an-icon",
       "fillColor": "#FF6B6B",
-      "x": 38, "y": 80, "width": 24, "height": 12,
+      "x": 8, "y": 80, "width": 24, "height": 12,
       "zIndex": 15, "opacity": 1,
       "startSec": 0, "endSec": 8
+    },
+    {
+      "id": "ic_inline_coffee",
+      "type": "icon",
+      "svg": "<path d='M10 2v2'/><path d='M14 2v2'/><path d='M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1'/><path d='M6 2v2'/>",
+      "fillColor": "#FFFFFF",
+      "iconStrokeWidth": 2,
+      "x": 10, "y": 24, "width": 22, "height": 12,
+      "zIndex": 16, "opacity": 1,
+      "startSec": 0, "endSec": 8,
+      "entryAnimation": "pop"
+    },
+    {
+      "id": "ic_inline_kfs",
+      "type": "icon",
+      "svg": "<rect x='3' y='6' width='18' height='12' rx='2'/><path d='M3 10h18'/><circle cx='16' cy='14' r='1.5'/>",
+      "fillColor": "#FFC857",
+      "iconStrokeWidth": 2,
+      "x": 60, "y": 80, "width": 24, "height": 12,
+      "zIndex": 17, "opacity": 1,
+      "startSec": 0, "endSec": 8,
+      "kfs": [
+        { "t": 0, "fillColor": "#FFC857" },
+        { "t": 2, "fillColor": "#3A7D6E" }
+      ]
     }
   ]
 }

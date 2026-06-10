@@ -1586,11 +1586,24 @@ export function LayerPropertyPanel({
               ))}
             </datalist>
           </div>
-          {common("icon") && !iconExists(common("icon")) && (
+          {common("icon") && !iconExists(common("icon")) && !common("svg") && (
             <div className="text-[10px] text-amber-600 dark:text-amber-400">
               未同梱の名前です。プレビューは placeholder（破線四角）。npm run icons:sync で取り込めます。
             </div>
           )}
+          <div className="grid grid-cols-[70px_1fr] items-start gap-1">
+            <label className="text-gray-600 dark:text-gray-400 pt-0.5">inline SVG</label>
+            <textarea
+              rows={2}
+              value={common("svg") ?? ""}
+              placeholder="<path d='…'/> （viewBox 24×24・shape のみ。空なら名前で解決）"
+              onChange={(e) => {
+                const v = e.target.value;
+                onChange({ svg: v.trim() === "" ? undefined : v });
+              }}
+              className="px-1 py-0.5 text-[11px] font-mono leading-tight rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 resize-y"
+            />
+          </div>
           {colorInput("色", common("fillColor") ?? "#FFFFFF", (c) =>
             onChange({ fillColor: c }),
           )}
@@ -1603,7 +1616,7 @@ export function LayerPropertyPanel({
             0.5,
           )}
           <div className="text-[10px] text-gray-500">
-            線アイコン（Lucide）。箱内 contain（縦横比保持・切れない）。色は kfs の fillColor でアニメ可。
+            線アイコン（Lucide）or inline SVG。箱内 contain（縦横比保持・切れない）。色は kfs の fillColor でアニメ可。
           </div>
         </div>
       </Section>

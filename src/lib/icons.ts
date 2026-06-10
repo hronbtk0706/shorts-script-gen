@@ -31,16 +31,97 @@ function iconBody(name: string | undefined | null): string | null {
   return ICON_BODIES[resolveIconName(name)] ?? null;
 }
 
+// ---- inline SVG（curio が直書きする派生アイコン）のサニタイズ -------------
+//   dangerouslySetInnerHTML / Canvas 双方で安全に扱うため、描画前に
+//   shape 要素（export の elementToPrimitive が解釈する種類）＋幾何/塗り属性のみへ
+//   絞り込む。<script> や on* ハンドラ・直接子でない要素（g 入れ子等）は捨てる。
+//   こうすることで preview(DOM)=export(Canvas) で描かれる図形が完全一致する。
+const _SHAPE_TAGS = new Set([
+  "path",
+  "circle",
+  "ellipse",
+  "rect",
+  "line",
+  "polyline",
+  "polygon",
+]);
+const _ALLOWED_ATTRS = new Set([
+  "d",
+  "points",
+  "cx",
+  "cy",
+  "r",
+  "rx",
+  "ry",
+  "x",
+  "y",
+  "x1",
+  "y1",
+  "x2",
+  "y2",
+  "width",
+  "height",
+  "fill",
+]);
+const _sanitizeCache = new Map<string, string | null>();
+
+/**
+ * inline SVG inner markup を「直接子の shape 要素＋幾何/塗り属性」だけへ正規化する。
+ * 不正・空・解釈不能なら null（呼び出し側は placeholder にフォールバック）。
+ * export の elementToPrimitive が拾う要素と同じ集合へ絞るので preview=export を保証。
+ */
+export function sanitizeIconSvgBody(svg: string | undefined | null): string | null {
+  const raw = (svg ?? "").trim();
+  if (!raw) return null;
+  if (_sanitizeCache.has(raw)) return _sanitizeCache.get(raw) ?? null;
+  let result: string | null = null;
+  try {
+    const doc = new DOMParser().parseFromString(
+      `<svg xmlns="http://www.w3.org/2000/svg">${raw}</svg>`,
+      "image/svg+xml",
+    );
+    if (!doc.querySelector("parsererror")) {
+      const root = doc.documentElement;
+      const parts: string[] = [];
+      for (let i = 0; i < root.children.length; i++) {
+        const el = root.children[i];
+        const tag = el.tagName.toLowerCase();
+        if (!_SHAPE_TAGS.has(tag)) continue;
+        const attrs: string[] = [];
+        for (let j = 0; j < el.attributes.length; j++) {
+          const a = el.attributes[j];
+          const an = a.name.toLowerCase();
+          if (!_ALLOWED_ATTRS.has(an)) continue;
+          const av = a.value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+          attrs.push(`${an}="${av}"`);
+        }
+        parts.push(`<${tag}${attrs.length ? " " + attrs.join(" ") : ""}/>`);
+      }
+      result = parts.length > 0 ? parts.join("") : null;
+    }
+  } catch {
+    result = null;
+  }
+  _sanitizeCache.set(raw, result);
+  return result;
+}
+
 /**
  * preview(DOM) 用の完全な <svg> マークアップ。viewBox + preserveAspectRatio で
- * object-fit:contain（縦横比保持・中央・切れない）を満たす。未知名は null。
+ * object-fit:contain（縦横比保持・中央・切れない）を満たす。
+ * `inlineSvg` を渡すと名前解決の代わりにそれ（サニタイズ後）を inner markup として使う。
+ * 未知名 / inline 解釈不能は null。
  */
 export function buildIconSvgMarkup(
   name: string | undefined | null,
   color: string,
   strokeWidth = DEFAULT_STROKE_WIDTH,
+  inlineSvg?: string | undefined | null,
 ): string | null {
-  const body = iconBody(name);
+  const body =
+    inlineSvg != null && inlineSvg.trim() !== ""
+      ? sanitizeIconSvgBody(inlineSvg)
+      : iconBody(name);
   if (body == null) return null;
   const sw = strokeWidth > 0 ? strokeWidth : DEFAULT_STROKE_WIDTH;
   // style の color で fill="currentColor" の要素も color に解決させる。
@@ -144,15 +225,9 @@ function elementToPrimitive(el: Element): IconPrimitive | null {
   return path ? { path, fill } : null;
 }
 
-/** 正式名 → Path2D プリミティブ列（幾何のみ・色非依存・キャッシュ）。未知名/parse 失敗は null。 */
-function iconPrimitives(name: string | undefined | null): IconPrimitive[] | null {
-  const key = resolveIconName(name);
-  if (_primCache.has(key)) return _primCache.get(key) ?? null;
-  const body = ICON_BODIES[key];
-  if (body == null) {
-    _primCache.set(key, null);
-    return null;
-  }
+/** inner markup（要素列）→ Path2D プリミティブ列（幾何のみ・色非依存・body 文字列でキャッシュ）。 */
+function bodyToPrimitives(body: string): IconPrimitive[] | null {
+  if (_primCache.has(body)) return _primCache.get(body) ?? null;
   let prims: IconPrimitive[] | null = null;
   try {
     const doc = new DOMParser().parseFromString(
@@ -169,8 +244,21 @@ function iconPrimitives(name: string | undefined | null): IconPrimitive[] | null
   } catch {
     prims = null;
   }
-  _primCache.set(key, prims);
+  _primCache.set(body, prims);
   return prims;
+}
+
+/** 正式名 → Path2D プリミティブ列。未知名/parse 失敗は null。 */
+function iconPrimitives(name: string | undefined | null): IconPrimitive[] | null {
+  const body = ICON_BODIES[resolveIconName(name)];
+  if (body == null) return null;
+  return bodyToPrimitives(body);
+}
+
+/** inline SVG（サニタイズ後）→ Path2D プリミティブ列。空/不正は null。 */
+function inlineSvgPrimitives(svg: string | undefined | null): IconPrimitive[] | null {
+  const body = sanitizeIconSvgBody(svg);
+  return body == null ? null : bodyToPrimitives(body);
 }
 
 /**
@@ -185,8 +273,12 @@ export function drawIconOnCanvas(
   boxH: number,
   color: string,
   strokeWidth = DEFAULT_STROKE_WIDTH,
+  inlineSvg?: string | undefined | null,
 ): void {
-  const prims = iconPrimitives(name);
+  const prims =
+    inlineSvg != null && inlineSvg.trim() !== ""
+      ? inlineSvgPrimitives(inlineSvg)
+      : iconPrimitives(name);
   if (!prims) {
     drawIconPlaceholder(ctx, name, boxW, boxH, color);
     return;
