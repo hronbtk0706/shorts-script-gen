@@ -1003,10 +1003,31 @@ async function drawLayer(
 
   ctx.restore();
 
-  // Border（クリップの外に描く必要があるため restore 後）。
-  // 吹き出しの枠は drawBubbleShape が描くので、marker は箱枠を持たないのでスキップする。
+  // Border。吹き出しの枠は drawBubbleShape が描くので、marker は箱枠を持たないのでスキップする。
+  // preview は border を inner(= motion/anim/ambient transform 内) に置き、outer(overflow:hidden=
+  // 箱の最終位置クリップ) でクリップする。export も同じ構造にしないと、slide-left 等の入場アニメ中に
+  // 「content だけ動いて border が定位置に居座る」不整合が出る（t=startSec で空枠が残る既知バグ）。
+  // よって content と同じ「箱の最終位置で矩形クリップ → motion → anim → ローカル描画」の順で描く。
   if (layer.border && layer.border.width > 0 && !noClip) {
-    drawBorder(ctx, layer, x, y, w, h);
+    ctx.save();
+    if (layer.rotation) {
+      ctx.translate(x + w / 2, y + h / 2);
+      ctx.rotate((layer.rotation * Math.PI) / 180);
+      ctx.translate(-w / 2, -h / 2);
+    } else {
+      ctx.translate(x, y);
+    }
+    // preview outer overflow:hidden 相当の箱クリップ（最終位置・anim 適用前）。
+    // ambient で箱を越えて動く層は content 同様クリップしない（見切れ防止）。
+    if (!hasMovingAmbient) {
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      ctx.clip();
+    }
+    if (motion) applyMotion(ctx, motion, w, h);
+    if (anim) applyCanvasAnim(ctx, anim, w, h);
+    strokeBorderPath(ctx, layer, w, h);
+    ctx.restore();
   }
 }
 
@@ -2084,9 +2105,6 @@ function drawBorder(
   h: number,
 ): void {
   ctx.save();
-  const lw = layer.border!.width * (FINAL_W / 360);
-  ctx.strokeStyle = layer.border!.color;
-  ctx.lineWidth = lw;
   if (layer.rotation) {
     ctx.translate(x + w / 2, y + h / 2);
     ctx.rotate((layer.rotation * Math.PI) / 180);
@@ -2094,6 +2112,24 @@ function drawBorder(
   } else {
     ctx.translate(x, y);
   }
+  strokeBorderPath(ctx, layer, w, h);
+  ctx.restore();
+}
+
+/**
+ * 枠線のストロークだけを「箱ローカル座標 (0,0,w,h)」に描く（translate/rotate は呼び出し側責任）。
+ * 入退場アニメ（slide/zoom 等）と一緒に border を動かすため、drawLayer の content と同じ
+ * transform 下から直接呼べるよう分離した。
+ */
+function strokeBorderPath(
+  ctx: CanvasRenderingContext2D,
+  layer: Layer,
+  w: number,
+  h: number,
+): void {
+  const lw = layer.border!.width * (FINAL_W / 360);
+  ctx.strokeStyle = layer.border!.color;
+  ctx.lineWidth = lw;
   // preview の CSS `inset boxShadow` と一致させるため枠内側に inset
   const inset = lw / 2;
   if (layer.shape === "circle") {
@@ -2108,7 +2144,6 @@ function drawBorder(
   } else {
     ctx.strokeRect(inset, inset, Math.max(0, w - lw), Math.max(0, h - lw));
   }
-  ctx.restore();
 }
 
 function roundRectPath(

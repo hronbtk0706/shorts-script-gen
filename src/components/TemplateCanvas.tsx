@@ -1115,14 +1115,15 @@ function LayerView({
   // ambient の px 振幅は design(360) 基準 → プレビュー解像度 canvasWPx へ換算
   // (export computeCanvasAnim の pxScale=FINAL_W/360 と一致させる)
   const ambient = computeLayerAmbientStyle(layer, currentTimeSec, canvasWPx / 360);
-  const effectiveOpacity =
-    (dimmed ? baseOpacity * 0.25 : baseOpacity) *
-    anim.opacity *
-    ambient.opacity;
-  if (effectiveOpacity !== 1) {
+  // 時間外（dimmed）レイヤーは「位置を示す点線アウトラインのみ」にして、
+  // 本体（fill / border / テキスト / 画像内容）は描かない。
+  // 旧実装は本体を 25% 不透明で薄描画していたが、export(layerComposer) は
+  // 入退場アニメに乗せて startSec 前は本体を一切描かない → preview だけ枠線が定位置に居座る
+  // 不整合になっていた（白カードの comment は fill が埋もれ濃い border だけ残って見える）。
+  const effectiveOpacity = baseOpacity * anim.opacity * ambient.opacity;
+  if (!dimmed && effectiveOpacity !== 1) {
     outerStyle.opacity = effectiveOpacity;
   }
-  // 時間外のレイヤーは点線枠で示す（border 有無に関わらず外側 outline として表示）
   if (dimmed) {
     outerStyle.outline = "2px dashed rgba(255,255,255,0.35)";
     outerStyle.outlineOffset = "-2px";
@@ -1183,8 +1184,9 @@ function LayerView({
 
   // テキスト系レイヤー（comment）は renderAnimatedText 内で border を適用するためここでは省く
   // layerComposer が border.width * (FINAL_W/360) で描画するためプレビューも同じ係数に
+  // 時間外（dimmed）は本体を描かない方針なので border の boxShadow も出さない
   const innerBoxShadow =
-    layer.border && layer.type !== "comment"
+    !dimmed && layer.border && layer.type !== "comment"
       ? `inset 0 0 0 ${(layer.border.width * dimScale).toFixed(2)}px ${layer.border.color}`
       : undefined;
 
@@ -1242,7 +1244,8 @@ function LayerView({
             }}
             onCancel={() => onEditEnd?.()}
           />
-        ) : (
+        ) : dimmed ? null : (
+          // 時間外レイヤーは本体を描かない（点線アウトラインだけで位置を示す）
           inner
         )}
       </div>
