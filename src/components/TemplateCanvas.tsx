@@ -21,7 +21,7 @@ import {
   computeSnapshotTransition,
   composeSnapshotTransition,
 } from "../lib/screenEffect";
-import { computeMotion } from "../lib/layerAnimCanvas";
+import { computeMotion, computeFlyOffset } from "../lib/layerAnimCanvas";
 import {
   computeMarker,
   isMarkerShape,
@@ -36,6 +36,7 @@ import {
   TEXT_DEFAULT_FONT_STACK,
   wrapTextLines,
   renderLayersOnContext,
+  composeScopedSnapshotTransition,
   setCompositionCanvasDimensions,
   computeCharAnimState,
 } from "../lib/layerComposer";
@@ -489,36 +490,56 @@ export function TemplateCanvas({
       const snapTr = computeSnapshotTransition(transitionsRef.current, t);
       perfRef.current.snap = !!snapTr;
       if (snapTr) {
-        const prev = new OffscreenCanvas(dims.width, dims.height);
-        const cur = new OffscreenCanvas(dims.width, dims.height);
-        const pctx = prev.getContext("2d");
-        const cctx = cur.getContext("2d");
-        if (pctx && cctx) {
-          const vfs = frameSources.size > 0 ? frameSources : undefined;
-          // 前シーン(ts=切替直前) と 後シーン(te=切替直後) を別々に描いて窓全体で遷移
-          await renderLayersOnContext(pctx, curLayers, resolveSrc, {
-            atTimeSec: snapTr.ts,
-            applyAnim: true,
-            transparent: false,
+        const vfs = frameSources.size > 0 ? frameSources : undefined;
+        // groupId/layerIds 指定があれば対象レイヤー群だけを push（背景だけ入替など）。
+        // scoped を行えなければ（指定なし/対象0件）従来の画面全体スナップにフォールバック。
+        const scoped = await composeScopedSnapshotTransition(
+          octx,
+          curLayers,
+          resolveSrc,
+          snapTr,
+          dims.width,
+          dims.height,
+          {
+            atTimeSec: t,
             videoFrameSources: vfs,
+            groups: groupsRef.current,
+            cameras: camerasRef.current,
             hqSmoothing: !isPlayingRef.current,
-          });
-          await renderLayersOnContext(cctx, curLayers, resolveSrc, {
-            atTimeSec: snapTr.te,
-            applyAnim: true,
-            transparent: false,
-            videoFrameSources: vfs,
-            hqSmoothing: !isPlayingRef.current,
-          });
-          octx.clearRect(0, 0, dims.width, dims.height);
-          composeSnapshotTransition(
-            octx,
-            prev,
-            cur,
-            snapTr,
-            dims.width,
-            dims.height,
-          );
+            staticHandwrite: !isPlayingRef.current,
+          },
+        );
+        if (!scoped) {
+          const prev = new OffscreenCanvas(dims.width, dims.height);
+          const cur = new OffscreenCanvas(dims.width, dims.height);
+          const pctx = prev.getContext("2d");
+          const cctx = cur.getContext("2d");
+          if (pctx && cctx) {
+            // 前シーン(ts=切替直前) と 後シーン(te=切替直後) を別々に描いて窓全体で遷移
+            await renderLayersOnContext(pctx, curLayers, resolveSrc, {
+              atTimeSec: snapTr.ts,
+              applyAnim: true,
+              transparent: false,
+              videoFrameSources: vfs,
+              hqSmoothing: !isPlayingRef.current,
+            });
+            await renderLayersOnContext(cctx, curLayers, resolveSrc, {
+              atTimeSec: snapTr.te,
+              applyAnim: true,
+              transparent: false,
+              videoFrameSources: vfs,
+              hqSmoothing: !isPlayingRef.current,
+            });
+            octx.clearRect(0, 0, dims.width, dims.height);
+            composeSnapshotTransition(
+              octx,
+              prev,
+              cur,
+              snapTr,
+              dims.width,
+              dims.height,
+            );
+          }
         }
       }
       // 一括 blit（途中状態を可視 Canvas に出さない）
@@ -1129,10 +1150,29 @@ function LayerView({
     outerStyle.outlineOffset = "-2px";
   }
 
-  // 外側に乗せるのは rotation のみ（Moveable の rotatable が扱える）
-  const outerTransform = layer.rotation
-    ? `rotate(${layer.rotation}deg)`
-    : undefined;
+  // fly-in-*（画面端から滑り込む）/ fly-out-*（画面端へ押し出す）: anim を内側ラッパーに乗せる
+  // slide-* と違い、外箱 overflow:hidden の「外側」で箱ごと動かす（移動中もクリップされず全体が
+  // 見える）。移動量は box の最終位置から画面端までの実 px 距離。式は export と共有（computeFlyOffset）。
+  const fly = computeFlyOffset(
+    layer,
+    currentTimeSec,
+    leftPx,
+    topPx,
+    widthPx,
+    heightPx,
+    canvasWPx,
+    canvasHPx,
+  );
+  const flyTransform =
+    fly.tx !== 0 || fly.ty !== 0
+      ? `translate(${fly.tx.toFixed(2)}px, ${fly.ty.toFixed(2)}px)`
+      : undefined;
+
+  // 外側に乗せるのは rotation と fly-in の平行移動（Moveable の rotatable が扱える）
+  const outerTransform =
+    [flyTransform, layer.rotation ? `rotate(${layer.rotation}deg)` : undefined]
+      .filter(Boolean)
+      .join(" ") || undefined;
 
   // 吹き出し（comment + bubble）はしっぽが枠外に出られるよう overflow を visible にする
   const isBubbleLayer = layer.type === "comment" && !!layer.bubble;

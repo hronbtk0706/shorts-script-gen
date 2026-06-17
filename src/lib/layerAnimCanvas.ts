@@ -11,6 +11,141 @@
 
 import type { Layer } from "../types";
 
+/**
+ * fly-in-* 入場（画面端からカードまるごと滑り込む）の平行移動オフセット (px) を返す。
+ *
+ * slide-* は「最終位置の箱の内側で中身だけワイプ」だが、fly-in-* は **箱ごと全体**が
+ * off-screen → 定位置へ動き、移動中もクリップされず全体が見える（After Effects 等の
+ * 位置キーフレームと同じ挙動）。移動量は box の最終位置から画面端までの実距離なので、
+ * box の位置とステージ寸法を渡す必要がある。
+ *
+ * - x,y,w,h: box の最終位置・寸法（px）。preview はプレビュー解像度、export は出力解像度。
+ * - stageW,stageH: ステージ（画面）の幅・高さ（px）。同じ解像度系で渡すこと。
+ *
+ * ease は他の入場アニメと同一の ease-out (1-(1-p)^2)。入場終了後は {0,0}。
+ * preview (TemplateCanvas LayerView) と export (layerComposer drawLayer) で
+ * この単一実装を共有し、数式を完全一致させる。
+ */
+export type FlyDir = "left" | "right" | "up" | "down";
+
+export function flyInEntryDir(layer: Layer): FlyDir | null {
+  switch (layer.entryAnimation) {
+    case "fly-in-left":
+      return "left";
+    case "fly-in-right":
+      return "right";
+    case "fly-in-up":
+      return "up";
+    case "fly-in-down":
+      return "down";
+    default:
+      return null;
+  }
+}
+
+export function flyOutExitDir(layer: Layer): FlyDir | null {
+  switch (layer.exitAnimation) {
+    case "fly-out-left":
+      return "left";
+    case "fly-out-right":
+      return "right";
+    case "fly-out-up":
+      return "up";
+    case "fly-out-down":
+      return "down";
+    default:
+      return null;
+  }
+}
+
+export function computeFlyInOffset(
+  layer: Layer,
+  t: number,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  stageW: number,
+  stageH: number,
+): { tx: number; ty: number } {
+  const dir = flyInEntryDir(layer);
+  if (!dir) return { tx: 0, ty: 0 };
+  const entryDur = Math.max(0.01, layer.entryDuration ?? 0.3);
+  const entryEnd = layer.startSec + entryDur;
+  if (t < layer.startSec || t >= entryEnd) return { tx: 0, ty: 0 };
+  const p = Math.max(0, Math.min(1, (t - layer.startSec) / entryDur));
+  const e = 1 - Math.pow(1 - p, 2); // ease-out（他の入場と同一）
+  const k = 1 - e; // 1（開始・画面外）→ 0（定位置）
+  switch (dir) {
+    case "left": // 箱の右端が画面左端(0)に接する位置から
+      return { tx: -k * (x + w), ty: 0 };
+    case "right": // 箱の左端が画面右端(stageW)に接する位置から
+      return { tx: k * (stageW - x), ty: 0 };
+    case "up": // 箱の下端が画面上端(0)に接する位置から
+      return { tx: 0, ty: -k * (y + h) };
+    case "down": // 箱の上端が画面下端(stageH)に接する位置から
+      return { tx: 0, ty: k * (stageH - y) };
+  }
+}
+
+/**
+ * fly-out-*（退場・画面端へカードまるごと押し出す）の平行移動オフセット (px)。
+ * computeFlyInOffset の完全な鏡：退場の進捗 p:0→1 で「定位置 → 画面外」へ、入場 fly-in と
+ * **同じ ease-out** (`1-(1-p)^2`) で動く。箱クリップしない（全体が見えたまま画面外へ抜ける）。
+ *
+ * イージングを退場の既定（ease-in `p^2`）でなく ease-out にするのは依頼仕様。これにより
+ * 旧レイヤー fly-out-left ＋ 新レイヤー fly-in-right を同 startSec・同 duration で並べると、
+ * 旧の右端 `w(1-p)^2` ＝ 新の左端 `(1-p)^2 w` で常に一致し、隙間も重なりも無い押し出しになる。
+ */
+export function computeFlyOutOffset(
+  layer: Layer,
+  t: number,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  stageW: number,
+  stageH: number,
+): { tx: number; ty: number } {
+  const dir = flyOutExitDir(layer);
+  if (!dir) return { tx: 0, ty: 0 };
+  const exitDur = Math.max(0.01, layer.exitDuration ?? 0.3);
+  const exitStart = layer.endSec - exitDur;
+  if (t < exitStart) return { tx: 0, ty: 0 };
+  const p = Math.max(0, Math.min(1, (t - exitStart) / exitDur));
+  const e = 1 - Math.pow(1 - p, 2); // ease-out（fly-in と同一・依頼仕様）
+  // e: 0（定位置）→ 1（画面外）
+  switch (dir) {
+    case "left": // 箱の右端が画面左端(0)に接するまで左へ
+      return { tx: -e * (x + w), ty: 0 };
+    case "right": // 箱の左端が画面右端(stageW)に接するまで右へ
+      return { tx: e * (stageW - x), ty: 0 };
+    case "up": // 箱の下端が画面上端(0)に接するまで上へ
+      return { tx: 0, ty: -e * (y + h) };
+    case "down": // 箱の上端が画面下端(stageH)に接するまで下へ
+      return { tx: 0, ty: e * (stageH - y) };
+  }
+}
+
+/**
+ * fly-in（入場）と fly-out（退場）の平行移動を合算して返す。入場区間と退場区間は時間が
+ * 重ならないので単純加算で安全。preview / export 双方の唯一の呼び出し口。
+ */
+export function computeFlyOffset(
+  layer: Layer,
+  t: number,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  stageW: number,
+  stageH: number,
+): { tx: number; ty: number } {
+  const i = computeFlyInOffset(layer, t, x, y, w, h, stageW, stageH);
+  const o = computeFlyOutOffset(layer, t, x, y, w, h, stageW, stageH);
+  return { tx: i.tx + o.tx, ty: i.ty + o.ty };
+}
+
 export interface CanvasAnimTransform {
   /** layer base opacity に乗算する係数 (0..1) */
   opacity: number;

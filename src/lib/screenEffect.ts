@@ -262,6 +262,9 @@ export interface SnapshotTransition {
   /** 窓内 0..1（前→後の遷移度）。 */
   progress: number;
   direction: "left-to-right" | "right-to-left" | "up" | "down";
+  /** 適用範囲（per-layer/group push 用）。未指定なら画面全体。TransitionSpec から引き継ぐ。 */
+  groupId?: string;
+  layerIds?: string[];
 }
 
 /**
@@ -293,6 +296,8 @@ export function computeSnapshotTransition(
       style: tr.style as SnapshotTransition["style"],
       progress: Math.max(0, Math.min(1, (t - (tr.atSec - half)) / dur)),
       direction: tr.direction ?? "left-to-right",
+      groupId: tr.groupId,
+      layerIds: tr.layerIds,
     };
   }
   return null;

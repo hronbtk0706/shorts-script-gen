@@ -42,7 +42,12 @@ import {
   applyCanvasAnim,
   computeMotion,
   applyMotion,
+  computeFlyOffset,
 } from "./layerAnimCanvas";
+import {
+  composeSnapshotTransition,
+  type SnapshotTransition,
+} from "./screenEffect";
 
 // 出力解像度（テンプレのアスペクトに応じて、composition 開始前に setCompositionCanvasDimensions で切替）。
 // デフォルトは旧テンプレ互換の縦 (1080x1920)。
@@ -257,6 +262,115 @@ export async function renderLayersOnContext(
       );
     }
   }
+}
+
+/** snapshot トランジションの適用範囲を解決。layerIds 優先、無ければ groupId、両方無ければ null（=画面全体）。 */
+function resolveSnapshotScope(
+  s: SnapshotTransition,
+  layers: Layer[],
+): string[] | null {
+  if (s.layerIds && s.layerIds.length > 0) return s.layerIds;
+  if (s.groupId) {
+    const ids = layers.filter((l) => l.groupId === s.groupId).map((l) => l.id);
+    return ids.length > 0 ? ids : null;
+  }
+  return null;
+}
+
+/**
+ * per-layer/group の scoped snapshot トランジション（主に push）を ctx に合成する。
+ *
+ * 全体スナップ（既存 composeSnapshotTransition の素の使い方）は画面全体を 2 枚撮って
+ * スライドするが、こちらは **対象レイヤー群だけ**を ts/te でスナップして push し、対象外は
+ * z 順を保って通常描画する（＝背景だけ押し出し、コメント/前景は不動）。
+ *
+ * 構成（z 昇順）:
+ *   1. 対象より奥の非対象（黒地に通常描画）
+ *   2. 対象を ts/te でスナップ → composeSnapshotTransition で push（透明バッファ）
+ *   3. 対象より手前の非対象（透明地に通常描画）を上に重ねる
+ * ※ 対象が連続した z 帯（典型: 背景）であることを前提とする。対象 z 帯の中に非対象が
+ *   挟まる構成では、その非対象は「手前」に寄せて描かれる（依頼仕様の範囲）。
+ *
+ * 戻り値 true: scoped 合成を行った（呼び出し側は全体スナップ経路をスキップする）。
+ * false: scope 指定が無い/対象 0 件 → 呼び出し側が従来の全体スナップを行う。
+ *
+ * preview (TemplateCanvas) と export (exportTemplateWebCodecs) の唯一の共通実装。
+ */
+export async function composeScopedSnapshotTransition(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  layers: Layer[],
+  resolveSrc: LayerSourceResolver,
+  s: SnapshotTransition,
+  w: number,
+  h: number,
+  opts: {
+    atTimeSec: number;
+    videoFrameSources?: Map<string, CanvasImageSource>;
+    groups?: LayerGroup[];
+    cameras?: CameraSpec[];
+    hqSmoothing?: boolean;
+    staticHandwrite?: boolean;
+  },
+): Promise<boolean> {
+  const scopeIds = resolveSnapshotScope(s, layers);
+  if (!scopeIds) return false;
+  const idSet = new Set(scopeIds);
+  const target = layers.filter((l) => idSet.has(l.id));
+  if (target.length === 0) return false;
+  const nonTarget = layers.filter((l) => !idSet.has(l.id));
+  const targetMinZ = Math.min(...target.map((l) => l.zIndex));
+  const below = nonTarget.filter((l) => l.zIndex < targetMinZ);
+  const above = nonTarget.filter((l) => l.zIndex >= targetMinZ);
+
+  const make = () => new OffscreenCanvas(w, h);
+  const belowBuf = make();
+  const prevBuf = make();
+  const curBuf = make();
+  const aboveBuf = make();
+  const bctx = belowBuf.getContext("2d");
+  const pctx = prevBuf.getContext("2d");
+  const cctx = curBuf.getContext("2d");
+  const actx = aboveBuf.getContext("2d");
+  if (!bctx || !pctx || !cctx || !actx) return false;
+
+  const common = {
+    applyAnim: true,
+    videoFrameSources: opts.videoFrameSources,
+    groups: opts.groups,
+    cameras: opts.cameras,
+    hqSmoothing: opts.hqSmoothing,
+    staticHandwrite: opts.staticHandwrite,
+  } as const;
+
+  // 1. 奥の非対象（黒地＋通常描画）。背景が対象なら below は空＝ただの黒地。
+  await renderLayersOnContext(bctx, below, resolveSrc, {
+    ...common,
+    atTimeSec: opts.atTimeSec,
+    transparent: false,
+  });
+  // 2. 対象だけを前後でスナップ（透明地）。
+  await renderLayersOnContext(pctx, target, resolveSrc, {
+    ...common,
+    atTimeSec: s.ts,
+    transparent: true,
+  });
+  await renderLayersOnContext(cctx, target, resolveSrc, {
+    ...common,
+    atTimeSec: s.te,
+    transparent: true,
+  });
+  // 3. 手前の非対象（透明地＋通常描画）。
+  await renderLayersOnContext(actx, above, resolveSrc, {
+    ...common,
+    atTimeSec: opts.atTimeSec,
+    transparent: true,
+  });
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(belowBuf, 0, 0);
+  composeSnapshotTransition(ctx, prevBuf, curBuf, s, w, h);
+  ctx.drawImage(aboveBuf, 0, 0);
+  return true;
 }
 
 /** pivot 指定（名前 or [x,y]）を bbox 上の % 座標に解決。既定は bbox 中心。 */
@@ -843,6 +957,16 @@ async function drawLayer(
   ctx.save();
   ctx.globalAlpha = layer.opacity ?? 1;
 
+  // fly-in-*（画面端から滑り込む）/ fly-out-*（画面端へ押し出す）: 箱クリップより前に
+  // ステージ座標で箱ごと平行移動する。これで後段の箱クリップ rect(0,0,w,h) が移動後の位置で
+  // 効き（自己クリップしない＝中身は箱と一緒に動く）、画面端(canvas)でのみ切られる。
+  // preview の outer 要素への translate と同じ。式は computeFlyOffset で preview と共有。
+  const fly =
+    animAtTimeSec !== undefined
+      ? computeFlyOffset(layer, animAtTimeSec, x, y, w, h, FINAL_W, FINAL_H)
+      : { tx: 0, ty: 0 };
+  if (fly.tx !== 0 || fly.ty !== 0) ctx.translate(fly.tx, fly.ty);
+
   // 回転を含めた transform (layer の static rotation)
   if (layer.rotation) {
     ctx.translate(x + w / 2, y + h / 2);
@@ -1010,6 +1134,8 @@ async function drawLayer(
   // よって content と同じ「箱の最終位置で矩形クリップ → motion → anim → ローカル描画」の順で描く。
   if (layer.border && layer.border.width > 0 && !noClip) {
     ctx.save();
+    // fly-in-* は border も content と一緒に画面端から滑り込ませる（content と同じオフセット）。
+    if (fly.tx !== 0 || fly.ty !== 0) ctx.translate(fly.tx, fly.ty);
     if (layer.rotation) {
       ctx.translate(x + w / 2, y + h / 2);
       ctx.rotate((layer.rotation * Math.PI) / 180);
@@ -2219,31 +2345,38 @@ function textInnerPadding(): number {
 }
 
 /**
- * 行中心 Y に「字面（グリフ）の中心」を合わせるための baseline Y を返す。
+ * 行中心 Y に baseline を合わせるための補正量（行中心 → baseline の距離）を返す。
  *
- * Canvas の textBaseline="middle" は **em ボックス中央**基準で、和文フォントは em 内で
- * 字面が中央よりやや上にあるため「箱の中で文字が上寄り」に見える。preview の CSS
- * `align-items:center`（字面中央）に合わせるため、textBaseline="alphabetic" にして
- * baseline を `lineCenterY + (ascent - descent)/2` に置く（字面中心が lineCenterY に来る）。
+ * preview（DOM）は flexbox `align-items:center` + `line-height:1.2` で 1 行ボックスを
+ * 中央寄せする。行ボックス内ではグリフのコンテンツボックス（高さ = フォントの
+ * ascent + descent ＝ **fontBoundingBox**）が上下等分の half-leading で中央に置かれる。
+ * これを解くと baseline は行ボックス中心から `(A - D)/2` ぶん下にある
+ * （A=fontBoundingBoxAscent, D=fontBoundingBoxDescent）。
  *
- * 文字列ごとにブレないよう、フォント固定のサンプル "永Ag0" のメトリクスを使う。
- * actualBoundingBox 非対応環境では fontSize*0.5 で近似（字面はほぼ baseline 上 0..fontSize）。
- * 呼び出し側は textBaseline="alphabetic" を設定し、各行で y = baselineYForLineCenter(ctx, lineCenterY, fontSize) を使う。
+ * export（Canvas）も textBaseline="alphabetic" で baseline = lineCenterY + glyphCenterOffset
+ * とするので、DOM と一致させるには **fontBoundingBox 基準**で `(A - D)/2` を返す。
+ * （旧実装は actualBoundingBox＝インクの外接箱基準だったため、字面が上寄りな「永」では
+ *  補正が足りず export が preview より上にズレていた。）
+ *
+ * fontBoundingBox は文字列に依存しないフォント全体のメトリクスだが、
+ * 念のためフォント固定の代表字 "永" で測る。非対応（非有限）環境では
+ * 典型和文フォントの (A-D)/2 ≒ 0.35em で近似する。
+ * 呼び出し側は textBaseline="alphabetic" を設定する。
  */
 function glyphCenterOffset(ctx: CanvasRenderingContext2D, fontSize: number): number {
   try {
-    // 和文代表字「永」の字面で中心を測る（Latin の cap/descender で過補正しないため）。
     const m = ctx.measureText("永");
-    const a = m.actualBoundingBoxAscent;
-    const d = m.actualBoundingBoxDescent;
+    // DOM の行ボックスと同じ「フォントメトリクス（fontBoundingBox）」基準で中心を出す。
+    const a = m.fontBoundingBoxAscent;
+    const d = m.fontBoundingBoxDescent;
     if (Number.isFinite(a) && Number.isFinite(d) && (a > 0 || d > 0)) {
       return (a - d) / 2;
     }
   } catch {
     /* fall through */
   }
-  // 近似: 和文は字面中心が baseline 上 ≈ 0.38em（descender ぶん下げる）
-  return fontSize * 0.38;
+  // 近似: 典型和文フォントの fontBoundingBox は ascent≈0.88em / descent≈0.18em → (A-D)/2≈0.35em
+  return fontSize * 0.35;
 }
 
 /** layer の本来の描画幅 w に対して、改行込み・折り返し済みの行リストを返す（測定用 ctx を内部生成） */

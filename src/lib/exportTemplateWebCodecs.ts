@@ -37,6 +37,7 @@ import type { VideoTemplate, Layer } from "../types";
 import { templateDimensions } from "../types";
 import {
   renderLayersOnContext,
+  composeScopedSnapshotTransition,
   setCompositionCanvasDimensions,
 } from "./layerComposer";
 import { composeCharacterLayerVideo } from "./characterRender";
@@ -461,36 +462,53 @@ export async function exportTemplateWebCodecs(
       // 「1 が動くだけで 2 が来ない」ため、両端をスナップする）。
       const snapTr = computeSnapshotTransition(template.transitions, t);
       if (snapTr) {
-        const prevC = new OffscreenCanvas(dims.width, dims.height);
-        const curC = new OffscreenCanvas(dims.width, dims.height);
-        const pc = prevC.getContext("2d");
-        const cc = curC.getContext("2d");
-        if (pc && cc) {
-          const vfs =
-            videoFrameSources.size > 0 ? videoFrameSources : undefined;
-          await renderLayersOnContext(pc, template.layers, resolveSrc, {
-            atTimeSec: snapTr.ts,
-            applyAnim: true,
+        const vfs = videoFrameSources.size > 0 ? videoFrameSources : undefined;
+        // groupId/layerIds 指定があれば対象レイヤー群だけ push（背景だけ入替など）。
+        // scoped を行えなければ従来の画面全体スナップにフォールバック。preview と同一実装。
+        const scoped = await composeScopedSnapshotTransition(
+          ctx,
+          template.layers,
+          resolveSrc,
+          snapTr,
+          dims.width,
+          dims.height,
+          {
+            atTimeSec: t,
             videoFrameSources: vfs,
             groups: template.groups,
-        cameras: template.cameras,
-          });
-          await renderLayersOnContext(cc, template.layers, resolveSrc, {
-            atTimeSec: snapTr.te,
-            applyAnim: true,
-            videoFrameSources: vfs,
-            groups: template.groups,
-        cameras: template.cameras,
-          });
-          ctx.clearRect(0, 0, dims.width, dims.height);
-          composeSnapshotTransition(
-            ctx,
-            prevC,
-            curC,
-            snapTr,
-            dims.width,
-            dims.height,
-          );
+            cameras: template.cameras,
+          },
+        );
+        if (!scoped) {
+          const prevC = new OffscreenCanvas(dims.width, dims.height);
+          const curC = new OffscreenCanvas(dims.width, dims.height);
+          const pc = prevC.getContext("2d");
+          const cc = curC.getContext("2d");
+          if (pc && cc) {
+            await renderLayersOnContext(pc, template.layers, resolveSrc, {
+              atTimeSec: snapTr.ts,
+              applyAnim: true,
+              videoFrameSources: vfs,
+              groups: template.groups,
+              cameras: template.cameras,
+            });
+            await renderLayersOnContext(cc, template.layers, resolveSrc, {
+              atTimeSec: snapTr.te,
+              applyAnim: true,
+              videoFrameSources: vfs,
+              groups: template.groups,
+              cameras: template.cameras,
+            });
+            ctx.clearRect(0, 0, dims.width, dims.height);
+            composeSnapshotTransition(
+              ctx,
+              prevC,
+              curC,
+              snapTr,
+              dims.width,
+              dims.height,
+            );
+          }
         }
       }
 

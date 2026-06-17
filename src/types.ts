@@ -156,6 +156,14 @@ export type EntryAnimation =
   | "slide-right"
   | "slide-up"
   | "slide-down"
+  // 画面端からカードまるごとが滑り込む（移動中も全体が見える＝箱クリップしない）。
+  // slide-* が「最終位置の箱の中でワイプ表示」なのに対し、こちらは After Effects 等の
+  // 位置キーフレームと同じ「off-screen → 定位置」のフライイン。移動距離は box の最終位置
+  // から画面端までの実距離（位置に応じて変わる）。preview/export とも computeFlyInOffset 経由。
+  | "fly-in-left"
+  | "fly-in-right"
+  | "fly-in-up"
+  | "fly-in-down"
   | "zoom-in"
   | "pop"
   | "blur-in"
@@ -185,6 +193,14 @@ export type ExitAnimation =
   | "slide-right"
   | "slide-up"
   | "slide-down"
+  // 画面端へカードまるごとが押し出される（fly-in-* の完全な鏡。退場の進捗 p:0→1 で
+  // 定位置→画面外へ、入場と同じ ease-out で平行移動。箱クリップしない＝全体が見えたまま
+  // 画面外へ抜ける）。旧レイヤー fly-out-left ＋ 新レイヤー fly-in-right を同 startSec/duration
+  // で並べると境目が常に一致し、隙間も重なりも無い「レイヤー単位の押し出し（push）」になる。
+  | "fly-out-left"
+  | "fly-out-right"
+  | "fly-out-up"
+  | "fly-out-down"
   | "zoom-out"
   | "blur-out"
   | "flip-out"
@@ -998,6 +1014,15 @@ export interface TransitionSpec {
   duration?: number;
   /** wipe/push の方向（現状未使用）。 */
   direction?: "left-to-right" | "right-to-left" | "up" | "down";
+  /**
+   * スナップショット系（push/wipe/dissolve 等）の適用範囲を**特定レイヤー群だけ**に絞る。
+   * 未指定なら従来通り画面全体（後方互換）。
+   * - `groupId`: `Layer.groupId` 一致レイヤーだけを対象にスナップ push（背景だけ入替 等）。
+   * - `layerIds`: 対象レイヤー id を直接指定（groupId より優先）。
+   * 対象は z 順を保ち、対象より手前のレイヤーはその上に通常描画（不動）。
+   */
+  groupId?: string;
+  layerIds?: string[];
 }
 
 export interface VideoTemplate {

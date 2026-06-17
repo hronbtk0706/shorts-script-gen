@@ -43,6 +43,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 ## 2. 入場アニメ `entryAnimation`（+ `entryDuration` 秒, 既定0.3）✅
 
 `none` / `fade` / `slide-left` / `slide-right` / `slide-up` / `slide-down` /
+`fly-in-left` / `fly-in-right` / `fly-in-up` / `fly-in-down`🆕（画面端からカードまるごと滑り込む。`slide-*` が「最終位置の箱の中でワイプ表示」なのに対し、こちらは After Effects の位置キーフレームと同じ off-screen→定位置のフライインで、移動中も全体が見える＝箱でクリップされない。移動距離は box の最終位置から画面端まで＝配置位置に応じて変わる） /
 `zoom-in` / `pop`(弾むスケール) / `blur-in`(ぼけ→鮮明) / `elastic-pop`(行き過ぎ戻る) /
 `flip-in`(横回転) / `stretch-in`(縦伸び) / `roll-in`(回転しながら) /
 `grow-up` / `grow-down` / `grow-right` / `grow-left`（端から伸びる・棒グラフ向き。opacityは1維持） /
@@ -54,7 +55,10 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 ## 3. 退場アニメ `exitAnimation`（+ `exitDuration` 秒）✅
 
 `none` / `fade` / `slide-left` / `slide-right` / `slide-up` / `slide-down` /
+`fly-out-left` / `fly-out-right` / `fly-out-up` / `fly-out-down`🆕（`fly-in-*` の鏡。定位置→画面端へカードまるごと押し出す。移動中もクリップされず全体が見える。**入場と同じ ease-out**なので、旧レイヤー `fly-out-left`＋新レイヤー `fly-in-right` を同 startSec・同 duration で並べると境目が常に一致＝隙間も重なりも無い「レイヤー単位の押し出し（push）」になる） /
 `zoom-out` / `blur-out` / `flip-out` / `stretch-out` / `roll-out`
+
+> **レイヤー単位の押し出し（push）レシピ**🆕: トップレベル `transitions:push` は画面全体を押すが、`fly-out-*`＋`fly-in-*` を使えば**特定レイヤーだけ**を押し替えできる。例（背景だけ入替）: 旧背景 `"exitAnimation":"fly-out-left","exitDuration":0.5`（endSec=境界+0.5）／新背景 `"entryAnimation":"fly-in-right","entryDuration":0.5`（startSec=境界）。他レイヤー（コメント/中央画像）は不動。
 
 ## 4. 常時アニメ（Ambient）`ambientAnimation`（+ `ambientIntensity` 0..1, `ambientSpeed` 倍率）✅
 
@@ -197,9 +201,12 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 
 ## 9. トランジション（top-level `transitions[]`）✅ 全種実装
 
-`{ atSec, style, duration?(既定0.5), direction? }`。`atSec` 中心に ±duration/2 の窓。
+`{ atSec, style, duration?(既定0.5), direction?, groupId?, layerIds? }`。`atSec` 中心に ±duration/2 の窓。
 - `fade-black`(暗転) / `zoom`(ズーム切替) … 最終フレーム全体に適用（前後フレーム不要）
 - `wipe` / `push`(`direction:"left-to-right"|"right-to-left"|"up"|"down"`) / `dissolve`(クロス) / `circle-wipe`(円が広がる) / `blinds`(横帯が開く) / `glitch`(中盤でスライスがずれる) … 前後シーンを合成
+- **`groupId` / `layerIds` で適用範囲を限定**🆕（スナップ系＝push/wipe/dissolve 等）。指定すると**その対象レイヤー群だけ**を ts/te でスナップして遷移し、対象外は z 順を保って不動のまま通常描画。未指定なら従来通り画面全体（後方互換）。`layerIds` が `groupId` より優先。前提: 対象は連続した z 帯（典型: 背景）。
+  - **背景だけ push 入替の例**: `groups:[{id:"bg",...}]`（または対象レイヤーに `groupId:"bg"`）＋ `transitions:[{ atSec:17.55, style:"push", direction:"right-to-left", duration:0.5, groupId:"bg" }]` → 背景だけが押し出し合い、コメント/中央画像/ロゴは不動。**継ぎ目は完成画スライドなので完璧**。
+  - ※ 同じ「背景だけ入替」は `fly-out-*`＋`fly-in-*`（2レイヤー方式）でも可能。**単一画像の差替なら fly 方式、グループ丸ごと/動く背景の塊なら scoped push** が向く。
 
 ---
 
