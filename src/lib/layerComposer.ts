@@ -2397,7 +2397,12 @@ function computeLayerTextLines(layer: Layer, w: number): string[] {
 /** 線形グラデを箱 [0,0,w,h] 基準で生成。angle: 度（0=横 左→右 / 90=縦 上→下）。 */
 function buildLinearGradient(
   ctx: CanvasRenderingContext2D,
-  spec: { from: string; to: string; angle?: number },
+  spec: {
+    from: string;
+    to: string;
+    angle?: number;
+    stops?: { at: number; color: string }[];
+  },
   w: number,
   h: number,
 ): CanvasGradient {
@@ -2413,8 +2418,23 @@ function buildLinearGradient(
     cx + dx * half,
     cy + dy * half,
   );
-  g.addColorStop(0, spec.from);
-  g.addColorStop(1, spec.to);
+  // stops 指定があれば任意ストップ列（同 at に 2 色でハードエッジ）。無ければ from/to の 2 点。
+  if (spec.stops && spec.stops.length > 0) {
+    // 同一/逆順オフセットは Skia (WebView2/Chromium) では描画が破綻し色順も逆転するため、
+    // 追加順を保ったまま offset を厳密単調増加に微小補正する（境界 0.5 に 2 色 → 0.5 / 0.5+ε）。
+    // これで「同じ at に 2 色＝くっきりハードエッジ」が renderer 非依存で正しく出る。
+    const EPS = 1e-4;
+    let prev = -Infinity;
+    for (const s of spec.stops) {
+      let at = Math.min(1, Math.max(0, s.at));
+      if (at <= prev) at = Math.min(1, prev + EPS);
+      g.addColorStop(at, s.color);
+      prev = at;
+    }
+  } else {
+    g.addColorStop(0, spec.from);
+    g.addColorStop(1, spec.to);
+  }
   return g;
 }
 

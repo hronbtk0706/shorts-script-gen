@@ -263,6 +263,14 @@ export interface TextGradient {
   from: string;
   to: string;
   angle?: number;
+  /**
+   * 任意の色ストップ列（指定があれば from/to の代わりにこれを使う）。
+   * at は 0..1。同じ at に 2 色を並べるとハードエッジ（くっきり境界）になる。
+   * 例: 上半分=赤・下半分=黄 → angle:90, stops:[
+   *   {at:0,color:"#ef4444"},{at:0.5,color:"#ef4444"},
+   *   {at:0.5,color:"#f5c518"},{at:1,color:"#f5c518"}]
+   */
+  stops?: { at: number; color: string }[];
 }
 
 /** 吹き出し（comment レイヤーに紐づく）の形状・しっぽ指定 */

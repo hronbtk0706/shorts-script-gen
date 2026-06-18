@@ -130,8 +130,12 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 `none` / `highlight-bar`(背景帯スイープ) / `underline-sweep`(下線スイープ) / `neon`(ネオン発光) / `outline-reveal`(縁取りが育つ) / `shadow-drop`(影が寄る)
 
 ### 文字スタイル ✅
-`fontSize` / `fontColor` / `textGradient: {from,to,angle?}`(fontColor優先・静的テキスト) /
+`fontSize` / `fontColor` / `textGradient: {from,to,angle?, stops?}`(fontColor優先・静的テキスト) /
 `textOutlineWidth` / `textOutlineColor`(縁取り) / `fontFamily`。
+- `textGradient.stops?: {at:0..1, color}[]` … 指定すると from/to の代わりに任意ストップ列で塗る。
+  **同じ at に 2 色を並べるとくっきりハードエッジ（中間色なし）**。
+  上半分=赤・下半分=黄 → `{angle:90, stops:[{at:0,color:"#ef4444"},{at:0.5,color:"#ef4444"},{at:0.5,color:"#f5c518"},{at:1,color:"#f5c518"}]}`。
+  境界の同一/逆順 offset は内部で微小 ε 分離するので renderer 非依存で色順どおり出る。`fillGradient`(color/shape) も同仕様。
 吹き出し: `bubble: {shape:"rect"|"rounded"|"ellipse"|"cloud", tail?:{tipX,tipY,baseWidth}}`。
 
 ### カウントアップ `counter` ✅（`comment` に付与。`text` を無視して数値表示）
