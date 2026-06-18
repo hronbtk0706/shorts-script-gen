@@ -1,0 +1,1924 @@
+{
+  "version": 2,
+  "id": "anime_facetest",
+  "name": "ゆっくり顔 機能デモ(表情/瞬き/口パク)",
+  "note": "たぬき式ゆっくり 霊夢で 目28/口24/顔色7/眉7 と 瞬き・口パク を実演",
+  "createdAt": "2026-06-18T00:00:00",
+  "totalDuration": 31.15,
+  "aspect": "vertical",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#0f172a",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": -2,
+      "startSec": 0,
+      "endSec": 31.15,
+      "opacity": 1
+    },
+    {
+      "id": "img5",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_00.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 5,
+      "startSec": 0.3,
+      "endSec": 0.75,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab5",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_00.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 6,
+      "startSec": 0.3,
+      "endSec": 0.75,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img7",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_01.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 7,
+      "startSec": 0.75,
+      "endSec": 1.2,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab7",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_01.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 8,
+      "startSec": 0.75,
+      "endSec": 1.2,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img9",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_02.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 9,
+      "startSec": 1.2,
+      "endSec": 1.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab9",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_02.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 10,
+      "startSec": 1.2,
+      "endSec": 1.65,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img11",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_03.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 11,
+      "startSec": 1.65,
+      "endSec": 2.1,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab11",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_03.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 12,
+      "startSec": 1.65,
+      "endSec": 2.1,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img13",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_04.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 13,
+      "startSec": 2.1,
+      "endSec": 2.55,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab13",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_04.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 14,
+      "startSec": 2.1,
+      "endSec": 2.55,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img15",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_05.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 15,
+      "startSec": 2.55,
+      "endSec": 3.0,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab15",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_05.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 16,
+      "startSec": 2.55,
+      "endSec": 3.0,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img17",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_06.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 17,
+      "startSec": 3.0,
+      "endSec": 3.45,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab17",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_06.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 18,
+      "startSec": 3.0,
+      "endSec": 3.45,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img19",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_07.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 19,
+      "startSec": 3.45,
+      "endSec": 3.9,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab19",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_07.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 20,
+      "startSec": 3.45,
+      "endSec": 3.9,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img21",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_08.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 21,
+      "startSec": 3.9,
+      "endSec": 4.35,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab21",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_08.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 22,
+      "startSec": 3.9,
+      "endSec": 4.35,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img23",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_09.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 23,
+      "startSec": 4.35,
+      "endSec": 4.8,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab23",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_09.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 24,
+      "startSec": 4.35,
+      "endSec": 4.8,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img25",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_10.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 25,
+      "startSec": 4.8,
+      "endSec": 5.25,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab25",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_10.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 26,
+      "startSec": 4.8,
+      "endSec": 5.25,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img27",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_11.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 27,
+      "startSec": 5.25,
+      "endSec": 5.7,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab27",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_11.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 28,
+      "startSec": 5.25,
+      "endSec": 5.7,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img29",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_12.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 29,
+      "startSec": 5.7,
+      "endSec": 6.15,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab29",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_12.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 30,
+      "startSec": 5.7,
+      "endSec": 6.15,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img31",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_13.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 31,
+      "startSec": 6.15,
+      "endSec": 6.6,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab31",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_13.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 32,
+      "startSec": 6.15,
+      "endSec": 6.6,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img33",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_14.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 33,
+      "startSec": 6.6,
+      "endSec": 7.05,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab33",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_14.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 34,
+      "startSec": 6.6,
+      "endSec": 7.05,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img35",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\eye_15.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 35,
+      "startSec": 7.05,
+      "endSec": 7.5,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab35",
+      "type": "comment",
+      "text": "表情(目) 28種以上\n目_15.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 36,
+      "startSec": 7.05,
+      "endSec": 7.5,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img37",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_00.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 37,
+      "startSec": 7.5,
+      "endSec": 7.95,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab37",
+      "type": "comment",
+      "text": "口の形 24種\n口_00.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 38,
+      "startSec": 7.5,
+      "endSec": 7.95,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img39",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_01.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 39,
+      "startSec": 7.95,
+      "endSec": 8.4,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab39",
+      "type": "comment",
+      "text": "口の形 24種\n口_01.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 40,
+      "startSec": 7.95,
+      "endSec": 8.4,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img41",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_02.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 41,
+      "startSec": 8.4,
+      "endSec": 8.85,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab41",
+      "type": "comment",
+      "text": "口の形 24種\n口_02.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 42,
+      "startSec": 8.4,
+      "endSec": 8.85,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img43",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_03.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 43,
+      "startSec": 8.85,
+      "endSec": 9.3,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab43",
+      "type": "comment",
+      "text": "口の形 24種\n口_03.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 44,
+      "startSec": 8.85,
+      "endSec": 9.3,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img45",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_04.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 45,
+      "startSec": 9.3,
+      "endSec": 9.75,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab45",
+      "type": "comment",
+      "text": "口の形 24種\n口_05.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 46,
+      "startSec": 9.3,
+      "endSec": 9.75,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img47",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_05.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 47,
+      "startSec": 9.75,
+      "endSec": 10.2,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab47",
+      "type": "comment",
+      "text": "口の形 24種\n口_06.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 48,
+      "startSec": 9.75,
+      "endSec": 10.2,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img49",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_06.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 49,
+      "startSec": 10.2,
+      "endSec": 10.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab49",
+      "type": "comment",
+      "text": "口の形 24種\n口_07.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 50,
+      "startSec": 10.2,
+      "endSec": 10.65,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img51",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_07.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 51,
+      "startSec": 10.65,
+      "endSec": 11.1,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab51",
+      "type": "comment",
+      "text": "口の形 24種\n口_08.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 52,
+      "startSec": 10.65,
+      "endSec": 11.1,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img53",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\mouth_08.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 53,
+      "startSec": 11.1,
+      "endSec": 11.55,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab53",
+      "type": "comment",
+      "text": "口の形 24種\n口_09.4.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 54,
+      "startSec": 11.1,
+      "endSec": 11.55,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img55",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_00.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 55,
+      "startSec": 11.55,
+      "endSec": 12.25,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab55",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_00.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 56,
+      "startSec": 11.55,
+      "endSec": 12.25,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img57",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_01.png",
+      "x": 12.667,
+      "y": 13.0,
+      "width": 74.667,
+      "height": 42.0,
+      "zIndex": 57,
+      "startSec": 12.25,
+      "endSec": 12.95,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab57",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_01.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 58,
+      "startSec": 12.25,
+      "endSec": 12.95,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img59",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_02.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 59,
+      "startSec": 12.95,
+      "endSec": 13.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab59",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_02.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 60,
+      "startSec": 12.95,
+      "endSec": 13.65,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img61",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_03.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 61,
+      "startSec": 13.65,
+      "endSec": 14.35,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab61",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_03.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 62,
+      "startSec": 13.65,
+      "endSec": 14.35,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img63",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_04.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 63,
+      "startSec": 14.35,
+      "endSec": 15.05,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab63",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_04.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 64,
+      "startSec": 14.35,
+      "endSec": 15.05,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img65",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_05.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 65,
+      "startSec": 15.05,
+      "endSec": 15.75,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab65",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_05.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 66,
+      "startSec": 15.05,
+      "endSec": 15.75,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img67",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\face_06.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 67,
+      "startSec": 15.75,
+      "endSec": 16.45,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab67",
+      "type": "comment",
+      "text": "顔色 7種(赤面/青ざめ等)\n顔_06.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 68,
+      "startSec": 15.75,
+      "endSec": 16.45,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img69",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_00.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 69,
+      "startSec": 16.45,
+      "endSec": 17.05,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab69",
+      "type": "comment",
+      "text": "眉 7種\n眉_00.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 70,
+      "startSec": 16.45,
+      "endSec": 17.05,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img71",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_01.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 71,
+      "startSec": 17.05,
+      "endSec": 17.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab71",
+      "type": "comment",
+      "text": "眉 7種\n眉_01.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 72,
+      "startSec": 17.05,
+      "endSec": 17.65,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img73",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_02.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 73,
+      "startSec": 17.65,
+      "endSec": 18.25,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab73",
+      "type": "comment",
+      "text": "眉 7種\n眉_03.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 74,
+      "startSec": 17.65,
+      "endSec": 18.25,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img75",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_03.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 75,
+      "startSec": 18.25,
+      "endSec": 18.85,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab75",
+      "type": "comment",
+      "text": "眉 7種\n眉_04.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 76,
+      "startSec": 18.25,
+      "endSec": 18.85,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img77",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_04.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 77,
+      "startSec": 18.85,
+      "endSec": 19.45,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab77",
+      "type": "comment",
+      "text": "眉 7種\n眉_05.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 78,
+      "startSec": 18.85,
+      "endSec": 19.45,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img79",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_05.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 79,
+      "startSec": 19.45,
+      "endSec": 20.05,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab79",
+      "type": "comment",
+      "text": "眉 7種\n眉_06.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 80,
+      "startSec": 19.45,
+      "endSec": 20.05,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "img81",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\brow_06.png",
+      "x": 13.743,
+      "y": 13.0,
+      "width": 72.515,
+      "height": 42.0,
+      "zIndex": 81,
+      "startSec": 20.05,
+      "endSec": 20.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "lab81",
+      "type": "comment",
+      "text": "眉 7種\n眉_07.png",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 82,
+      "startSec": 20.05,
+      "endSec": 20.65,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "db83",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\demo_base83_v5.png",
+      "x": 13.612,
+      "y": 13.0,
+      "width": 72.776,
+      "height": 42.0,
+      "zIndex": 83,
+      "startSec": 20.65,
+      "endSec": 25.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "dt83",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\demo_tg83_v5.png",
+      "x": 13.612,
+      "y": 13.0,
+      "width": 72.776,
+      "height": 42.0,
+      "zIndex": 84,
+      "startSec": 20.65,
+      "endSec": 25.65,
+      "opacity": 0,
+      "motion": "static",
+      "kfs": [
+        {
+          "t": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.01,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.128,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.138,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.6,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.61,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.728,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.738,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.2,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.21,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.328,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.338,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.8,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.81,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.928,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.938,
+          "opacity": 0.0
+        }
+      ]
+    },
+    {
+      "id": "dl83",
+      "type": "comment",
+      "text": "瞬き（自動）",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 85,
+      "startSec": 20.65,
+      "endSec": 25.65,
+      "border": {
+        "width": 4,
+        "color": "#f59e0b"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    },
+    {
+      "id": "db86",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\demo_base86_v5.png",
+      "x": 13.612,
+      "y": 13.0,
+      "width": 72.776,
+      "height": 42.0,
+      "zIndex": 86,
+      "startSec": 25.65,
+      "endSec": 30.65,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "dt86",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\_search\\showcase\\demo_tg86_v5.png",
+      "x": 13.612,
+      "y": 13.0,
+      "width": 72.776,
+      "height": 42.0,
+      "zIndex": 87,
+      "startSec": 25.65,
+      "endSec": 30.65,
+      "opacity": 0,
+      "motion": "static",
+      "kfs": [
+        {
+          "t": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.01,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.13,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.14,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.26,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.27,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.39,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.4,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.52,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.53,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.65,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.66,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.78,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.79,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.91,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.92,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.04,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.05,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.17,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.18,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.3,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.31,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.43,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.44,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.56,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.57,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.69,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.7,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.82,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.83,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.95,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.96,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.08,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.09,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.21,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.22,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.34,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.35,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.47,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.48,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.6,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.61,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.73,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.74,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.86,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.87,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.99,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.12,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.13,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.25,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.26,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.38,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.39,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.51,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.52,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.64,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.65,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.77,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.78,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.9,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.91,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.03,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.04,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.16,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.17,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.29,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.3,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.42,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.43,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.55,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.56,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.68,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.69,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.81,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.82,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.94,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.95,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.07,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.08,
+          "opacity": 0.0
+        }
+      ]
+    },
+    {
+      "id": "dl86",
+      "type": "comment",
+      "text": "口パク（喋り）",
+      "fontColor": "#ffffff",
+      "fontSize": 24,
+      "fillColor": "#1e293b",
+      "x": 8,
+      "y": 64,
+      "width": 84,
+      "height": 12,
+      "zIndex": 88,
+      "startSec": 25.65,
+      "endSec": 30.65,
+      "border": {
+        "width": 4,
+        "color": "#f59e0b"
+      },
+      "shape": "rounded",
+      "borderRadius": 14,
+      "entryAnimation": "none"
+    }
+  ]
+}

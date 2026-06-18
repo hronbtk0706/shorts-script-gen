@@ -4,7 +4,7 @@
   "name": "HxH考察 002 クラピカVSウヴォーギン",
   "note": "アニメ反応集チャンネル / HUNTER×HUNTER クラピカVSウヴォーギン『考察してみた』(考察フォーマット・ベース)",
   "createdAt": "2026-06-18T00:00:00",
-  "totalDuration": 4.6,
+  "totalDuration": 63.34,
   "aspect": "vertical",
   "layers": [
     {
@@ -17,72 +17,4276 @@
       "height": 100,
       "zIndex": -2,
       "startSec": 0,
-      "endSec": 4.6,
+      "endSec": 63.34,
       "opacity": 1
-    },
-    {
-      "id": "center_img",
-      "type": "image",
-      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\center_vs.png",
-      "x": 0,
-      "y": 35.4,
-      "width": 100,
-      "height": 21.46,
-      "zIndex": 1,
-      "startSec": 0,
-      "endSec": 4.4,
-      "opacity": 1,
-      "motion": "static"
-    },
-    {
-      "id": "topic_text",
-      "type": "comment",
-      "text": "クラピカVSウヴォーギン\n考察してみた",
-      "fontColor": "#14171A",
-      "fontSize": 24,
-      "fillColor": "#FFFFFF",
-      "x": 0,
-      "y": 0,
-      "width": 100,
-      "height": 17.34,
-      "zIndex": 7,
-      "startSec": 0,
-      "endSec": 4.4,
-      "entryAnimation": "none",
-      "exitAnimation": "fade",
-      "exitDuration": 0.35,
-      "border": {
-        "width": 4,
-        "color": "#22c55e"
-      },
-      "shape": "rect"
-    },
-    {
-      "id": "topic_audio",
-      "type": "audio",
-      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\topic.wav",
-      "x": 0,
-      "y": 0,
-      "width": 0,
-      "height": 0,
-      "zIndex": -1,
-      "startSec": 0,
-      "endSec": 3.894,
-      "volume": 1
     },
     {
       "id": "logo",
       "type": "image",
       "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\hxh_logo.png",
-      "x": 0.0833333333333286,
-      "y": 74.93083235638922,
-      "width": 99.91666666666667,
-      "height": 25.064478311840567,
+      "x": 0.0,
+      "y": 75.0,
+      "width": 100.0,
+      "height": 25.0,
       "zIndex": 12,
       "startSec": 0,
-      "endSec": 4.6,
+      "endSec": 63.34,
       "opacity": 1,
       "motion": "static"
+    },
+    {
+      "id": "pan00",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\center_vs.png",
+      "x": 2.0,
+      "y": 15.7,
+      "width": 96.0,
+      "height": 20.61,
+      "zIndex": 1,
+      "startSec": 0.5,
+      "endSec": 14.333,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "pan01",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\コマ\\_panel_蹴り_p166上.png",
+      "x": 8.89,
+      "y": 3.0,
+      "width": 82.21,
+      "height": 46.0,
+      "zIndex": 1,
+      "startSec": 14.483,
+      "endSec": 23.943,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "pan02",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\center_vs.png",
+      "x": 2.0,
+      "y": 15.7,
+      "width": 96.0,
+      "height": 20.61,
+      "zIndex": 1,
+      "startSec": 24.093,
+      "endSec": 32.549,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "pan03",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\コマ\\_panel_鎖捕獲_p172下.png",
+      "x": 2.0,
+      "y": 8.09,
+      "width": 96.0,
+      "height": 35.81,
+      "zIndex": 1,
+      "startSec": 32.699,
+      "endSec": 43.444,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "pan04",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\コマ\\_panel_埋葬_v10p018.png",
+      "x": 2.0,
+      "y": 13.21,
+      "width": 96.0,
+      "height": 25.58,
+      "zIndex": 1,
+      "startSec": 43.594,
+      "endSec": 52.535,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "pan05",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\center_vs.png",
+      "x": 2.0,
+      "y": 15.7,
+      "width": 96.0,
+      "height": 20.61,
+      "zIndex": 1,
+      "startSec": 52.685,
+      "endSec": 62.091,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "sub_bar",
+      "type": "comment",
+      "text": "",
+      "fillColor": "#0f172a",
+      "opacity": 0.82,
+      "x": 0.0,
+      "y": 58.0,
+      "width": 100.0,
+      "height": 15.0,
+      "zIndex": 20,
+      "shape": "rect",
+      "border": {
+        "width": 3,
+        "color": "#94a3b8"
+      },
+      "startSec": 0.2,
+      "endSec": 62.241,
+      "entryAnimation": "fade",
+      "entryDuration": 0.2
+    },
+    {
+      "id": "c01_text",
+      "type": "comment",
+      "text": "魔理沙、今日は？",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 0.5,
+      "endSec": 1.835,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c01_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c01.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 0.5,
+      "endSec": 1.585,
+      "volume": 1
+    },
+    {
+      "id": "c02_text",
+      "type": "comment",
+      "text": "クラピカ対ウヴォーギンだぜ",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 1.985,
+      "endSec": 3.684,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c02_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c02.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 1.985,
+      "endSec": 3.434,
+      "volume": 1
+    },
+    {
+      "id": "c03_text",
+      "type": "comment",
+      "text": "念について深堀りされたあの戦いね",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 3.834,
+      "endSec": 6.371,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c03_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c03.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 3.834,
+      "endSec": 6.121,
+      "volume": 1
+    },
+    {
+      "id": "c04_text",
+      "type": "comment",
+      "text": "クラピカ対ウヴォーギン\n改めて見ると見どころだらけだぜ",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 6.521,
+      "endSec": 10.082,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c04_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c04.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 6.521,
+      "endSec": 9.832,
+      "volume": 1
+    },
+    {
+      "id": "c05_text",
+      "type": "comment",
+      "text": "ウヴォーギンって序盤で負けたから\nそこまで強い印象なかったけど",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 10.232,
+      "endSec": 14.333,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c05_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c05.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 10.232,
+      "endSec": 14.083,
+      "volume": 1
+    },
+    {
+      "id": "c06_text",
+      "type": "comment",
+      "text": "逆だ。強化系100%のパンチを\n生身で耐えてやや負ける程度だぞ",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 14.483,
+      "endSec": 20.319,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c06_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c06.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 14.483,
+      "endSec": 20.069,
+      "volume": 1
+    },
+    {
+      "id": "c07_text",
+      "type": "comment",
+      "text": "念で殴られて生身で耐えるって\n普通ありえないわよね",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 20.469,
+      "endSec": 23.943,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c07_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c07.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 20.469,
+      "endSec": 23.693,
+      "volume": 1
+    },
+    {
+      "id": "c08_text",
+      "type": "comment",
+      "text": "「まさか全力か？」ってあれ\n煽りじゃなくて素で確認してるらしい",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 24.093,
+      "endSec": 29.389,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c08_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c08.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 24.093,
+      "endSec": 29.139,
+      "volume": 1
+    },
+    {
+      "id": "c09_text",
+      "type": "comment",
+      "text": "ナチュラルに煽ってるの\n性格悪くて笑うわ",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 29.539,
+      "endSec": 32.549,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c09_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c09.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 29.539,
+      "endSec": 32.299,
+      "volume": 1
+    },
+    {
+      "id": "c10_text",
+      "type": "comment",
+      "text": "念を覚えて1ヶ月で最強格を倒せたのは\n制約と誓約で旅団特効を盛ってるから",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 32.699,
+      "endSec": 40.283,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c10_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c10.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 32.699,
+      "endSec": 40.033,
+      "volume": 1
+    },
+    {
+      "id": "c11_text",
+      "type": "comment",
+      "text": "命を賭ける代わりに強くなる\nってやつね",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 40.433,
+      "endSec": 43.444,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c11_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c11.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 40.433,
+      "endSec": 43.194,
+      "volume": 1
+    },
+    {
+      "id": "c12_text",
+      "type": "comment",
+      "text": "緋の眼でさらに跳ね上がる。で、\n勝った後のためにスコップ持参してた",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 43.594,
+      "endSec": 49.455,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c12_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c12.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 43.594,
+      "endSec": 49.205,
+      "volume": 1
+    },
+    {
+      "id": "c13_text",
+      "type": "comment",
+      "text": "墓穴を掘る準備まで！？\n完全にスネークじゃない",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 49.605,
+      "endSec": 52.535,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c13_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c13.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 49.605,
+      "endSec": 52.285,
+      "volume": 1
+    },
+    {
+      "id": "c14_text",
+      "type": "comment",
+      "text": "だが一番すごいのはウヴォーギン\n死ぬまで仲間を売らなかった",
+      "fontColor": "#ffd43b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 52.685,
+      "endSec": 58.021,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c14_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c14.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 52.685,
+      "endSec": 57.771,
+      "volume": 1
+    },
+    {
+      "id": "c15_text",
+      "type": "comment",
+      "text": "嫌なやつだと思ってたのに\n最後で一気に株が上がるのよね",
+      "fontColor": "#ff6b6b",
+      "fontSize": 13,
+      "textOutlineWidth": 2,
+      "textOutlineColor": "#0f172a",
+      "x": 30.0,
+      "y": 58.0,
+      "width": 40.0,
+      "height": 15.0,
+      "zIndex": 21,
+      "startSec": 58.171,
+      "endSec": 62.091,
+      "entryAnimation": "fade",
+      "entryDuration": 0.12
+    },
+    {
+      "id": "c15_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\c15.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 58.171,
+      "endSec": 61.841,
+      "volume": 1
+    },
+    {
+      "id": "av_reimu",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\yukkuri\\faces\\reimu_close_v5_flip.png",
+      "x": 0.0,
+      "y": 55.0,
+      "width": 28.0,
+      "height": 16.0,
+      "zIndex": 30,
+      "startSec": 0.2,
+      "endSec": 63.34,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "av_reimu_open",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\yukkuri\\faces\\reimu_open_v5_flip.png",
+      "x": 0.0,
+      "y": 55.0,
+      "width": 28.0,
+      "height": 16.0,
+      "zIndex": 31,
+      "startSec": 0.2,
+      "endSec": 63.34,
+      "opacity": 0,
+      "motion": "static",
+      "kfs": [
+        {
+          "t": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.28,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.3,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.42,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.43,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.55,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.56,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.68,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.69,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.81,
+          "opacity": 0.0
+        },
+        {
+          "t": 0.82,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.94,
+          "opacity": 1.0
+        },
+        {
+          "t": 0.95,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.07,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.08,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.2,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.21,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.33,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.34,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.375,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.385,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.614,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.634,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.754,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.764,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.884,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.894,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.014,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.024,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.144,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.154,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.274,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.284,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.404,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.414,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.534,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.544,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.664,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.674,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.794,
+          "opacity": 1.0
+        },
+        {
+          "t": 4.804,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.924,
+          "opacity": 0.0
+        },
+        {
+          "t": 4.934,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.054,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.064,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.184,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.194,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.314,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.324,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.444,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.454,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.574,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.584,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.704,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.714,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.834,
+          "opacity": 1.0
+        },
+        {
+          "t": 5.844,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.911,
+          "opacity": 0.0
+        },
+        {
+          "t": 5.921,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.012,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.032,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.152,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.162,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.282,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.292,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.412,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.422,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.542,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.552,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.672,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.682,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.802,
+          "opacity": 0.0
+        },
+        {
+          "t": 10.812,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.932,
+          "opacity": 1.0
+        },
+        {
+          "t": 10.942,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.062,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.072,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.192,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.202,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.322,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.332,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.452,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.462,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.582,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.592,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.712,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.722,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.842,
+          "opacity": 0.0
+        },
+        {
+          "t": 11.852,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.972,
+          "opacity": 1.0
+        },
+        {
+          "t": 11.982,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.102,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.112,
+          "opacity": 1.0
+        },
+        {
+          "t": 12.232,
+          "opacity": 1.0
+        },
+        {
+          "t": 12.242,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.362,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.372,
+          "opacity": 1.0
+        },
+        {
+          "t": 12.492,
+          "opacity": 1.0
+        },
+        {
+          "t": 12.502,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.622,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.632,
+          "opacity": 1.0
+        },
+        {
+          "t": 12.752,
+          "opacity": 1.0
+        },
+        {
+          "t": 12.762,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.882,
+          "opacity": 0.0
+        },
+        {
+          "t": 12.892,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.012,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.022,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.142,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.152,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.272,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.282,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.402,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.412,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.532,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.542,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.662,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.672,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.792,
+          "opacity": 1.0
+        },
+        {
+          "t": 13.802,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.873,
+          "opacity": 0.0
+        },
+        {
+          "t": 13.883,
+          "opacity": 0.0
+        },
+        {
+          "t": 20.249,
+          "opacity": 0.0
+        },
+        {
+          "t": 20.269,
+          "opacity": 1.0
+        },
+        {
+          "t": 20.389,
+          "opacity": 1.0
+        },
+        {
+          "t": 20.399,
+          "opacity": 0.0
+        },
+        {
+          "t": 20.519,
+          "opacity": 0.0
+        },
+        {
+          "t": 20.529,
+          "opacity": 1.0
+        },
+        {
+          "t": 20.649,
+          "opacity": 1.0
+        },
+        {
+          "t": 20.659,
+          "opacity": 0.0
+        },
+        {
+          "t": 20.779,
+          "opacity": 0.0
+        },
+        {
+          "t": 20.789,
+          "opacity": 1.0
+        },
+        {
+          "t": 20.909,
+          "opacity": 1.0
+        },
+        {
+          "t": 20.919,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.039,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.049,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.169,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.179,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.299,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.309,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.429,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.439,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.559,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.569,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.689,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.699,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.819,
+          "opacity": 0.0
+        },
+        {
+          "t": 21.829,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.949,
+          "opacity": 1.0
+        },
+        {
+          "t": 21.959,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.079,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.089,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.209,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.219,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.339,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.349,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.469,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.479,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.599,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.609,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.729,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.739,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.859,
+          "opacity": 0.0
+        },
+        {
+          "t": 22.869,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.989,
+          "opacity": 1.0
+        },
+        {
+          "t": 22.999,
+          "opacity": 0.0
+        },
+        {
+          "t": 23.119,
+          "opacity": 0.0
+        },
+        {
+          "t": 23.129,
+          "opacity": 1.0
+        },
+        {
+          "t": 23.249,
+          "opacity": 1.0
+        },
+        {
+          "t": 23.259,
+          "opacity": 0.0
+        },
+        {
+          "t": 23.379,
+          "opacity": 0.0
+        },
+        {
+          "t": 23.389,
+          "opacity": 1.0
+        },
+        {
+          "t": 23.483,
+          "opacity": 1.0
+        },
+        {
+          "t": 23.493,
+          "opacity": 0.0
+        },
+        {
+          "t": 29.319,
+          "opacity": 0.0
+        },
+        {
+          "t": 29.339,
+          "opacity": 1.0
+        },
+        {
+          "t": 29.459,
+          "opacity": 1.0
+        },
+        {
+          "t": 29.469,
+          "opacity": 0.0
+        },
+        {
+          "t": 29.589,
+          "opacity": 0.0
+        },
+        {
+          "t": 29.599,
+          "opacity": 1.0
+        },
+        {
+          "t": 29.719,
+          "opacity": 1.0
+        },
+        {
+          "t": 29.729,
+          "opacity": 0.0
+        },
+        {
+          "t": 29.849,
+          "opacity": 0.0
+        },
+        {
+          "t": 29.859,
+          "opacity": 1.0
+        },
+        {
+          "t": 29.979,
+          "opacity": 1.0
+        },
+        {
+          "t": 29.989,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.109,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.119,
+          "opacity": 1.0
+        },
+        {
+          "t": 30.239,
+          "opacity": 1.0
+        },
+        {
+          "t": 30.249,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.369,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.379,
+          "opacity": 1.0
+        },
+        {
+          "t": 30.499,
+          "opacity": 1.0
+        },
+        {
+          "t": 30.509,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.629,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.639,
+          "opacity": 1.0
+        },
+        {
+          "t": 30.759,
+          "opacity": 1.0
+        },
+        {
+          "t": 30.769,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.889,
+          "opacity": 0.0
+        },
+        {
+          "t": 30.899,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.019,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.029,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.149,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.159,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.279,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.289,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.409,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.419,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.539,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.549,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.669,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.679,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.799,
+          "opacity": 1.0
+        },
+        {
+          "t": 31.809,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.929,
+          "opacity": 0.0
+        },
+        {
+          "t": 31.939,
+          "opacity": 1.0
+        },
+        {
+          "t": 32.059,
+          "opacity": 1.0
+        },
+        {
+          "t": 32.069,
+          "opacity": 0.0
+        },
+        {
+          "t": 32.089,
+          "opacity": 0.0
+        },
+        {
+          "t": 32.099,
+          "opacity": 0.0
+        },
+        {
+          "t": 40.213,
+          "opacity": 0.0
+        },
+        {
+          "t": 40.233,
+          "opacity": 1.0
+        },
+        {
+          "t": 40.353,
+          "opacity": 1.0
+        },
+        {
+          "t": 40.363,
+          "opacity": 0.0
+        },
+        {
+          "t": 40.483,
+          "opacity": 0.0
+        },
+        {
+          "t": 40.493,
+          "opacity": 1.0
+        },
+        {
+          "t": 40.613,
+          "opacity": 1.0
+        },
+        {
+          "t": 40.623,
+          "opacity": 0.0
+        },
+        {
+          "t": 40.743,
+          "opacity": 0.0
+        },
+        {
+          "t": 40.753,
+          "opacity": 1.0
+        },
+        {
+          "t": 40.873,
+          "opacity": 1.0
+        },
+        {
+          "t": 40.883,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.003,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.013,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.133,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.143,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.263,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.273,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.393,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.403,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.523,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.533,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.653,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.663,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.783,
+          "opacity": 0.0
+        },
+        {
+          "t": 41.793,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.913,
+          "opacity": 1.0
+        },
+        {
+          "t": 41.923,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.043,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.053,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.173,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.183,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.303,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.313,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.433,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.443,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.563,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.573,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.693,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.703,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.823,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.833,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.953,
+          "opacity": 1.0
+        },
+        {
+          "t": 42.963,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.984,
+          "opacity": 0.0
+        },
+        {
+          "t": 42.994,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.385,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.405,
+          "opacity": 1.0
+        },
+        {
+          "t": 49.525,
+          "opacity": 1.0
+        },
+        {
+          "t": 49.535,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.655,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.665,
+          "opacity": 1.0
+        },
+        {
+          "t": 49.785,
+          "opacity": 1.0
+        },
+        {
+          "t": 49.795,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.915,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.925,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.045,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.055,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.175,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.185,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.305,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.315,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.435,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.445,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.565,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.575,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.695,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.705,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.825,
+          "opacity": 1.0
+        },
+        {
+          "t": 50.835,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.955,
+          "opacity": 0.0
+        },
+        {
+          "t": 50.965,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.085,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.095,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.215,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.225,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.345,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.355,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.475,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.485,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.605,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.615,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.735,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.745,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.865,
+          "opacity": 1.0
+        },
+        {
+          "t": 51.875,
+          "opacity": 0.0
+        },
+        {
+          "t": 51.995,
+          "opacity": 0.0
+        },
+        {
+          "t": 52.005,
+          "opacity": 1.0
+        },
+        {
+          "t": 52.075,
+          "opacity": 1.0
+        },
+        {
+          "t": 52.085,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.951,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.971,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.091,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.101,
+          "opacity": 0.0
+        },
+        {
+          "t": 58.221,
+          "opacity": 0.0
+        },
+        {
+          "t": 58.231,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.351,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.361,
+          "opacity": 0.0
+        },
+        {
+          "t": 58.481,
+          "opacity": 0.0
+        },
+        {
+          "t": 58.491,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.611,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.621,
+          "opacity": 0.0
+        },
+        {
+          "t": 58.741,
+          "opacity": 0.0
+        },
+        {
+          "t": 58.751,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.871,
+          "opacity": 1.0
+        },
+        {
+          "t": 58.881,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.001,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.011,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.131,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.141,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.261,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.271,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.391,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.401,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.521,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.531,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.651,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.661,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.781,
+          "opacity": 0.0
+        },
+        {
+          "t": 59.791,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.911,
+          "opacity": 1.0
+        },
+        {
+          "t": 59.921,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.041,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.051,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.171,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.181,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.301,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.311,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.431,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.441,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.561,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.571,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.691,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.701,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.821,
+          "opacity": 0.0
+        },
+        {
+          "t": 60.831,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.951,
+          "opacity": 1.0
+        },
+        {
+          "t": 60.961,
+          "opacity": 0.0
+        },
+        {
+          "t": 61.081,
+          "opacity": 0.0
+        },
+        {
+          "t": 61.091,
+          "opacity": 1.0
+        },
+        {
+          "t": 61.211,
+          "opacity": 1.0
+        },
+        {
+          "t": 61.221,
+          "opacity": 0.0
+        },
+        {
+          "t": 61.341,
+          "opacity": 0.0
+        },
+        {
+          "t": 61.351,
+          "opacity": 1.0
+        },
+        {
+          "t": 61.471,
+          "opacity": 1.0
+        },
+        {
+          "t": 61.481,
+          "opacity": 0.0
+        },
+        {
+          "t": 61.601,
+          "opacity": 0.0
+        },
+        {
+          "t": 61.611,
+          "opacity": 1.0
+        },
+        {
+          "t": 61.631,
+          "opacity": 1.0
+        },
+        {
+          "t": 61.641,
+          "opacity": 0.0
+        }
+      ]
+    },
+    {
+      "id": "av_marisa",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\yukkuri\\faces\\marisa_close_v5.png",
+      "x": 72.0,
+      "y": 55.0,
+      "width": 28.0,
+      "height": 16.0,
+      "zIndex": 32,
+      "startSec": 0.2,
+      "endSec": 63.34,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "av_marisa_open",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\yukkuri\\faces\\marisa_open_v5.png",
+      "x": 72.0,
+      "y": 55.0,
+      "width": 28.0,
+      "height": 16.0,
+      "zIndex": 33,
+      "startSec": 0.2,
+      "endSec": 63.34,
+      "opacity": 0,
+      "motion": "static",
+      "kfs": [
+        {
+          "t": 0.0,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.765,
+          "opacity": 0.0
+        },
+        {
+          "t": 1.785,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.905,
+          "opacity": 1.0
+        },
+        {
+          "t": 1.915,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.035,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.045,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.165,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.175,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.295,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.305,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.425,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.435,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.555,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.565,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.685,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.695,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.815,
+          "opacity": 0.0
+        },
+        {
+          "t": 2.825,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.945,
+          "opacity": 1.0
+        },
+        {
+          "t": 2.955,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.075,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.085,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.205,
+          "opacity": 1.0
+        },
+        {
+          "t": 3.215,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.224,
+          "opacity": 0.0
+        },
+        {
+          "t": 3.234,
+          "opacity": 0.0
+        },
+        {
+          "t": 6.301,
+          "opacity": 0.0
+        },
+        {
+          "t": 6.321,
+          "opacity": 1.0
+        },
+        {
+          "t": 6.441,
+          "opacity": 1.0
+        },
+        {
+          "t": 6.451,
+          "opacity": 0.0
+        },
+        {
+          "t": 6.571,
+          "opacity": 0.0
+        },
+        {
+          "t": 6.581,
+          "opacity": 1.0
+        },
+        {
+          "t": 6.701,
+          "opacity": 1.0
+        },
+        {
+          "t": 6.711,
+          "opacity": 0.0
+        },
+        {
+          "t": 6.831,
+          "opacity": 0.0
+        },
+        {
+          "t": 6.841,
+          "opacity": 1.0
+        },
+        {
+          "t": 6.961,
+          "opacity": 1.0
+        },
+        {
+          "t": 6.971,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.091,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.101,
+          "opacity": 1.0
+        },
+        {
+          "t": 7.221,
+          "opacity": 1.0
+        },
+        {
+          "t": 7.231,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.351,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.361,
+          "opacity": 1.0
+        },
+        {
+          "t": 7.481,
+          "opacity": 1.0
+        },
+        {
+          "t": 7.491,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.611,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.621,
+          "opacity": 1.0
+        },
+        {
+          "t": 7.741,
+          "opacity": 1.0
+        },
+        {
+          "t": 7.751,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.871,
+          "opacity": 0.0
+        },
+        {
+          "t": 7.881,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.001,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.011,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.131,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.141,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.261,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.271,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.391,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.401,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.521,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.531,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.651,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.661,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.781,
+          "opacity": 1.0
+        },
+        {
+          "t": 8.791,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.911,
+          "opacity": 0.0
+        },
+        {
+          "t": 8.921,
+          "opacity": 1.0
+        },
+        {
+          "t": 9.041,
+          "opacity": 1.0
+        },
+        {
+          "t": 9.051,
+          "opacity": 0.0
+        },
+        {
+          "t": 9.171,
+          "opacity": 0.0
+        },
+        {
+          "t": 9.181,
+          "opacity": 1.0
+        },
+        {
+          "t": 9.301,
+          "opacity": 1.0
+        },
+        {
+          "t": 9.311,
+          "opacity": 0.0
+        },
+        {
+          "t": 9.431,
+          "opacity": 0.0
+        },
+        {
+          "t": 9.441,
+          "opacity": 1.0
+        },
+        {
+          "t": 9.561,
+          "opacity": 1.0
+        },
+        {
+          "t": 9.571,
+          "opacity": 0.0
+        },
+        {
+          "t": 9.622,
+          "opacity": 0.0
+        },
+        {
+          "t": 9.632,
+          "opacity": 0.0
+        },
+        {
+          "t": 14.263,
+          "opacity": 0.0
+        },
+        {
+          "t": 14.283,
+          "opacity": 1.0
+        },
+        {
+          "t": 14.403,
+          "opacity": 1.0
+        },
+        {
+          "t": 14.413,
+          "opacity": 0.0
+        },
+        {
+          "t": 14.533,
+          "opacity": 0.0
+        },
+        {
+          "t": 14.543,
+          "opacity": 1.0
+        },
+        {
+          "t": 14.663,
+          "opacity": 1.0
+        },
+        {
+          "t": 14.673,
+          "opacity": 0.0
+        },
+        {
+          "t": 14.793,
+          "opacity": 0.0
+        },
+        {
+          "t": 14.803,
+          "opacity": 1.0
+        },
+        {
+          "t": 14.923,
+          "opacity": 1.0
+        },
+        {
+          "t": 14.933,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.053,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.063,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.183,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.193,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.313,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.323,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.443,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.453,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.573,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.583,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.703,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.713,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.833,
+          "opacity": 0.0
+        },
+        {
+          "t": 15.843,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.963,
+          "opacity": 1.0
+        },
+        {
+          "t": 15.973,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.093,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.103,
+          "opacity": 1.0
+        },
+        {
+          "t": 16.223,
+          "opacity": 1.0
+        },
+        {
+          "t": 16.233,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.353,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.363,
+          "opacity": 1.0
+        },
+        {
+          "t": 16.483,
+          "opacity": 1.0
+        },
+        {
+          "t": 16.493,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.613,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.623,
+          "opacity": 1.0
+        },
+        {
+          "t": 16.743,
+          "opacity": 1.0
+        },
+        {
+          "t": 16.753,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.873,
+          "opacity": 0.0
+        },
+        {
+          "t": 16.883,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.003,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.013,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.133,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.143,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.263,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.273,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.393,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.403,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.523,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.533,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.653,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.663,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.783,
+          "opacity": 1.0
+        },
+        {
+          "t": 17.793,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.913,
+          "opacity": 0.0
+        },
+        {
+          "t": 17.923,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.043,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.053,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.173,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.183,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.303,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.313,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.433,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.443,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.563,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.573,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.693,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.703,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.823,
+          "opacity": 1.0
+        },
+        {
+          "t": 18.833,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.953,
+          "opacity": 0.0
+        },
+        {
+          "t": 18.963,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.083,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.093,
+          "opacity": 0.0
+        },
+        {
+          "t": 19.213,
+          "opacity": 0.0
+        },
+        {
+          "t": 19.223,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.343,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.353,
+          "opacity": 0.0
+        },
+        {
+          "t": 19.473,
+          "opacity": 0.0
+        },
+        {
+          "t": 19.483,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.603,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.613,
+          "opacity": 0.0
+        },
+        {
+          "t": 19.733,
+          "opacity": 0.0
+        },
+        {
+          "t": 19.743,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.859,
+          "opacity": 1.0
+        },
+        {
+          "t": 19.869,
+          "opacity": 0.0
+        },
+        {
+          "t": 23.873,
+          "opacity": 0.0
+        },
+        {
+          "t": 23.893,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.013,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.023,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.143,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.153,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.273,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.283,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.403,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.413,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.533,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.543,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.663,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.673,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.793,
+          "opacity": 1.0
+        },
+        {
+          "t": 24.803,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.923,
+          "opacity": 0.0
+        },
+        {
+          "t": 24.933,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.053,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.063,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.183,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.193,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.313,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.323,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.443,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.453,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.573,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.583,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.703,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.713,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.833,
+          "opacity": 1.0
+        },
+        {
+          "t": 25.843,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.963,
+          "opacity": 0.0
+        },
+        {
+          "t": 25.973,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.093,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.103,
+          "opacity": 0.0
+        },
+        {
+          "t": 26.223,
+          "opacity": 0.0
+        },
+        {
+          "t": 26.233,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.353,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.363,
+          "opacity": 0.0
+        },
+        {
+          "t": 26.483,
+          "opacity": 0.0
+        },
+        {
+          "t": 26.493,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.613,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.623,
+          "opacity": 0.0
+        },
+        {
+          "t": 26.743,
+          "opacity": 0.0
+        },
+        {
+          "t": 26.753,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.873,
+          "opacity": 1.0
+        },
+        {
+          "t": 26.883,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.003,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.013,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.133,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.143,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.263,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.273,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.393,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.403,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.523,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.533,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.653,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.663,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.783,
+          "opacity": 0.0
+        },
+        {
+          "t": 27.793,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.913,
+          "opacity": 1.0
+        },
+        {
+          "t": 27.923,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.043,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.053,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.173,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.183,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.303,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.313,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.433,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.443,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.563,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.573,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.693,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.703,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.823,
+          "opacity": 0.0
+        },
+        {
+          "t": 28.833,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.929,
+          "opacity": 1.0
+        },
+        {
+          "t": 28.939,
+          "opacity": 0.0
+        },
+        {
+          "t": 32.479,
+          "opacity": 0.0
+        },
+        {
+          "t": 32.499,
+          "opacity": 1.0
+        },
+        {
+          "t": 32.619,
+          "opacity": 1.0
+        },
+        {
+          "t": 32.629,
+          "opacity": 0.0
+        },
+        {
+          "t": 32.749,
+          "opacity": 0.0
+        },
+        {
+          "t": 32.759,
+          "opacity": 1.0
+        },
+        {
+          "t": 32.879,
+          "opacity": 1.0
+        },
+        {
+          "t": 32.889,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.009,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.019,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.139,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.149,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.269,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.279,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.399,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.409,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.529,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.539,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.659,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.669,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.789,
+          "opacity": 0.0
+        },
+        {
+          "t": 33.799,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.919,
+          "opacity": 1.0
+        },
+        {
+          "t": 33.929,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.049,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.059,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.179,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.189,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.309,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.319,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.439,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.449,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.569,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.579,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.699,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.709,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.829,
+          "opacity": 0.0
+        },
+        {
+          "t": 34.839,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.959,
+          "opacity": 1.0
+        },
+        {
+          "t": 34.969,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.089,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.099,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.219,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.229,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.349,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.359,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.479,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.489,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.609,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.619,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.739,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.749,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.869,
+          "opacity": 0.0
+        },
+        {
+          "t": 35.879,
+          "opacity": 1.0
+        },
+        {
+          "t": 35.999,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.009,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.129,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.139,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.259,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.269,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.389,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.399,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.519,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.529,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.649,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.659,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.779,
+          "opacity": 1.0
+        },
+        {
+          "t": 36.789,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.909,
+          "opacity": 0.0
+        },
+        {
+          "t": 36.919,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.039,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.049,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.169,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.179,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.299,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.309,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.429,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.439,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.559,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.569,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.689,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.699,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.819,
+          "opacity": 1.0
+        },
+        {
+          "t": 37.829,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.949,
+          "opacity": 0.0
+        },
+        {
+          "t": 37.959,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.079,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.089,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.209,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.219,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.339,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.349,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.469,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.479,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.599,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.609,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.729,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.739,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.859,
+          "opacity": 1.0
+        },
+        {
+          "t": 38.869,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.989,
+          "opacity": 0.0
+        },
+        {
+          "t": 38.999,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.119,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.129,
+          "opacity": 0.0
+        },
+        {
+          "t": 39.249,
+          "opacity": 0.0
+        },
+        {
+          "t": 39.259,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.379,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.389,
+          "opacity": 0.0
+        },
+        {
+          "t": 39.509,
+          "opacity": 0.0
+        },
+        {
+          "t": 39.519,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.639,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.649,
+          "opacity": 0.0
+        },
+        {
+          "t": 39.769,
+          "opacity": 0.0
+        },
+        {
+          "t": 39.779,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.823,
+          "opacity": 1.0
+        },
+        {
+          "t": 39.833,
+          "opacity": 0.0
+        },
+        {
+          "t": 43.374,
+          "opacity": 0.0
+        },
+        {
+          "t": 43.394,
+          "opacity": 1.0
+        },
+        {
+          "t": 43.514,
+          "opacity": 1.0
+        },
+        {
+          "t": 43.524,
+          "opacity": 0.0
+        },
+        {
+          "t": 43.644,
+          "opacity": 0.0
+        },
+        {
+          "t": 43.654,
+          "opacity": 1.0
+        },
+        {
+          "t": 43.774,
+          "opacity": 1.0
+        },
+        {
+          "t": 43.784,
+          "opacity": 0.0
+        },
+        {
+          "t": 43.904,
+          "opacity": 0.0
+        },
+        {
+          "t": 43.914,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.034,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.044,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.164,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.174,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.294,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.304,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.424,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.434,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.554,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.564,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.684,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.694,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.814,
+          "opacity": 1.0
+        },
+        {
+          "t": 44.824,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.944,
+          "opacity": 0.0
+        },
+        {
+          "t": 44.954,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.074,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.084,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.204,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.214,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.334,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.344,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.464,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.474,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.594,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.604,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.724,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.734,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.854,
+          "opacity": 1.0
+        },
+        {
+          "t": 45.864,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.984,
+          "opacity": 0.0
+        },
+        {
+          "t": 45.994,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.114,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.124,
+          "opacity": 0.0
+        },
+        {
+          "t": 46.244,
+          "opacity": 0.0
+        },
+        {
+          "t": 46.254,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.374,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.384,
+          "opacity": 0.0
+        },
+        {
+          "t": 46.504,
+          "opacity": 0.0
+        },
+        {
+          "t": 46.514,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.634,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.644,
+          "opacity": 0.0
+        },
+        {
+          "t": 46.764,
+          "opacity": 0.0
+        },
+        {
+          "t": 46.774,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.894,
+          "opacity": 1.0
+        },
+        {
+          "t": 46.904,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.024,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.034,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.154,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.164,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.284,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.294,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.414,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.424,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.544,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.554,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.674,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.684,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.804,
+          "opacity": 0.0
+        },
+        {
+          "t": 47.814,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.934,
+          "opacity": 1.0
+        },
+        {
+          "t": 47.944,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.064,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.074,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.194,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.204,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.324,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.334,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.454,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.464,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.584,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.594,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.714,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.724,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.844,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.854,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.974,
+          "opacity": 1.0
+        },
+        {
+          "t": 48.984,
+          "opacity": 0.0
+        },
+        {
+          "t": 48.995,
+          "opacity": 0.0
+        },
+        {
+          "t": 49.005,
+          "opacity": 0.0
+        },
+        {
+          "t": 52.465,
+          "opacity": 0.0
+        },
+        {
+          "t": 52.485,
+          "opacity": 1.0
+        },
+        {
+          "t": 52.605,
+          "opacity": 1.0
+        },
+        {
+          "t": 52.615,
+          "opacity": 0.0
+        },
+        {
+          "t": 52.735,
+          "opacity": 0.0
+        },
+        {
+          "t": 52.745,
+          "opacity": 1.0
+        },
+        {
+          "t": 52.865,
+          "opacity": 1.0
+        },
+        {
+          "t": 52.875,
+          "opacity": 0.0
+        },
+        {
+          "t": 52.995,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.005,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.125,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.135,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.255,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.265,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.385,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.395,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.515,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.525,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.645,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.655,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.775,
+          "opacity": 0.0
+        },
+        {
+          "t": 53.785,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.905,
+          "opacity": 1.0
+        },
+        {
+          "t": 53.915,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.035,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.045,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.165,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.175,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.295,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.305,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.425,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.435,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.555,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.565,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.685,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.695,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.815,
+          "opacity": 0.0
+        },
+        {
+          "t": 54.825,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.945,
+          "opacity": 1.0
+        },
+        {
+          "t": 54.955,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.075,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.085,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.205,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.215,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.335,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.345,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.465,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.475,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.595,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.605,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.725,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.735,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.855,
+          "opacity": 0.0
+        },
+        {
+          "t": 55.865,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.985,
+          "opacity": 1.0
+        },
+        {
+          "t": 55.995,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.115,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.125,
+          "opacity": 1.0
+        },
+        {
+          "t": 56.245,
+          "opacity": 1.0
+        },
+        {
+          "t": 56.255,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.375,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.385,
+          "opacity": 1.0
+        },
+        {
+          "t": 56.505,
+          "opacity": 1.0
+        },
+        {
+          "t": 56.515,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.635,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.645,
+          "opacity": 1.0
+        },
+        {
+          "t": 56.765,
+          "opacity": 1.0
+        },
+        {
+          "t": 56.775,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.895,
+          "opacity": 0.0
+        },
+        {
+          "t": 56.905,
+          "opacity": 1.0
+        },
+        {
+          "t": 57.025,
+          "opacity": 1.0
+        },
+        {
+          "t": 57.035,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.155,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.165,
+          "opacity": 1.0
+        },
+        {
+          "t": 57.285,
+          "opacity": 1.0
+        },
+        {
+          "t": 57.295,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.415,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.425,
+          "opacity": 1.0
+        },
+        {
+          "t": 57.545,
+          "opacity": 1.0
+        },
+        {
+          "t": 57.555,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.561,
+          "opacity": 0.0
+        },
+        {
+          "t": 57.571,
+          "opacity": 0.0
+        }
+      ]
     }
   ]
 }
