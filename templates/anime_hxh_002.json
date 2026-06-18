@@ -1,0 +1,88 @@
+{
+  "version": 2,
+  "id": "anime_hxh_002",
+  "name": "HxH考察 002 クラピカVSウヴォーギン",
+  "note": "アニメ反応集チャンネル / HUNTER×HUNTER クラピカVSウヴォーギン『考察してみた』(考察フォーマット・ベース)",
+  "createdAt": "2026-06-18T00:00:00",
+  "totalDuration": 4.6,
+  "aspect": "vertical",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#FFFFFF",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": -2,
+      "startSec": 0,
+      "endSec": 4.6,
+      "opacity": 1
+    },
+    {
+      "id": "center_img",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\center_vs.png",
+      "x": 0,
+      "y": 35.4,
+      "width": 100,
+      "height": 21.46,
+      "zIndex": 1,
+      "startSec": 0,
+      "endSec": 4.4,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "topic_text",
+      "type": "comment",
+      "text": "クラピカVSウヴォーギン\n考察してみた",
+      "fontColor": "#14171A",
+      "fontSize": 24,
+      "fillColor": "#FFFFFF",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 17.34,
+      "zIndex": 7,
+      "startSec": 0,
+      "endSec": 4.4,
+      "entryAnimation": "none",
+      "exitAnimation": "fade",
+      "exitDuration": 0.35,
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "shape": "rect"
+    },
+    {
+      "id": "topic_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\hxh_002\\audio\\topic.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 0,
+      "endSec": 3.894,
+      "volume": 1
+    },
+    {
+      "id": "logo",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\hxh_logo.png",
+      "x": 0.0833333333333286,
+      "y": 74.93083235638922,
+      "width": 99.91666666666667,
+      "height": 25.064478311840567,
+      "zIndex": 12,
+      "startSec": 0,
+      "endSec": 4.6,
+      "opacity": 1,
+      "motion": "static"
+    }
+  ]
+}
