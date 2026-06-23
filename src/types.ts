@@ -618,6 +618,12 @@ export type LayerMask =
       shape: MaskShapeKind;
       /** rounded の角丸半径（design 360 基準 px・既定 24）。 */
       borderRadius?: number;
+    }
+  | {
+      type: "polygon";
+      /** 多角形の頂点（レイヤー箱内の % 座標 [x,y] を順に・3点以上）。内側だけ表示し外は透過。
+       *  台形/三角/平行四辺形/不定形のコマを作れる。 */
+      points: [number, number][];
     };
 
 /** カメラ/グループ変換の基準点（名前指定）。グループのバウンディングボックス上の点に解決される。 */
@@ -1013,7 +1019,12 @@ export type TransitionStyle =
   | "dissolve"
   | "glitch"
   | "circle-wipe"
-  | "blinds";
+  | "blinds"
+  // 漫画のページめくり。対象フレームが紙の端から円筒状にカールしてめくれ、下から次フレームが
+  // 現れる。めくれた紙の裏面＋落ち影を描く。direction で左右(left-to-right/right-to-left)・
+  // 上下(up=下→上, down=上→下) を切替。groupId/layerIds でページ範囲を限定可（背景＋コメントだけ
+  // めくり、お題帯/ロゴは固定 等）。前後フレーム合成系（スナップショット）。
+  | "page-curl";
 
 export interface TransitionSpec {
   atSec: number;

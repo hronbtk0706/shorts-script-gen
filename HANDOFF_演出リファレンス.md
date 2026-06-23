@@ -36,6 +36,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 🆕 マスク切り抜き `mask`（画像/動画を文字や図形の形にくり抜く・canvas経路＝書き出し表示/exportで反映）:
 - `{type:"text", text:"歴史", fontFamily?}` … 文字の形に素材を流し込む（箱幅に自動フィットで大きく表示）
 - `{type:"shape", shape:"circle"|"rounded"(+borderRadius)|"rect"|"star"|"heart"|"diamond"|"hexagon"}` … 図形の形にくり抜く
+- `{type:"polygon", points:[[x,y],[x,y],…]}`🆕 … 箱内 **%座標**の頂点を順に結んだ多角形の内側だけ表示（3点以上）。台形・三角・平行四辺形・不定形のコマが作れる（例 平行四辺形 `[[15,0],[100,0],[85,100],[0,100]]`）。頂点が3点未満は箱全体扱い。
 - 円にするには箱を**ピクセルで正方形**に（横は width%×1920 = height%×1080）。
 
 ---
@@ -208,6 +209,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 `{ atSec, style, duration?(既定0.5), direction?, groupId?, layerIds? }`。`atSec` 中心に ±duration/2 の窓。
 - `fade-black`(暗転) / `zoom`(ズーム切替) … 最終フレーム全体に適用（前後フレーム不要）
 - `wipe` / `push`(`direction:"left-to-right"|"right-to-left"|"up"|"down"`) / `dissolve`(クロス) / `circle-wipe`(円が広がる) / `blinds`(横帯が開く) / `glitch`(中盤でスライスがずれる) … 前後シーンを合成
+- `page-curl`🆕（漫画のページめくり・角めくり/dog-ear）… 現フレームが角から斜めにめくれ（折り目＝直線、めくれた紙は裏返って裏面＝薄クリーム色＋落ち影＋折り目ハイライト）、下から次フレームが現れる。`direction` で左右(`right-to-left`/`left-to-right`)・上下(`up`=下→上 / `down`=上→下)。`groupId`/`layerIds` でページ範囲を限定可（背景＋コメントだけめくり、お題帯/ロゴは groupId 無し＝固定）。`duration` 例 0.8。
 - **`groupId` / `layerIds` で適用範囲を限定**🆕（スナップ系＝push/wipe/dissolve 等）。指定すると**その対象レイヤー群だけ**を ts/te でスナップして遷移し、対象外は z 順を保って不動のまま通常描画。未指定なら従来通り画面全体（後方互換）。`layerIds` が `groupId` より優先。前提: 対象は連続した z 帯（典型: 背景）。
   - **背景だけ push 入替の例**: `groups:[{id:"bg",...}]`（または対象レイヤーに `groupId:"bg"`）＋ `transitions:[{ atSec:17.55, style:"push", direction:"right-to-left", duration:0.5, groupId:"bg" }]` → 背景だけが押し出し合い、コメント/中央画像/ロゴは不動。**継ぎ目は完成画スライドなので完璧**。
   - ※ 同じ「背景だけ入替」は `fly-out-*`＋`fly-in-*`（2レイヤー方式）でも可能。**単一画像の差替なら fly 方式、グループ丸ごと/動く背景の塊なら scoped push** が向く。

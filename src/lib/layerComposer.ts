@@ -1322,6 +1322,23 @@ async function drawMaskedMedia(
     tctx.textAlign = "center";
     tctx.textBaseline = "middle";
     tctx.fillText(mask.text, w / 2, h / 2);
+  } else if (mask.type === "polygon") {
+    // 箱内 % 座標の頂点を順に結んだ多角形の内側だけ残す（3点以上）。
+    const pts = mask.points;
+    if (pts && pts.length >= 3) {
+      tctx.beginPath();
+      tctx.moveTo((pts[0][0] / 100) * w, (pts[0][1] / 100) * h);
+      for (let i = 1; i < pts.length; i++) {
+        tctx.lineTo((pts[i][0] / 100) * w, (pts[i][1] / 100) * h);
+      }
+      tctx.closePath();
+      tctx.fill();
+    } else {
+      // 頂点が足りない不正指定は箱全体（＝マスク無し相当）にフォールバック
+      tctx.beginPath();
+      tctx.rect(0, 0, w, h);
+      tctx.fill();
+    }
   } else {
     const s = mask.shape;
     if (s === "circle") {

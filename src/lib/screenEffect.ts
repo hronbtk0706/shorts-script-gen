@@ -258,7 +258,8 @@ export interface SnapshotTransition {
     | "dissolve"
     | "glitch"
     | "circle-wipe"
-    | "blinds";
+    | "blinds"
+    | "page-curl";
   /** 窓内 0..1（前→後の遷移度）。 */
   progress: number;
   direction: "left-to-right" | "right-to-left" | "up" | "down";
@@ -283,6 +284,7 @@ export function computeSnapshotTransition(
     "glitch",
     "circle-wipe",
     "blinds",
+    "page-curl",
   ];
   for (const tr of transitions) {
     if (!SNAPSHOT_STYLES.includes(tr.style)) continue;
@@ -406,6 +408,10 @@ export function composeSnapshotTransition(
     }
     return;
   }
+  if (s.style === "page-curl") {
+    drawPageCurl(ctx, prev, cur, p, D, w, h);
+    return;
+  }
   // wipe(slide-in): 前シーンを下に敷き、後シーンを画面端から境界まで「中身ごと」流し込む。
   // （後シーンが定位置で露出する reveal 型ではなく、端からスライドして入ってくる）
   ctx.drawImage(prev, 0, 0);
@@ -429,4 +435,191 @@ export function composeSnapshotTransition(
   ctx.clip();
   ctx.drawImage(cur, cdx, cdy);
   ctx.restore();
+}
+
+/** 多角形を path 化（clip 用）。 */
+function pathPolygon(ctx: AnyCtx, poly: [number, number][]): void {
+  ctx.beginPath();
+  ctx.moveTo(poly[0][0], poly[0][1]);
+  for (let i = 1; i < poly.length; i++) ctx.lineTo(poly[i][0], poly[i][1]);
+  ctx.closePath();
+}
+
+/**
+ * 凸ポリゴンを直線 (点 M・法線 n) の半平面でクリップ（Sutherland–Hodgman・1辺）。
+ * keepPositive=true なら (P-M)·n>=0 側、false なら <=0 側を残す。
+ */
+function clipPolyHalfplane(
+  poly: [number, number][],
+  mx: number,
+  my: number,
+  nx: number,
+  ny: number,
+  keepPositive: boolean,
+): [number, number][] {
+  const out: [number, number][] = [];
+  const side = (px: number, py: number) => (px - mx) * nx + (py - my) * ny;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const A = poly[i];
+    const B = poly[(i + 1) % n];
+    const sa = side(A[0], A[1]);
+    const sb = side(B[0], B[1]);
+    const inA = keepPositive ? sa >= 0 : sa <= 0;
+    const inB = keepPositive ? sb >= 0 : sb <= 0;
+    if (inA) out.push(A);
+    if (inA !== inB) {
+      const t = sa / (sa - sb);
+      out.push([A[0] + t * (B[0] - A[0]), A[1] + t * (B[1] - A[1])]);
+    }
+  }
+  return out;
+}
+
+/**
+ * ページめくり（page-curl・角めくり/dog-ear）を ctx に描く。
+ * prev=現フレーム（めくれる紙）/ cur=次フレーム（下から出る）。ctx は呼び出し側でクリア/下地描画済み
+ * （ここでは clear しない＝scoped でも下地の上に重ねられる）。
+ *
+ * モデル: めくる角 C0 を引っぱり先 F へ動かし、折り目＝線分 C0F の垂直二等分線とする。
+ *  - 折り目の「めくり残し」側 (P-M)·n>=0 … flat な prev
+ *  - 折り目の「めくれ」側 (P-M)·n<=0 … prev を折り目で**反射変換**して描く＝裏返った紙（裏面色＋陰影）
+ *  - めくれ跡 … cur が露出（全面に敷いた cur が見える）
+ *  - 折り目の cur 側に落ち影、めくれ紙のめくれ先(F)ほど暗く、折り目に白いハイライト。
+ * 反射 = 列スライス無しの一発アフィン変換。preview/export 同一コード。
+ *
+ * direction: right-to-left/left-to-right=左右めくり、up=下→上, down=上→下（角と引っぱり方向だけ変える）。
+ */
+function drawPageCurl(
+  ctx: AnyCtx,
+  prev: CanvasImageSource,
+  cur: CanvasImageSource,
+  p: number,
+  direction: SnapshotTransition["direction"],
+  w: number,
+  h: number,
+): void {
+  // 次フレームを全面に敷く（めくれ跡＝ここが見える。scoped では透明 target なので下地が透ける）
+  ctx.drawImage(cur, 0, 0);
+  if (p <= 0.002) {
+    ctx.drawImage(prev, 0, 0);
+    return;
+  }
+  if (p >= 0.998) return; // めくり切り＝cur のみ
+
+  // めくる角 C0 と引っぱり先 F（direction ごとに角と引っぱり方向を決める）。
+  // lift = 角が斜めに持ち上がる度合い（小さいほど縦折りに近い）。
+  const lift = 0.3;
+  let c0x: number, c0y: number, fx: number, fy: number;
+  switch (direction) {
+    case "left-to-right":
+      c0x = 0; c0y = h; fx = 2 * w * p; fy = h - lift * h * p;
+      break;
+    case "up": // 下→上
+      c0x = 0; c0y = h; fx = lift * w * p; fy = h - 2 * h * p;
+      break;
+    case "down": // 上→下
+      c0x = w; c0y = 0; fx = w - lift * w * p; fy = 2 * h * p;
+      break;
+    case "right-to-left":
+    default:
+      c0x = w; c0y = h; fx = w - 2 * w * p; fy = h - lift * h * p;
+      break;
+  }
+  const dx = fx - c0x;
+  const dy = fy - c0y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) {
+    ctx.drawImage(prev, 0, 0);
+    return;
+  }
+  const nx = dx / len; // 折り目の法線（C0→F 向き）
+  const ny = dy / len;
+  const mx = (c0x + fx) / 2; // 折り目上の点（中点）
+  const my = (c0y + fy) / 2;
+
+  const rect: [number, number][] = [
+    [0, 0],
+    [w, 0],
+    [w, h],
+    [0, h],
+  ];
+  const stat = clipPolyHalfplane(rect, mx, my, nx, ny, true); // めくり残し（flat prev）
+  const flap = clipPolyHalfplane(rect, mx, my, nx, ny, false); // めくれ（反射する側）
+
+  // 1) めくれ跡 cur への落ち影（折り目から cur 側 = -n 方向へグラデで暗く）
+  if (flap.length >= 3) {
+    const sw = Math.min(w, h) * 0.12;
+    const g = ctx.createLinearGradient(mx, my, mx - nx * sw, my - ny * sw);
+    g.addColorStop(0, "rgba(0,0,0,0.40)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.save();
+    pathPolygon(ctx, flap);
+    ctx.clip();
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  // 2) めくり残しの flat prev
+  if (stat.length >= 3) {
+    ctx.save();
+    pathPolygon(ctx, stat);
+    ctx.clip();
+    ctx.drawImage(prev, 0, 0);
+    ctx.restore();
+  }
+
+  // 3) めくれた紙＝prev を折り目で反射して描く（裏返った像）
+  if (flap.length >= 3) {
+    const k = nx * mx + ny * my;
+    ctx.save();
+    // 反射アフィン: P' = P - 2((P-M)·n) n
+    ctx.transform(
+      1 - 2 * nx * nx,
+      -2 * nx * ny,
+      -2 * nx * ny,
+      1 - 2 * ny * ny,
+      2 * nx * k,
+      2 * ny * k,
+    );
+    pathPolygon(ctx, flap); // page 座標。反射 transform 下で反射位置に置かれる
+    ctx.clip();
+    ctx.drawImage(prev, 0, 0);
+    ctx.restore();
+
+    // 裏面の質感（紙の裏色＋めくれ先 F ほど暗く）。screen 座標で反射後フラップにクリップ。
+    const rflap = flap.map(([px, py]) => {
+      const dd = (px - mx) * nx + (py - my) * ny;
+      return [px - 2 * dd * nx, py - 2 * dd * ny] as [number, number];
+    });
+    ctx.save();
+    pathPolygon(ctx, rflap);
+    ctx.clip();
+    ctx.globalAlpha = 0.46;
+    ctx.fillStyle = "#efe9dc"; // 紙の裏（薄クリーム）
+    ctx.fillRect(0, 0, w, h);
+    ctx.globalAlpha = 1;
+    const eg = ctx.createLinearGradient(mx, my, fx, fy); // 折り目→めくれ先(F) で暗く
+    eg.addColorStop(0, "rgba(0,0,0,0)");
+    eg.addColorStop(1, "rgba(0,0,0,0.32)");
+    ctx.fillStyle = eg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+
+    // 4) 折り目の白いハイライト（紙が曲がる稜線）
+    const px = -ny; // 折り目方向（法線に直交）
+    const py = nx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+    ctx.beginPath();
+    ctx.moveTo(mx - px * 2000, my - py * 2000);
+    ctx.lineTo(mx + px * 2000, my + py * 2000);
+    ctx.lineWidth = Math.max(1.5, Math.min(w, h) * 0.005);
+    ctx.strokeStyle = "rgba(255,255,255,0.5)";
+    ctx.stroke();
+    ctx.restore();
+  }
 }
