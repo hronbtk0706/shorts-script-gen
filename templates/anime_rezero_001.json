@@ -1,0 +1,587 @@
+{
+  "version": 2,
+  "id": "anime_rezero_001",
+  "name": "Re:ゼロ 記憶回復演出(段で作り分け・試作)",
+  "createdAt": "2026-06-23T00:00:00",
+  "totalDuration": 45.0,
+  "aspect": "vertical",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#08080e",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": -2,
+      "startSec": 0,
+      "endSec": 45.0,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "p1_origin",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\g_origin.png",
+      "x": -51.14,
+      "y": 8.0,
+      "width": 202.27,
+      "height": 64.0,
+      "zIndex": 10,
+      "startSec": 0.0,
+      "endSec": 5.6,
+      "opacity": 1,
+      "motion": "zoom_in"
+    },
+    {
+      "id": "p1_panic",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\g_panic.png",
+      "x": -51.14,
+      "y": 8.0,
+      "width": 202.27,
+      "height": 64.0,
+      "zIndex": 10,
+      "startSec": 5.3,
+      "endSec": 9.2,
+      "opacity": 1,
+      "motion": "zoom_in"
+    },
+    {
+      "id": "p1_shake",
+      "type": "effect",
+      "effectKind": "shake",
+      "effectIntensity": 0.5,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 5.6,
+      "endSec": 8.6
+    },
+    {
+      "id": "p1_grain",
+      "type": "effect",
+      "effectKind": "grain",
+      "effectIntensity": 0.5,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 3.0,
+      "endSec": 9.4,
+      "screenEffectParams": {
+        "type": "scanlines",
+        "strength": 0.42,
+        "speed": 1
+      }
+    },
+    {
+      "id": "p1_vig",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\vignette.png",
+      "x": 18.0,
+      "y": 8.0,
+      "width": 64.0,
+      "height": 64.0,
+      "zIndex": 30,
+      "startSec": 3.0,
+      "endSec": 9.4,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "p1_blur",
+      "type": "effect",
+      "effectKind": "blur",
+      "effectIntensity": 0.0,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 3.0,
+      "endSec": 5.4,
+      "screenEffectParams": {
+        "radius": 3
+      }
+    },
+    {
+      "id": "p2_deai_g",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\center_g.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 9.0,
+      "endSec": 10.8,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "p2_deai_c",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\center.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 11,
+      "startSec": 10.4,
+      "endSec": 13.0,
+      "opacity": 1,
+      "motion": "pan_down"
+    },
+    {
+      "id": "p2_hand_g",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\g_deai.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 12.7,
+      "endSec": 14.3,
+      "opacity": 1,
+      "motion": "static"
+    },
+    {
+      "id": "p2_hand_c",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\c_emisuba.jpg",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 11,
+      "startSec": 13.9,
+      "endSec": 16.4,
+      "opacity": 1,
+      "motion": "ken_burns"
+    },
+    {
+      "id": "p2_smile",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_emi_smile.png",
+      "x": -51.14,
+      "y": 8.0,
+      "width": 202.27,
+      "height": 64.0,
+      "zIndex": 10,
+      "startSec": 16.1,
+      "endSec": 18.4,
+      "opacity": 1,
+      "motion": "zoom_in",
+      "filter": {
+        "glow": {
+          "color": "#FFE6C0",
+          "radius": 14,
+          "strength": 0.7
+        }
+      }
+    },
+    {
+      "id": "p2_grain",
+      "type": "effect",
+      "effectKind": "grain",
+      "effectIntensity": 0.5,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 9.4,
+      "endSec": 14.0,
+      "screenEffectParams": {
+        "type": "scanlines",
+        "strength": 0.2,
+        "speed": 1
+      }
+    },
+    {
+      "id": "p3_face",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_emi2.png",
+      "x": -51.14,
+      "y": 8.0,
+      "width": 202.27,
+      "height": 64.0,
+      "zIndex": 10,
+      "startSec": 18.2,
+      "endSec": 22.6,
+      "opacity": 1,
+      "motion": "zoom_in",
+      "filter": {
+        "glow": {
+          "color": "#FFF0D0",
+          "radius": 18,
+          "strength": 0.85
+        }
+      }
+    },
+    {
+      "id": "p4_a",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_two_bd1.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 22.6,
+      "endSec": 26.0,
+      "opacity": 1,
+      "motion": "zoom_in"
+    },
+    {
+      "id": "p4_b",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_two_bd3.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 25.8,
+      "endSec": 29.2,
+      "opacity": 1,
+      "motion": "zoom_in"
+    },
+    {
+      "id": "p4_c",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_two_ep40.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 29.0,
+      "endSec": 32.6,
+      "opacity": 1,
+      "motion": "zoom_in"
+    },
+    {
+      "id": "p4_punch0",
+      "type": "effect",
+      "effectKind": "zoom-punch",
+      "effectIntensity": 0.5,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 22.95,
+      "endSec": 23.45
+    },
+    {
+      "id": "p4_punch1",
+      "type": "effect",
+      "effectKind": "zoom-punch",
+      "effectIntensity": 0.5,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 26.15,
+      "endSec": 26.65
+    },
+    {
+      "id": "p4_punch2",
+      "type": "effect",
+      "effectKind": "zoom-punch",
+      "effectIntensity": 0.5,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 29.35,
+      "endSec": 29.85
+    },
+    {
+      "id": "p5_resolve",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\ms_realize.png",
+      "x": -51.14,
+      "y": 8.0,
+      "width": 202.27,
+      "height": 64.0,
+      "zIndex": 10,
+      "startSec": 32.4,
+      "endSec": 37.6,
+      "opacity": 1,
+      "motion": "zoom_in",
+      "filter": {
+        "glow": {
+          "color": "#CFE3FF",
+          "radius": 14,
+          "strength": 0.7
+        }
+      }
+    },
+    {
+      "id": "p5_flash",
+      "type": "effect",
+      "effectKind": "flash",
+      "effectIntensity": 0.85,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 32.35,
+      "endSec": 33.0
+    },
+    {
+      "id": "p5_punch",
+      "type": "effect",
+      "effectKind": "zoom-punch",
+      "effectIntensity": 0.7,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 32.35,
+      "endSec": 33.0
+    },
+    {
+      "id": "p6_cry",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_emi_cry.jpg",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 37.4,
+      "endSec": 41.6,
+      "opacity": 1,
+      "motion": "zoom_in",
+      "filter": {
+        "glow": {
+          "color": "#FFE6C0",
+          "radius": 16,
+          "strength": 0.85
+        }
+      }
+    },
+    {
+      "id": "p6_flash",
+      "type": "effect",
+      "effectKind": "flash",
+      "effectIntensity": 0.6,
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 45,
+      "startSec": 37.35,
+      "endSec": 37.9
+    },
+    {
+      "id": "p6_end",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\center.png",
+      "x": 0.0,
+      "y": 24.18,
+      "width": 100.0,
+      "height": 31.64,
+      "zIndex": 10,
+      "startSec": 41.4,
+      "endSec": 45.0,
+      "opacity": 1,
+      "motion": "zoom_in",
+      "filter": {
+        "glow": {
+          "color": "#FFE6C0",
+          "radius": 12,
+          "strength": 0.55
+        }
+      }
+    },
+    {
+      "id": "topic_text",
+      "type": "comment",
+      "text": "1期との対比が\nエモすぎてヤバいんだが",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 17.34,
+      "zIndex": 60,
+      "startSec": 0,
+      "endSec": 3.0,
+      "fontSize": 26,
+      "fontColor": "#14171A",
+      "fillColor": "#FFFFFF",
+      "shape": "rect",
+      "border": {
+        "width": 4,
+        "color": "#22c55e"
+      },
+      "entryAnimation": "none",
+      "exitAnimation": "fade",
+      "exitDuration": 0.4
+    },
+    {
+      "id": "topic_audio",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\audio\\topic.wav",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 0.3,
+      "endSec": 2.54,
+      "volume": 1
+    },
+    {
+      "id": "bgm",
+      "type": "audio",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\assets\\bgm\\nastelbom-cinematic-piano-442092.mp3",
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "zIndex": -1,
+      "startSec": 0,
+      "endSec": 45.0,
+      "volume": 0.28
+    },
+    {
+      "id": "logo",
+      "type": "image",
+      "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\assets\\rezero_logo.png",
+      "x": 27,
+      "y": 87.2,
+      "width": 46,
+      "height": 11.3,
+      "zIndex": 50,
+      "startSec": 0,
+      "endSec": 45.0,
+      "opacity": 0.85,
+      "motion": "static"
+    }
+  ],
+  "transitions": [
+    {
+      "style": "dissolve",
+      "atSec": 5.45,
+      "duration": 0.5,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p1_origin",
+        "p1_panic"
+      ]
+    },
+    {
+      "style": "dissolve",
+      "atSec": 10.5,
+      "duration": 0.5,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p2_deai_g",
+        "p2_deai_c"
+      ]
+    },
+    {
+      "style": "dissolve",
+      "atSec": 14.0,
+      "duration": 0.5,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p2_hand_g",
+        "p2_hand_c"
+      ]
+    },
+    {
+      "style": "dissolve",
+      "atSec": 16.3,
+      "duration": 0.5,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p2_hand_c",
+        "p2_smile"
+      ]
+    },
+    {
+      "style": "dissolve",
+      "atSec": 18.4,
+      "duration": 0.5,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p2_smile",
+        "p3_face"
+      ]
+    },
+    {
+      "style": "push",
+      "atSec": 22.8,
+      "duration": 0.4,
+      "direction": "right-to-left",
+      "layerIds": [
+        "p3_face",
+        "p4_a"
+      ]
+    },
+    {
+      "style": "circle-wipe",
+      "atSec": 26.0,
+      "duration": 0.4,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p4_a",
+        "p4_b"
+      ]
+    },
+    {
+      "style": "push",
+      "atSec": 29.2,
+      "duration": 0.4,
+      "direction": "up",
+      "layerIds": [
+        "p4_b",
+        "p4_c"
+      ]
+    },
+    {
+      "style": "glitch",
+      "atSec": 32.4,
+      "duration": 0.45,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p4_c",
+        "p5_resolve"
+      ]
+    },
+    {
+      "style": "dissolve",
+      "atSec": 37.5,
+      "duration": 0.6,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p5_resolve",
+        "p6_cry"
+      ]
+    },
+    {
+      "style": "dissolve",
+      "atSec": 41.5,
+      "duration": 0.7,
+      "direction": "left-to-right",
+      "layerIds": [
+        "p6_cry",
+        "p6_end"
+      ]
+    }
+  ]
+}
