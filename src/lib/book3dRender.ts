@@ -23,21 +23,35 @@ export type TexSource =
   | OffscreenCanvas
   | ImageBitmap;
 
-/** flipper メッシュの曲げ用情報（bbox からヒンジ→外端軸 u・法線軸 n を自動検出）。 */
+/** flipper メッシュの変形用情報（bbox からヒンジ→外端軸 u・法線軸 n・奥行軸 d を自動検出）。 */
 interface FlipperMesh {
   mesh: THREE.Mesh;
   nodeName: string;
-  /** 元の頂点座標（曲げ前）。復元と毎フレーム再計算の基準。 */
+  /** 元の頂点座標（変形前）。復元と毎フレーム再計算の基準。 */
   orig: Float32Array;
   /** ヒンジ→外端の軸 (0=x/1=y/2=z)。 */
   uAxis: number;
-  /** 紙の法線（厚み）軸。曲げはこの方向へ持ち上げる。 */
+  /** 紙の法線（厚み）軸。カールはこの面内で曲げる。 */
   nAxis: number;
+  /** 奥行（ヒンジに平行）軸。ねじりの基準。 */
+  dAxis: number;
   /** u 軸上のヒンジ座標（0 付近の端）。 */
   hinge: number;
   /** u 軸の長さ。 */
   uLen: number;
-  /** 現在曲げ適用中か（無駄な書き戻し回避）。 */
+  /** 奥行軸の中心。 */
+  dCenter: number;
+  /** 法線軸の平面位置（フラットページの n 値）。 */
+  nFlat: number;
+  /** 回転させる node（このページの所属ノード）。 */
+  node: THREE.Object3D;
+  /** ヒンジ回転の軸キー（= 背＝奥行軸）。"x"|"y"|"z"。 */
+  spineKey: "x" | "y" | "z";
+  /** めくり回転の符号（外端が反対側へ持ち上がる向き）。 */
+  turnSign: number;
+  /** flipper（めくり専用・既定非表示）か、page（常時表示の本体ページ）か。 */
+  isFlipper: boolean;
+  /** 現在変形適用中か（無駄な書き戻し回避）。 */
   bent: boolean;
 }
 
@@ -187,10 +201,17 @@ export class Book3DRenderer {
     this.fitRootToView();
   }
 
-  /** めくり用フラットページ node（flipper_*）と、その曲げ用メッシュ情報を集める。 */
+  /**
+   * めくり可能なページ node を集める（flipper_* ＝めくり専用 / Page* ＝本体ページ どちらも）。
+   * 各ページの「ヒンジ→外端 u / 法線 n / 背＝奥行 d」軸を bbox から自動検出。回転軸・符号も決める。
+   * flipperMeshes は収集順（node 順）＝めくり index 順。
+   */
   private collectFlippers(obj: THREE.Object3D): void {
     obj.traverse((o) => {
-      if (!o.name || !o.name.toLowerCase().startsWith("flipper")) return;
+      if (!o.name) return;
+      const isFlipper = /^flipper/i.test(o.name);
+      const isPage = /^page/i.test(o.name);
+      if (!isFlipper && !isPage) return;
       this.flipperNodes.set(o.name, o);
       const nodeName = o.name;
       o.traverse((m) => {
@@ -209,9 +230,18 @@ export class Book3DRenderer {
         const others = [0, 1, 2].filter((i) => i !== nAxis);
         const near0 = (i: number) => Math.min(Math.abs(min[i]), Math.abs(max[i]));
         const uAxis = near0(others[0]) <= near0(others[1]) ? others[0] : others[1];
+        const dAxis = others[0] === uAxis ? others[1] : others[0]; // 奥行＝背
         const hinge =
           Math.abs(min[uAxis]) < Math.abs(max[uAxis]) ? min[uAxis] : max[uAxis];
+        const outer =
+          Math.abs(min[uAxis]) < Math.abs(max[uAxis]) ? max[uAxis] : min[uAxis];
         const uLen = span[uAxis] || 1;
+        const dCenter = (min[dAxis] + max[dAxis]) / 2;
+        const nFlat = (min[nAxis] + max[nAxis]) / 2;
+        const uDir = Math.sign(outer - hinge) || -1;
+        const spineKey = (["x", "y", "z"] as const)[dAxis]; // 背（奥行）軸まわりに反転
+        // 外端が「法線+方向（手前）」へ持ち上がって反対側へ倒れる符号
+        const turnSign = -uDir;
         const pos = geo.getAttribute("position") as THREE.BufferAttribute;
         this.flipperMeshes.push({
           mesh,
@@ -219,31 +249,54 @@ export class Book3DRenderer {
           orig: new Float32Array(pos.array as ArrayLike<number>),
           uAxis,
           nAxis,
+          dAxis,
           hinge,
           uLen,
+          dCenter,
+          nFlat,
+          node: o,
+          spineKey,
+          turnSign,
+          isFlipper,
           bent: false,
         });
       });
     });
   }
 
-  /** flipper メッシュを「弓なり（円筒曲げ）」に変形。amount 0..1（中盤で最大）。 */
-  private bendFlipper(fm: FlipperMesh, amount: number): void {
+  /**
+   * flipper メッシュを page_turn_recipe.md の B(カール)+C(ねじり)で変形。p:0→1。
+   * - B カール: ページ全体を `55°·sin(πp)` で曲げる（ヒンジ固定・外端ほど大きく面内回転）。
+   * - C ねじり: ページ全体を `28°·sin(πp)` でねじる（u 軸まわりに外端ほど大きく）。
+   * A（ヒンジ反転 -90→+90）は呼び出し側 applyFlip の node.rotation で担当。
+   */
+  private bendFlipper(fm: FlipperMesh, p: number): void {
     const geo = fm.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position") as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
-    const maxLift = fm.uLen * 0.35 * amount; // 外端の盛り上がり量
+    const wave = Math.sin(Math.PI * p);
+    const curlMax = (55 * Math.PI) / 180 * wave; // B
+    const twistMax = (28 * Math.PI) / 180 * wave; // C
+    const { uAxis, nAxis, dAxis, hinge, uLen, dCenter, nFlat } = fm;
     for (let i = 0; i < arr.length; i += 3) {
-      const u = fm.orig[i + fm.uAxis];
-      const s = Math.abs(u - fm.hinge) / fm.uLen; // 0(ヒンジ)→1(外端)
-      // ヒンジ固定で外端ほど法線方向へ持ち上げ（2乗で根元はなだらか）
-      arr[i + fm.nAxis] = fm.orig[i + fm.nAxis] + maxLift * s * s;
-      // わずかに u を縮めて弧長を保つ（見栄え）
-      arr[i + fm.uAxis] =
-        fm.hinge + (u - fm.hinge) * (1 - amount * 0.12 * s);
-      // 他軸（depth）はそのまま
-      const other = [0, 1, 2].find((a) => a !== fm.uAxis && a !== fm.nAxis)!;
-      arr[i + other] = fm.orig[i + other];
+      // ヒンジ/中心を原点にしたローカル座標
+      const u0 = fm.orig[i + uAxis] - hinge;
+      const d0 = fm.orig[i + dAxis] - dCenter;
+      const n0 = fm.orig[i + nAxis] - nFlat;
+      const sN = u0 / uLen; // 符号付き 0..±1（左右対称に効かせる）
+      // B: カール（u-n 面で回す。外端ほど大きい角＝弓なり）
+      const a = curlMax * sN;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      let u = u0 * ca - n0 * sa;
+      let n = u0 * sa + n0 * ca;
+      // C: ねじり（d-n 面で回す。外端ほど大きい角）
+      const b = twistMax * sN;
+      const cb = Math.cos(b), sb = Math.sin(b);
+      const d = d0 * cb - n * sb;
+      n = d0 * sb + n * cb;
+      arr[i + uAxis] = hinge + u;
+      arr[i + dAxis] = dCenter + d;
+      arr[i + nAxis] = nFlat + n;
     }
     pos.needsUpdate = true;
     fm.bent = true;
@@ -259,11 +312,10 @@ export class Book3DRenderer {
     fm.bent = false;
   }
 
-  /** めくり用フラットページ（node 名 flipper_*）の表示/非表示を切替。 */
+  /** めくり専用 flipper_*（本体 Page* は対象外＝常時表示）の表示/非表示を切替。 */
   setFlippersVisible(visible: boolean): void {
-    for (const n of this.flipperNodes.values()) {
-      n.visible = visible;
-      n.rotation.z = 0;
+    for (const [name, n] of this.flipperNodes) {
+      if (/^flipper/i.test(name)) n.visible = visible;
     }
   }
 
@@ -274,34 +326,33 @@ export class Book3DRenderer {
    * page が偶数=右ページ(flipper_R)を左へ、奇数=左ページ(flipper_L)を右へ、と解釈。
    */
   applyFlip(flips: BookFlipKeyframe[] | undefined, t: number): void {
-    // 既定: 全 flipper 非表示・回転 0・曲げ解除
-    for (const n of this.flipperNodes.values()) {
-      n.visible = false;
-      n.rotation.z = 0;
+    // 既定（リセット）: 各ページを静止（回転0・変形解除）。flipper は隠す／本体 Page は表示。
+    for (const fm of this.flipperMeshes) {
+      this.restoreFlipper(fm);
+      fm.node.rotation[fm.spineKey] = 0;
+      fm.node.visible = !fm.isFlipper;
     }
-    for (const fm of this.flipperMeshes) this.restoreFlipper(fm);
     if (!flips || flips.length === 0) return;
+
+    // flipperMeshes は収集順（node 順）＝めくり index 順。f.page でそのページを引く。
+    const pages = this.flipperMeshes;
     for (const f of flips) {
+      const fm = pages[f.page];
+      if (!fm) continue;
       const dur = Math.max(0.05, f.durationSec ?? 0.8);
-      if (t < f.atSec || t > f.atSec + dur) continue;
-      const p = Math.max(0, Math.min(1, (t - f.atSec) / dur));
-      // easeInOutQuad（回転の緩急）
-      const e = p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
-      const left = f.page % 2 !== 0; // 奇数=左ページめくり
-      const name = left ? "flipper_L" : "flipper_R";
-      const node =
-        this.flipperNodes.get(name) ?? this.flipperNodes.get(name.toLowerCase());
-      if (node) {
-        node.visible = true;
-        // 右ページは +X→+Y→−X（+Z 回転）、左ページは逆向き
-        node.rotation.z = (left ? -1 : 1) * e * Math.PI;
-        // しなり（円筒曲げ）: 中盤で最大の弓なり（sin で 0→1→0）
-        const bend = Math.sin(p * Math.PI);
-        for (const fm of this.flipperMeshes) {
-          if (fm.nodeName === name) this.bendFlipper(fm, bend);
-        }
+      if (t < f.atSec) continue; // まだめくっていない＝静止のまま
+      fm.node.visible = true;
+      if (t >= f.atSec + dur) {
+        // めくり完了＝反対側で固定（変形なし）
+        fm.node.rotation[fm.spineKey] = fm.turnSign * Math.PI;
+      } else {
+        // めくり中: A=ヒンジ反転(smoothstep)、B+C=カール＋ねじり（recipe）
+        const p = (t - f.atSec) / dur;
+        const e = p * p * (3 - 2 * p);
+        fm.node.rotation[fm.spineKey] = fm.turnSign * e * Math.PI;
+        this.bendFlipper(fm, p);
       }
-      break;
+      // break しない: 複数ページ（完了済み=固定 / めくり中 / 未めくり）を同時に正しく反映
     }
   }
 
