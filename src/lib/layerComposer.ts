@@ -1061,7 +1061,15 @@ async function drawLayer(
         ctx.rect(0, 0, w, h);
         ctx.clip();
       }
-      drawFlipWarp(ctx, temp, w, h, flipDeg, 500 * (FINAL_W / 360));
+      drawFlipWarp(
+        ctx,
+        temp,
+        w,
+        h,
+        flipDeg,
+        500 * (FINAL_W / 360),
+        layer.flipOriginX ?? 0.5,
+      );
     }
     ctx.restore();
     if (layer.border && layer.border.width > 0 && !noClip) {
@@ -1488,6 +1496,14 @@ async function drawLayerContentInBox(
         // 未指定レイヤーは何も描画しない（透過）
         break;
       }
+      case "book3d": {
+        // 3D本: プレビューは DOM の Three.js <canvas> を frameSource として受け取り、箱にそのまま
+        // 合成する（character/video と同じ流儀）。透過背景なので他レイヤーと自然に重なる。
+        // 書き出し（オフライン WebM 焼き）は後段で同様に frameSource 経由にする。
+        const frameSource = videoFrameSources?.get(layer.id);
+        if (frameSource) ctx.drawImage(frameSource, 0, 0, w, h);
+        break;
+      }
       case "icon":
         // 同梱 Lucide 線アイコン or inline SVG(layer.svg) を contain 描画（同期・ベクター）。色=fillColor、太さ=iconStrokeWidth。
         drawIconOnCanvas(
@@ -1692,23 +1708,26 @@ function drawFlipWarp(
   h: number,
   flipDeg: number,
   perspectivePx: number,
+  // 回転軸（横位置）0=左端 / 0.5=中央(既定・現状維持) / 1=右端。preview の transformOrigin と一致。
+  flipOriginX = 0.5,
 ): void {
   const theta = (flipDeg * Math.PI) / 180;
   const sin = Math.sin(theta);
   const cos = Math.cos(theta);
-  const cx = w / 2;
+  // ヒンジ（回転軸）の x。0.5 のとき hx=w/2 で従来の中央軸と数式一致。
+  const hx = flipOriginX * w;
   const cy = h / 2;
   const sw = (src as unknown as { width: number }).width;
   const sh = (src as unknown as { height: number }).height;
   if (!sw || !sh) return;
-  // ソース px s → element 空間 lx（中心原点, [-w/2, w/2]）
+  // ソース px s → element 空間 lx（ヒンジ原点, [-hx, w-hx]）
   const screenX = (lx: number): number => {
     const f = 1 / (1 + (lx * sin) / perspectivePx);
-    return cx + lx * cos * f;
+    return hx + lx * cos * f;
   };
   for (let s = 0; s < sw; s++) {
-    const lxL = (s / sw - 0.5) * w;
-    const lxR = ((s + 1) / sw - 0.5) * w;
+    const lxL = (s / sw) * w - hx;
+    const lxR = ((s + 1) / sw) * w - hx;
     const sxL = screenX(lxL);
     const sxR = screenX(lxR);
     let destX = sxL;

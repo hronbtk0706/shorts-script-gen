@@ -10,7 +10,8 @@ export type LayerType =
   | "audio"
   | "character"
   | "effect"
-  | "icon";
+  | "icon"
+  | "book3d";
 
 export type LayerShape =
   | "rect"
@@ -723,6 +724,40 @@ export interface DisintegrateSpec {
   ease?: KeyframeEase;
 }
 
+/**
+ * 3D本（book3d）レイヤーの差し替え可能ページ中身。
+ * slot = glTF マテリアル名（命名規約: "page_L_0" / "page_R_0" / "cover_front" 等）。
+ * - image: 画像をそのページのテクスチャに貼る。
+ * - text: 文字をその場で画像化してテクスチャに貼る（曲面に沿う）。
+ */
+export type BookPageContent =
+  | { slot: string; kind: "image"; src: string }
+  | {
+      slot: string;
+      kind: "text";
+      text: string;
+      font?: string;
+      size?: number;
+      color?: string;
+      align?: string;
+    };
+
+/** book3d の見る角度（編集可能なカメラ）。yaw/pitch=度, distance=本中心からの距離, lens=焦点距離(mm相当)。 */
+export interface BookCamera {
+  yaw: number;
+  pitch: number;
+  distance: number;
+  targetY?: number;
+  lens?: number;
+}
+
+/** どのページをいつめくるか（book3d タイムライン）。atSec=絶対秒, page=めくるページ番号, durationSec=めくり所要秒。 */
+export interface BookFlipKeyframe {
+  atSec: number;
+  page: number;
+  durationSec: number;
+}
+
 /** v2 Timeline 型レイヤー */
 export interface Layer {
   id: string;
@@ -830,6 +865,13 @@ export interface Layer {
   exitAnimation?: ExitAnimation;
   /** 退場アニメーションの秒数 */
   exitDuration?: number;
+  /**
+   * flip-in / flip-out の回転軸（横位置）。0=左端 / 0.5=中央(既定・現状維持) / 1=右端。
+   * 本のページめくり用に「端ヒンジ」で倒す/開くために使う（例: 表紙を flipOriginX:1 + flip-out で
+   * 右端を軸に左へ倒す）。preview は transformOrigin、export は drawFlipWarp のヒンジ位置に反映。
+   * 未指定(=0.5)なら従来の中央軸 flip と数式一致（既存テンプレに影響なし）。
+   */
+  flipOriginX?: number;
   /** true のとき編集中は非表示かつ書き出しからも除外 */
   hidden?: boolean;
   /** true のときドラッグ/リサイズ/プロパティ編集を禁止 */
@@ -944,6 +986,20 @@ export interface Layer {
    * - shape: 円/角丸/星/ハート/ダイヤ/六角形/矩形の形にくり抜く。
    */
   mask?: LayerMask;
+
+  // -----------------------------------------------------------------------
+  // book3d レイヤー専用フィールド (type === "book3d" のときのみ意味を持つ)
+  // 既存 character と同じ二段構え（ライブ=Three.js→OffscreenCanvas→drawImage /
+  // 書き出し=オフラインで VP9+alpha WebM に焼き video 経路へ）。
+  // -----------------------------------------------------------------------
+  /** .glb (glTF2.0 バイナリ) への絶対パス。未指定なら手続き的なプレースホルダ本（見開き2ページ）を表示。 */
+  gltfPath?: string;
+  /** 各ページの差し替え中身（slot=マテリアル名ごと）。 */
+  pages?: BookPageContent[];
+  /** 見る角度（カメラ）。 */
+  bookCamera?: BookCamera;
+  /** めくりのタイムライン。 */
+  bookFlip?: BookFlipKeyframe[];
 
   // -----------------------------------------------------------------------
   // character レイヤー専用フィールド (type === "character" のときのみ意味を持つ)

@@ -41,6 +41,7 @@ import {
   computeCharAnimState,
 } from "../lib/layerComposer";
 import { CharacterLayerContent } from "./CharacterLayerContent";
+import { Book3DLayerContent, BOOK3D_FRAME_EVENT } from "./Book3DLayerContent";
 import { LayerErrorBoundary } from "./LayerErrorBoundary";
 
 function resolveSrcForWebview(src: string | undefined): string | null {
@@ -368,7 +369,8 @@ export function TemplateCanvas({
       let _vidInTime = 0;
       let _vidReady = 0;
       for (const l of curLayers) {
-        if (l.type !== "video" && l.type !== "character") continue;
+        if (l.type !== "video" && l.type !== "character" && l.type !== "book3d")
+          continue;
         if (t < l.startSec || t >= l.endSec) continue;
         if (l.type === "video") _vidInTime++;
         const el = container.querySelector<HTMLElement>(
@@ -626,6 +628,16 @@ export function TemplateCanvas({
     void renderExportFrame();
   }, [showExport, isPlaying, currentTimeSec, layers, editingLayerId, renderExportFrame]);
 
+  // 3D本（book3d）は glb を非同期ロードして描くので、ロード/カメラ/ページ確定の「後」に
+  // 合成Canvasを撮り直す必要がある（停止中は時刻変化が無く再合成されないため）。
+  // Book3DLayerContent が描画完了ごとに発火するイベントで 1 度だけ再合成する。
+  useEffect(() => {
+    if (!showExport || isPlaying) return;
+    const onFrame = () => void renderExportFrame();
+    window.addEventListener(BOOK3D_FRAME_EVENT, onFrame);
+    return () => window.removeEventListener(BOOK3D_FRAME_EVENT, onFrame);
+  }, [showExport, isPlaying, renderExportFrame]);
+
   // 手書き（筆順）字形データの先読み: handwrite レイヤーの本文が変わったら必要グリフを
   // ロードし、揃ったら 1 度再合成（合成キャンバスがストロークを描けるようになる）。
   const handwriteKey = layers
@@ -734,12 +746,13 @@ export function TemplateCanvas({
             )
               return false;
             // 再生中: 合成キャンバス(前面)が全レイヤーを描くので、裏の DOM レイヤーは見えない。
-            // フレーム取得が要る video/character だけ DOM に残し、それ以外（image/text/color/
+            // フレーム取得が要る video/character/book3d だけ DOM に残し、それ以外（image/text/color/
             // shape/comment）は再生中マウントしない → 毎フレームの React 再描画を激減（品質そのまま）。
             if (
               isPlaying &&
               layer.type !== "video" &&
-              layer.type !== "character"
+              layer.type !== "character" &&
+              layer.type !== "book3d"
             ) {
               return false;
             }
@@ -1630,6 +1643,16 @@ function renderLayerContent(
         </LayerErrorBoundary>
       );
     }
+    case "book3d":
+      return (
+        <LayerErrorBoundary label={`book3d: ${layer.id}`}>
+          <Book3DLayerContent
+            layer={layer}
+            currentTimeSec={currentTimeSec}
+            isPlaying={isPlaying}
+          />
+        </LayerErrorBoundary>
+      );
   }
 }
 
@@ -2372,6 +2395,8 @@ export function computeLayerAnimStyle(
       }
       case "flip-in":
         parts.push(`perspective(500px) rotateY(${(1 - e) * 90}deg)`);
+        // 回転軸（横位置）。既定 0.5 → "50% 50%"（中央＝現状と完全一致）。
+        transformOrigin = `${(layer.flipOriginX ?? 0.5) * 100}% 50%`;
         opacity *= e;
         break;
       case "stretch-in":
@@ -2454,6 +2479,8 @@ export function computeLayerAnimStyle(
         break;
       case "flip-out":
         parts.push(`perspective(500px) rotateY(${e * 90}deg)`);
+        // 回転軸（横位置）。既定 0.5 → "50% 50%"（中央＝現状と完全一致）。
+        transformOrigin = `${(layer.flipOriginX ?? 0.5) * 100}% 50%`;
         opacity *= 1 - e;
         break;
       case "stretch-out":

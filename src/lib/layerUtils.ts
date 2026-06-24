@@ -111,6 +111,19 @@ export function makeLayer(defaults: NewLayerDefaults, zIndex: number): Layer {
         // 衝撃演出はごく短く
         endSec: (defaults.startSec ?? 0) + 0.4,
       };
+    case "book3d":
+      return {
+        ...base,
+        // glb 未指定なら手続き的プレースホルダ本（見開き）を表示。
+        x: 20,
+        y: 20,
+        width: 60,
+        height: 60,
+        // カメラ初期値（俯瞰3/4）。横長レイヤーでの広角パース歪みを抑えるため望遠寄り(55mm)＋距離4。
+        bookCamera: { yaw: 0, pitch: 28, distance: 4, targetY: 0, lens: 55 },
+        pages: [],
+        bookFlip: [],
+      };
   }
 }
 

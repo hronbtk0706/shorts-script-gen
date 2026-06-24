@@ -463,7 +463,8 @@ type SectionId =
   | "crop"
   | "bubble"
   | "decoration"
-  | "effect";
+  | "effect"
+  | "book3d";
 
 type PropTab = "basic" | "style" | "motion" | "detail";
 
@@ -485,6 +486,7 @@ const TAB_OF_SECTION: Record<SectionId, PropTab> = {
   crop: "style",
   bubble: "style",
   effect: "detail",
+  book3d: "detail",
 };
 
 const TABS: Array<{ id: PropTab; label: string }> = [
@@ -842,6 +844,7 @@ export function LayerPropertyPanel({
   const showAudio = allHaveType(["audio"]);
   const showCharacter = allHaveType(["character"]);
   const showEffect = allHaveType(["effect"]);
+  const showBook3d = allHaveType(["book3d"]);
   // 音声のみ選択中は「位置・サイズ / 形状 / 枠線」は意味がないので非表示
   const allAudio = showAudio;
 
@@ -855,6 +858,7 @@ export function LayerPropertyPanel({
     audio: "🎵",
     character: "🎭",
     effect: "💥",
+    book3d: "📖",
   };
   const headerLabel = multi ? (
     <span className="text-blue-600 dark:text-blue-400">
@@ -2599,6 +2603,195 @@ export function LayerPropertyPanel({
             2,
             0.1,
           )}
+        </Section>
+      )}
+
+      {showBook3d && !multi && primary && (
+        <Section
+          id="book3d"
+          title="3D本 (book3d)"
+          open={isOpen("book3d")}
+          onToggle={toggle}
+          currentTab={activeTab}
+        >
+          {(() => {
+            const cam = primary.bookCamera ?? {
+              yaw: 0,
+              pitch: 30,
+              distance: 2.6,
+              targetY: 0,
+              lens: 36,
+            };
+            const setCam = (patch: Partial<typeof cam>) =>
+              onChange({ bookCamera: { ...cam, ...patch } });
+            const pages = primary.pages ?? [];
+            const setPages = (next: typeof pages) => onChange({ pages: next });
+            const KNOWN_SLOTS = [
+              "page_L_0",
+              "page_R_0",
+              "page_L_1",
+              "page_R_1",
+              "page_L_2",
+              "page_R_2",
+              "cover_front",
+              "cover_back",
+              "spine",
+            ];
+            const pickGlb = async () => {
+              const sel = await openDialog({
+                multiple: false,
+                filters: [{ name: "3Dモデル", extensions: ["glb", "gltf"] }],
+              });
+              if (typeof sel === "string") onChange({ gltfPath: sel });
+            };
+            const pickImage = async (idx: number) => {
+              const sel = await openDialog({
+                multiple: false,
+                filters: [
+                  {
+                    name: "画像",
+                    extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+                  },
+                ],
+              });
+              if (typeof sel !== "string") return;
+              const next = [...pages];
+              next[idx] = { slot: next[idx].slot, kind: "image", src: sel };
+              setPages(next);
+            };
+            return (
+              <div className="flex flex-col gap-2">
+                {/* glb パス */}
+                <div className="flex flex-col gap-0.5 text-[11px]">
+                  <span className="text-gray-600 dark:text-gray-400">
+                    glb モデル
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      value={primary.gltfPath ?? ""}
+                      placeholder="未指定＝プレースホルダ本"
+                      onChange={(e) =>
+                        onChange({ gltfPath: e.target.value || undefined })
+                      }
+                      className="flex-1 min-w-0 px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                    />
+                    <button
+                      onClick={pickGlb}
+                      className="px-2 py-0.5 text-[10px] rounded bg-blue-600 text-white whitespace-nowrap"
+                    >
+                      選択
+                    </button>
+                  </div>
+                </div>
+
+                {/* カメラ */}
+                <div className="text-[10px] text-gray-500">カメラ（見る角度）</div>
+                {sliderInput("左右 yaw", cam.yaw, (v) => setCam({ yaw: v }), -180, 180, 1, "°")}
+                {sliderInput("上下 pitch", cam.pitch, (v) => setCam({ pitch: v }), -89, 89, 1, "°")}
+                {sliderInput("距離", cam.distance, (v) => setCam({ distance: v }), 0.5, 12, 0.1)}
+                {sliderInput("レンズ", cam.lens ?? 36, (v) => setCam({ lens: v }), 16, 120, 1, "mm")}
+
+                {/* ページ割当 */}
+                <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
+                  <span>ページ中身（slot ごと差し替え）</span>
+                  <button
+                    onClick={() => {
+                      const used = new Set(pages.map((p) => p.slot));
+                      const slot =
+                        KNOWN_SLOTS.find((s) => !used.has(s)) ?? "page_L_0";
+                      setPages([...pages, { slot, kind: "image", src: "" }]);
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700"
+                  >
+                    ＋追加
+                  </button>
+                </div>
+                {pages.map((pg, idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col gap-1 p-1 rounded border border-gray-200 dark:border-gray-700"
+                  >
+                    <div className="flex items-center gap-1 text-[10px]">
+                      <select
+                        value={pg.slot}
+                        onChange={(e) => {
+                          const next = [...pages];
+                          next[idx] = { ...next[idx], slot: e.target.value };
+                          setPages(next);
+                        }}
+                        className="flex-1 px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                      >
+                        {KNOWN_SLOTS.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                        {!KNOWN_SLOTS.includes(pg.slot) && (
+                          <option value={pg.slot}>{pg.slot}</option>
+                        )}
+                      </select>
+                      <select
+                        value={pg.kind}
+                        onChange={(e) => {
+                          const next = [...pages];
+                          next[idx] =
+                            e.target.value === "text"
+                              ? { slot: pg.slot, kind: "text", text: "" }
+                              : { slot: pg.slot, kind: "image", src: "" };
+                          setPages(next);
+                        }}
+                        className="px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                      >
+                        <option value="image">画像</option>
+                        <option value="text">テキスト</option>
+                      </select>
+                      <button
+                        onClick={() =>
+                          setPages(pages.filter((_, i) => i !== idx))
+                        }
+                        className="px-1.5 py-0.5 rounded bg-red-500 text-white"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {pg.kind === "image" ? (
+                      <div className="flex items-center gap-1 text-[10px]">
+                        <span className="flex-1 min-w-0 truncate text-gray-500">
+                          {pg.src ? pg.src.split(/[\\/]/).pop() : "（画像未選択）"}
+                        </span>
+                        <button
+                          onClick={() => pickImage(idx)}
+                          className="px-2 py-0.5 rounded bg-blue-600 text-white whitespace-nowrap"
+                        >
+                          画像選択
+                        </button>
+                      </div>
+                    ) : (
+                      <textarea
+                        value={pg.text}
+                        placeholder="ページに表示する文字"
+                        onChange={(e) => {
+                          const next = [...pages];
+                          const cur = next[idx];
+                          next[idx] =
+                            cur.kind === "text"
+                              ? { ...cur, text: e.target.value }
+                              : { slot: cur.slot, kind: "text", text: e.target.value };
+                          setPages(next);
+                        }}
+                        rows={2}
+                        className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 resize-none"
+                      />
+                    )}
+                  </div>
+                ))}
+                <div className="text-[9px] text-gray-400">
+                  ※ 書き出しは後段（現状は編集プレビュー表示まで）。flipper（めくり）も後段。
+                </div>
+              </div>
+            );
+          })()}
         </Section>
       )}
 

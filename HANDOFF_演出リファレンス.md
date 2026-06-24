@@ -46,7 +46,7 @@ curio-gen が台本と一緒に**演出**を組むための「使える手札」
 `none` / `fade` / `slide-left` / `slide-right` / `slide-up` / `slide-down` /
 `fly-in-left` / `fly-in-right` / `fly-in-up` / `fly-in-down`🆕（画面端からカードまるごと滑り込む。`slide-*` が「最終位置の箱の中でワイプ表示」なのに対し、こちらは After Effects の位置キーフレームと同じ off-screen→定位置のフライインで、移動中も全体が見える＝箱でクリップされない。移動距離は box の最終位置から画面端まで＝配置位置に応じて変わる） /
 `zoom-in` / `pop`(弾むスケール) / `blur-in`(ぼけ→鮮明) / `elastic-pop`(行き過ぎ戻る) /
-`flip-in`(横回転) / `stretch-in`(縦伸び) / `roll-in`(回転しながら) /
+`flip-in`(横回転。`flipOriginX`🆕で回転軸を 0=左端/0.5=中央(既定)/1=右端に＝**本のページめくり/表紙が開く**用) / `stretch-in`(縦伸び) / `roll-in`(回転しながら) /
 `grow-up` / `grow-down` / `grow-right` / `grow-left`（端から伸びる・棒グラフ向き。opacityは1維持） /
 `arc-sweep`（`shape:"arc"` 専用。扇が時計回りに描かれる） /
 `draw-on`（`marker-*` / `handwrite` 専用。ペン先が進んだぶん描かれる） /
