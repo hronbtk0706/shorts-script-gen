@@ -1283,6 +1283,17 @@ function LayerView({
         if (layer.type === "comment" && onEditStart) {
           e.stopPropagation();
           onEditStart(layer.id);
+        } else if (layer.type === "book3d") {
+          // 3D本をダブルクリック → クリックした左右半分で見開きのページを判定して編集モーダルを開く。
+          e.stopPropagation();
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const side =
+            e.clientX - rect.left < rect.width / 2 ? "left" : "right";
+          window.dispatchEvent(
+            new CustomEvent("book3d-edit-request", {
+              detail: { layerId: layer.id, side },
+            }),
+          );
         }
       }}
     >

@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "id": "test-bookpages-clean-h",
+  "name": "★テスト: 本ページ クリーン 横（page 1-2 / page 3-4 を layout）",
+  "note": "ゴミ無しのクリーンな見開き。左=page 1-2(蔵)/右=page 3-4(エミリア)を layout 化し画像をオーバースキャン全面配置。余白が出るか・両ページ編集できるかの基準テンプレ。",
+  "createdAt": "2026-06-25T00:00:00.000Z",
+  "totalDuration": 5,
+  "aspect": "horizontal",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#15181f",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 0,
+      "startSec": 0,
+      "endSec": 5
+    },
+    {
+      "id": "book",
+      "type": "book3d",
+      "gltfPath": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\rezero_book_open_clean.glb",
+      "bookCamera": { "yaw": -82, "pitch": -1, "distance": 7, "targetY": 0, "lens": 55 },
+      "pages": [
+        {
+          "slot": "page 1-2",
+          "kind": "layout",
+          "width": 1024,
+          "height": 1448,
+          "layers": [
+            {
+              "id": "L_img",
+              "type": "image",
+              "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\center.png",
+              "x": -3,
+              "y": -3,
+              "width": 106,
+              "height": 106,
+              "zIndex": 1,
+              "startSec": 0,
+              "endSec": 5
+            }
+          ]
+        },
+        {
+          "slot": "page 3-4",
+          "kind": "layout",
+          "width": 1024,
+          "height": 1448,
+          "layers": [
+            {
+              "id": "R_img",
+              "type": "image",
+              "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_emi2.png",
+              "x": -3,
+              "y": -3,
+              "width": 106,
+              "height": 106,
+              "zIndex": 1,
+              "startSec": 0,
+              "endSec": 5
+            }
+          ]
+        }
+      ],
+      "x": 10,
+      "y": 12,
+      "width": 80,
+      "height": 84,
+      "zIndex": 5,
+      "startSec": 0,
+      "endSec": 5
+    }
+  ]
+}

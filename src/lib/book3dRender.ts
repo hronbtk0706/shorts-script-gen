@@ -16,6 +16,40 @@ import type { BookCamera, BookFlipKeyframe, BookPageContent } from "../types";
 
 type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
 
+/**
+ * 本(book3d レイヤー id) → 「slot の焼き込み(glb既定)テクスチャを data URL で取り出す関数」。
+ * Book3DLayerContent が読込後に自分の renderer の抽出関数を登録し、TemplateBuilder が
+ * layout 新規作成時にこれを呼んで、既定画像を「編集可能な画像レイヤー」として種まきする。
+ */
+export const bookSlotExtractors = new Map<
+  string,
+  (slot: string) => string | null
+>();
+
+/** 本(book3d レイヤー id) → この glb に実在する差し替え可能スロット名（マテリアル名）一覧。
+ * スロット選択 UI はハードコードでなくこれを使う（存在しない slot を選べないように）。 */
+export const bookSlotNames = new Map<string, string[]>();
+
+/**
+ * 同じ slot を持つページが複数あったら **先頭だけ採用** して重複を除く。
+ * 「1 slot = 1 ページ」を保証し、描画（setPages / composeLayoutPages）と
+ * 編集（findIndex で先頭一致）の「どちらを反映するか」を一致させる。
+ * （過去の find-or-create バグで空の重複ページが混ざったデータも、これで安全に正規化される）
+ */
+export function dedupePagesBySlot(
+  pages: BookPageContent[] | undefined,
+): BookPageContent[] {
+  if (!pages) return [];
+  const seen = new Set<string>();
+  const out: BookPageContent[] = [];
+  for (const p of pages) {
+    if (seen.has(p.slot)) continue;
+    seen.add(p.slot);
+    out.push(p);
+  }
+  return out;
+}
+
 /** ページテクスチャの供給源。画像URL / canvas / ImageBitmap を許容（将来の入れ子レイアウト用）。 */
 export type TexSource =
   | string
@@ -45,6 +79,8 @@ interface FlipperMesh {
   nFlat: number;
   /** 回転させる node（このページの所属ノード）。 */
   node: THREE.Object3D;
+  /** node の初期位置（めくり時の手前オフセットを足す基準・リセット用）。 */
+  origNodePos: THREE.Vector3;
   /** ヒンジ回転の軸キー（= 背＝奥行軸）。"x"|"y"|"z"。 */
   spineKey: "x" | "y" | "z";
   /** めくり回転の符号（外端が反対側へ持ち上がる向き）。 */
@@ -56,17 +92,75 @@ interface FlipperMesh {
 }
 
 /**
- * 差し替えテクスチャを glTF ページUVの向きに合わせる。
- * - flipY=false: glTF テクスチャは上原点（GLTFLoader 既定）。CanvasTexture/TextureLoader の
- *   既定 flipY=true だと上下逆さまになるため false に。
- * - 水平反転(repeat.x=-1): このページUVは U が反転しているため、正立画像をそのまま貼ると
- *   左右鏡像になる。repeat/offset で U を反転して正す（上下＋左右＝180°補正）。
+ * 差し替えテクスチャの上下を glTF UV に合わせる（flipY=false）。
+ * glTF テクスチャは上原点（GLTFLoader 既定）。CanvasTexture/TextureLoader 既定 flipY=true だと
+ * 上下逆さまになるため false に。左右（U）反転はページごとに異なる（見開き左右でUVの向きが逆な本が
+ * あるため）ので、orientForSlot で slot 単位に出し分ける（meshUvMirrored の判定結果）。
  */
 function applyPageUvOrientation(tex: THREE.Texture): void {
   tex.flipY = false;
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.repeat.x = -1;
-  tex.offset.x = 1;
+  // ClampToEdge: 反転(repeat.x=-1)時に端で巻き込まずクランプ＝端の隙間/シームを防ぐ。
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+}
+
+/**
+ * メッシュの UV を解析: 鏡像か（水平反転が要るか）＋ U の範囲(uMin,uMax)。
+ * - mirrored: 面内三角形と UV 三角形の符号付き面積が逆向きなら鏡像（左ページ等）。
+ * - uMin/uMax: 反転オフセットを正確に出すため（offset.x = uMin+uMax で範囲内ミラー＝端ズレ防止）。
+ */
+function analyzeMeshUv(geo: THREE.BufferGeometry | undefined): {
+  mirrored: boolean;
+  uMin: number;
+  uMax: number;
+} {
+  const fallback = { mirrored: false, uMin: 0, uMax: 1 };
+  if (!geo) return fallback;
+  const pos = geo.getAttribute("position") as THREE.BufferAttribute | undefined;
+  const uv = geo.getAttribute("uv") as THREE.BufferAttribute | undefined;
+  if (!pos || !uv) return fallback;
+  // U 範囲
+  let uMin = Infinity;
+  let uMax = -Infinity;
+  for (let i = 0; i < uv.count; i++) {
+    const u = uv.getX(i);
+    if (u < uMin) uMin = u;
+    if (u > uMax) uMax = u;
+  }
+  if (!Number.isFinite(uMin) || !Number.isFinite(uMax)) {
+    uMin = 0;
+    uMax = 1;
+  }
+  // 鏡像判定（面内三角形 vs UV 三角形の向き）
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox!;
+  const span = [bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z];
+  let nAxis = 0;
+  for (let i = 1; i < 3; i++) if (span[i] < span[nAxis]) nAxis = i;
+  const planar = [0, 1, 2].filter((i) => i !== nAxis);
+  const idx = geo.index;
+  const i0 = idx ? idx.getX(0) : 0;
+  const i1 = idx ? idx.getX(1) : 1;
+  const i2 = idx ? idx.getX(2) : 2;
+  const comp = (a: THREE.BufferAttribute, i: number, axis: number) =>
+    axis === 0 ? a.getX(i) : axis === 1 ? a.getY(i) : a.getZ(i);
+  const pe1 = [
+    comp(pos, i1, planar[0]) - comp(pos, i0, planar[0]),
+    comp(pos, i1, planar[1]) - comp(pos, i0, planar[1]),
+  ];
+  const pe2 = [
+    comp(pos, i2, planar[0]) - comp(pos, i0, planar[0]),
+    comp(pos, i2, planar[1]) - comp(pos, i0, planar[1]),
+  ];
+  const posCross = pe1[0] * pe2[1] - pe1[1] * pe2[0];
+  const ue1 = [uv.getX(i1) - uv.getX(i0), uv.getY(i1) - uv.getY(i0)];
+  const ue2 = [uv.getX(i2) - uv.getX(i0), uv.getY(i2) - uv.getY(i0)];
+  const uvCross = ue1[0] * ue2[1] - ue1[1] * ue2[0];
+  const mirrored =
+    Math.abs(posCross) > 1e-9 &&
+    Math.abs(uvCross) > 1e-9 &&
+    posCross * uvCross < 0;
+  return { mirrored, uMin, uMax };
 }
 
 /** lens(mm 相当・35mm 換算) → 垂直 fov(度)。sensor 36mm 基準。 */
@@ -149,6 +243,12 @@ export class Book3DRenderer {
   private materials = new Map<string, THREE.MeshStandardMaterial | THREE.MeshBasicMaterial>();
   /** slot ごとに割り当てたテクスチャ（dispose 管理）。 */
   private assigned = new Map<string, THREE.Texture>();
+  /** slot(マテリアル名) → UV が鏡像か（水平反転が要るか）。collectMaterials で判定。 */
+  private materialFlipU = new Map<string, boolean>();
+  /** slot → 反転オフセット(= uMin+uMax)。UV範囲がフル[0,1]でない本でも端がズレないように。 */
+  private materialFlipOffset = new Map<string, number>();
+  /** slot → glb 既定の元テクスチャ（差し替え前）。空 layout のとき復元するために保持。 */
+  private originalMap = new Map<string, THREE.Texture | null>();
   /** めくり用フラットページの node（名前 flipper_L / flipper_R）。 */
   private flipperNodes = new Map<string, THREE.Object3D>();
   /** flipper メッシュの曲げ用情報（元頂点・ヒンジ→外端軸・法線軸を bbox から自動検出）。 */
@@ -271,6 +371,7 @@ export class Book3DRenderer {
           dCenter,
           nFlat,
           node: o,
+          origNodePos: o.position.clone(),
           spineKey,
           turnSign,
           isFlipper,
@@ -291,8 +392,10 @@ export class Book3DRenderer {
     const pos = geo.getAttribute("position") as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
     const wave = Math.sin(Math.PI * p);
-    const curlMax = (55 * Math.PI) / 180 * wave; // B
-    const twistMax = (28 * Math.PI) / 180 * wave; // C
+    // めくり途中の見た目を自然に: ねじりは撤去(0°)、カールは弱め(18°)。
+    // 過剰なカール/ねじりは平行四辺形状の歪み（ズレ）に見えるため。
+    const curlMax = (18 * Math.PI) / 180 * wave; // B（弱いカール）
+    const twistMax = (0 * Math.PI) / 180 * wave; // C（ねじり無し）
     const { uAxis, nAxis, dAxis, hinge, uLen, dCenter, nFlat } = fm;
     for (let i = 0; i < arr.length; i += 3) {
       // ヒンジ/中心を原点にしたローカル座標
@@ -336,16 +439,33 @@ export class Book3DRenderer {
   }
 
   /**
+   * メッシュを「常に最前面」に描く/戻す。めくる紙が他ページの下に潜らないように、
+   * depthTest を切って renderOrder を上げる（位置は動かさない＝隣ページに干渉しない）。
+   */
+  private setMeshOnTop(mesh: THREE.Mesh, onTop: boolean): void {
+    mesh.renderOrder = onTop ? 10 : 0;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const mat = m as THREE.Material | undefined;
+      if (!mat) continue;
+      mat.depthTest = !onTop;
+      mat.depthWrite = !onTop;
+    }
+  }
+
+  /**
    * めくり駆動（ティア2・剛体回転版）。bookFlip の窓 [atSec, atSec+dur] で flipper を
    * 背(X=0)ヒンジの Z 軸回転（+X→+Y→−X）でめくる。窓外は flipper を隠す（静止見開きだけ）。
    * 円筒曲げは後段で追加（まずは確実に動く剛体回転）。
    * page が偶数=右ページ(flipper_R)を左へ、奇数=左ページ(flipper_L)を右へ、と解釈。
    */
   applyFlip(flips: BookFlipKeyframe[] | undefined, t: number): void {
-    // 既定（リセット）: 各ページを静止（回転0・変形解除）。flipper は隠す／本体 Page は表示。
+    // 既定（リセット）: 各ページを静止（回転0・変形解除・位置を初期に戻す・最前面化を解除）。
     for (const fm of this.flipperMeshes) {
       this.restoreFlipper(fm);
       fm.node.rotation[fm.spineKey] = 0;
+      fm.node.position.copy(fm.origNodePos);
+      this.setMeshOnTop(fm.mesh, false);
       fm.node.visible = !fm.isFlipper;
     }
     if (!flips || flips.length === 0) return;
@@ -355,9 +475,12 @@ export class Book3DRenderer {
     for (const f of flips) {
       const fm = pages[f.page];
       if (!fm) continue;
-      const dur = Math.max(0.05, f.durationSec ?? 0.8);
-      if (t < f.atSec) continue; // まだめくっていない＝静止のまま
+      // めくる紙は「束の一番上の1枚」＝位置は動かさず、常に最前面に描く（depthTest off + 高renderOrder）。
+      // これで回転中も倒れた後も他ページの上に重なる（下に潜らない・隣に干渉しない・pop-up もしない）。
+      this.setMeshOnTop(fm.mesh, true);
       fm.node.visible = true;
+      const dur = Math.max(0.05, f.durationSec ?? 0.8);
+      if (t < f.atSec) continue; // まだめくっていない＝右で静止（ただし一番上）
       if (t >= f.atSec + dur) {
         // めくり完了＝反対側で固定（変形なし）
         fm.node.rotation[fm.spineKey] = fm.turnSign * Math.PI;
@@ -377,15 +500,34 @@ export class Book3DRenderer {
     obj.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
+      // このメッシュの UV 解析（鏡像か＋U範囲）。見開きの左右でUVの向き/範囲が違う本に対応。
+      const uvInfo = analyzeMeshUv(mesh.geometry as THREE.BufferGeometry);
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const m of mats) {
         const mm = m as THREE.MeshStandardMaterial;
         if (mm && mm.name) {
           mm.side = THREE.DoubleSide;
           this.materials.set(mm.name, mm);
+          if (!this.materialFlipU.has(mm.name)) {
+            this.materialFlipU.set(mm.name, uvInfo.mirrored);
+            this.materialFlipOffset.set(mm.name, uvInfo.uMin + uvInfo.uMax);
+          }
+          if (!this.originalMap.has(mm.name))
+            this.originalMap.set(mm.name, mm.map ?? null);
         }
       }
     });
+  }
+
+  /** slot のUV向きに合わせてテクスチャの水平反転を設定（flipY は applyPageUvOrientation で済）。 */
+  private orientForSlot(tex: THREE.Texture, slot: string): void {
+    const flipU = this.materialFlipU.get(slot) ?? false;
+    // ClampToEdge: 反転時に端で巻き込まずクランプ。
+    tex.wrapS = THREE.ClampToEdgeWrapping;
+    tex.repeat.x = flipU ? -1 : 1;
+    // 反転オフセットは UV 範囲から正確に（offset=uMin+uMax）。フル[0,1]でない本でも端がズレない。
+    tex.offset.x = flipU ? this.materialFlipOffset.get(slot) ?? 1 : 0;
+    tex.needsUpdate = true;
   }
 
   /**
@@ -475,12 +617,58 @@ export class Book3DRenderer {
     }
   }
 
+  /** slot の glb 既定（焼き込み）テクスチャ画像を data URL で取り出す。無ければ null。
+   *  「焼き込み画像を編集可能な画像レイヤーとして取り込む」用。向きは生画像のまま（合成時に
+   *  orientForSlot で元の焼き込みと同じ向きに揃う）。 */
+  extractSlotImageURL(slot: string): string | null {
+    const tex = this.originalMap.get(slot) ?? this.materials.get(slot)?.map;
+    const img = (tex as THREE.Texture | null | undefined)?.image as
+      | CanvasImageSource
+      | undefined;
+    if (!img) return null;
+    const iw = (img as { width?: number }).width || 1024;
+    const ih = (img as { height?: number }).height || 1448;
+    try {
+      const cv = document.createElement("canvas");
+      cv.width = iw;
+      cv.height = ih;
+      const cx = cv.getContext("2d");
+      if (!cx) return null;
+      cx.drawImage(img, 0, 0, iw, ih);
+      return cv.toDataURL("image/jpeg", 0.9);
+    } catch (e) {
+      console.warn("[book3d] 焼き込み画像の取り出し失敗", slot, e);
+      return null;
+    }
+  }
+
+  /** この glb に実在する差し替え可能スロット名（マテリアル名）。ページ/表紙系を優先的に返す。 */
+  slotNames(): string[] {
+    const all = [...this.materials.keys()];
+    const pageLike = all.filter((n) => /page|cover|spine/i.test(n));
+    return (pageLike.length > 0 ? pageLike : all).sort();
+  }
+
+  /** slot を glb 既定（埋め込み）テクスチャに戻す。空 layout ページのとき呼ぶ（白紙で上書きしない）。 */
+  restoreSlot(slot: string): void {
+    const mat = this.materials.get(slot);
+    if (!mat) return;
+    const prev = this.assigned.get(slot);
+    if (prev) {
+      prev.dispose();
+      this.assigned.delete(slot);
+    }
+    mat.map = this.originalMap.get(slot) ?? null;
+    mat.needsUpdate = true;
+  }
+
   /** slot のマテリアルにテクスチャ源を割り当てる（image URL / canvas / ImageBitmap 何でも可）。 */
   async setSlotTexture(slot: string, source: TexSource): Promise<void> {
     const mat = this.materials.get(slot);
     if (!mat) return;
     const tex = await this.makeTexture(source);
     if (!tex) return;
+    this.orientForSlot(tex, slot); // slot ごとの水平反転（鏡像UV対応）
     const prev = this.assigned.get(slot);
     if (prev) prev.dispose();
     this.assigned.set(slot, tex);
@@ -498,7 +686,7 @@ export class Book3DRenderer {
     resolveUrl?: (p: string) => string,
   ): Promise<void> {
     if (!pages) return;
-    for (const pg of pages) {
+    for (const pg of dedupePagesBySlot(pages)) {
       if (!this.materials.has(pg.slot)) continue;
       if (pg.kind === "text") {
         const tex = makeTextTexture(pg.text, {
@@ -507,6 +695,7 @@ export class Book3DRenderer {
           color: pg.color,
           align: pg.align,
         });
+        this.orientForSlot(tex, pg.slot); // slot ごとの水平反転（鏡像UV対応）
         const prev = this.assigned.get(pg.slot);
         if (prev) prev.dispose();
         this.assigned.set(pg.slot, tex);
@@ -548,6 +737,9 @@ export class Book3DRenderer {
       });
     }
     this.materials.clear();
+    this.materialFlipU.clear();
+    this.materialFlipOffset.clear();
+    this.originalMap.clear();
     this.flipperNodes.clear();
     this.flipperMeshes = [];
   }

@@ -7,6 +7,8 @@ import { TemplateTimeline } from "./TemplateTimeline";
 import { LayerPanel } from "./LayerPanel";
 import { AssetLibraryPanel } from "./AssetLibraryPanel";
 import { LayerPropertyPanel } from "./LayerPropertyPanel";
+import { PageLayoutEditor } from "./PageLayoutEditor";
+import { bookSlotExtractors } from "../lib/book3dRender";
 import { LayerPreview } from "./LayerPreview";
 import { ExportModal } from "./ExportModal";
 import { ImportCommentsModal } from "./ImportCommentsModal";
@@ -113,6 +115,11 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   // タイムライン等の毎フレーム再描画（重いテンプレでカクつく原因）を減らす。
   const playheadRef = useRef(0);
   const [selectedLayerIds, setSelectedLayerIds] = useState<string[]>([]);
+  // book3d ページのドラッグ編集モーダル（最上位で管理＝選択/タブに依存しない）
+  const [pageEdit, setPageEdit] = useState<{
+    layerId: string;
+    pageIndex: number;
+  } | null>(null);
   // プライマリ選択（最後に選んだもの。PropertyPanel 等の単一参照用）
   const selectedLayerId =
     selectedLayerIds[selectedLayerIds.length - 1] ?? null;
@@ -386,6 +393,53 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   const setLayers = (layers: Layer[]) => {
     setTemplate((t) => ({ ...t, layers }));
   };
+
+  // book3d のページ編集モーダルを開く要求（canvas ダブルクリック / パネルの「✎ドラッグ編集」）。
+  // 最上位で受けるので、選択状態やプロパティのタブに依存せず確実に開ける。
+  useEffect(() => {
+    const onReq = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { layerId?: string; side?: "left" | "right"; slot?: string }
+        | undefined;
+      const lyr = template.layers.find((l) => l.id === detail?.layerId);
+      if (!lyr || lyr.type !== "book3d") return;
+      // slot 明示があればそれを、無ければ左右で見開きページ（左=page 1-2 / 右=page 3-4）
+      const slot = detail?.slot ?? (detail?.side === "right" ? "page 3-4" : "page 1-2");
+      const pgs = lyr.pages ?? [];
+      let i = pgs.findIndex((p) => p.kind === "layout" && p.slot === slot);
+      if (i < 0) {
+        // 焼き込み(glb既定)画像があれば、それを「全面の編集可能な画像レイヤー」として種まきする
+        // （= 既定画像が最初から動かせる/差し替えられるレイヤーになる）。
+        const bakedUrl = bookSlotExtractors.get(lyr.id)?.(slot) ?? null;
+        const seed: Layer[] = bakedUrl
+          ? [
+              {
+                // 端まで確実に覆うよう少しオーバースキャン（cover で外周をわずかに食む）。
+                // ページUVがほぼフル[0,1]なので、これで端の余白（紙地の覗き）を消す。
+                ...makeLayer(
+                  { type: "image", x: -3, y: -3, width: 106, height: 106 },
+                  0,
+                ),
+                source: bakedUrl,
+              },
+            ]
+          : [];
+        const newPage = {
+          slot,
+          kind: "layout" as const,
+          width: 1024,
+          height: 1448,
+          layers: seed,
+        };
+        updateLayer(lyr.id, { pages: [...pgs, newPage] });
+        i = pgs.length;
+      }
+      setSelectedLayerIds([lyr.id]);
+      setPageEdit({ layerId: lyr.id, pageIndex: i });
+    };
+    window.addEventListener("book3d-edit-request", onReq);
+    return () => window.removeEventListener("book3d-edit-request", onReq);
+  }, [template.layers]);
 
   /** 素材ライブラリの 1 アイテムをタイムライン（プレイヘッド位置）にレイヤーとして追加する */
   const addAssetAsLayer = async (asset: {
@@ -1019,6 +1073,9 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
+      // book3d ページ編集モーダルが開いている間は、メインのショートカット（削除/コピー等）を
+      // 一切無効化する。さもないと選択中の本(book3d)レイヤーを Backspace で消してしまう。
+      if (document.querySelector("[data-page-layout-editor]")) return;
       // 入力系にフォーカス中はスキップ
       if (
         target &&
@@ -1925,6 +1982,30 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
           </div>
         </div>
       )}
+      {/* book3d ページのドラッグ編集モーダル（最上位・選択/タブ非依存） */}
+      {pageEdit &&
+        (() => {
+          const lyr = template.layers.find((l) => l.id === pageEdit.layerId);
+          const pg = lyr?.pages?.[pageEdit.pageIndex];
+          if (!lyr || !pg || pg.kind !== "layout") return null;
+          return (
+            <PageLayoutEditor
+              slot={pg.slot}
+              width={pg.width}
+              height={pg.height}
+              layers={pg.layers}
+              onChange={(nl) => {
+                const pages = (lyr.pages ?? []).map((p, idx) =>
+                  idx === pageEdit.pageIndex && p.kind === "layout"
+                    ? { ...p, layers: nl }
+                    : p,
+                );
+                updateLayer(lyr.id, { pages });
+              }}
+              onClose={() => setPageEdit(null)}
+            />
+          );
+        })()}
     </div>
   );
 }

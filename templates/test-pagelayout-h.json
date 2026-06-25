@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "id": "test-pagelayout-h",
+  "name": "★テスト: 3D本 見える見開き（左=2ページ目 / 右=3ページ目）",
+  "note": "見える左右2面だけ。左ページ(2)=center.png / 右ページ(3)=m_emi2.png。どちらも layout(全面画像)でドラッグ編集可。内側の見えないページには何も置かない。",
+  "createdAt": "2026-06-25T00:00:00.000Z",
+  "totalDuration": 5,
+  "aspect": "horizontal",
+  "layers": [
+    {
+      "id": "bg",
+      "type": "color",
+      "fillColor": "#15181f",
+      "x": 0,
+      "y": 0,
+      "width": 100,
+      "height": 100,
+      "zIndex": 0,
+      "startSec": 0,
+      "endSec": 5
+    },
+    {
+      "id": "book",
+      "type": "book3d",
+      "gltfPath": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\rezero_book_open_clean.glb",
+      "bookCamera": {
+        "yaw": -90,
+        "pitch": -49,
+        "distance": 5.300000000000003,
+        "targetY": 0,
+        "lens": 56
+      },
+      "pages": [
+        {
+          "slot": "page 1-2",
+          "kind": "layout",
+          "width": 1024,
+          "height": 1448,
+          "layers": [
+            {
+              "id": "L_img",
+              "type": "image",
+              "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\center.png",
+              "x": -3,
+              "y": -3,
+              "width": 106,
+              "height": 106,
+              "zIndex": 1,
+              "startSec": 0,
+              "endSec": 5
+            }
+          ]
+        },
+        {
+          "slot": "page 3-4",
+          "kind": "layout",
+          "width": 1024,
+          "height": 1448,
+          "layers": [
+            {
+              "id": "R_img",
+              "type": "image",
+              "source": "C:\\Users\\user1\\nobutaka\\moviegenerate\\anime\\videos\\rezero_001\\_search\\m_emi2.png",
+              "x": -3,
+              "y": -3,
+              "width": 106,
+              "height": 106,
+              "zIndex": 1,
+              "startSec": 0,
+              "endSec": 5
+            }
+          ]
+        }
+      ],
+      "x": 10.000000000000002,
+      "y": 8,
+      "width": 84.18781725888324,
+      "height": 88.96613995485328,
+      "zIndex": 2,
+      "startSec": 0,
+      "endSec": 5
+    }
+  ]
+}

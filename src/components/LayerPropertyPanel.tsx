@@ -23,6 +23,7 @@ import {
 } from "../lib/providers/tts";
 import { loadSettings } from "../lib/storage";
 import { makeLayer } from "../lib/layerUtils";
+import { bookSlotNames } from "../lib/book3dRender";
 import { isMarkerShape } from "../lib/markerShape";
 import { ICON_NAMES, iconExists } from "../lib/icons";
 import { detectBeats, buildScalePulseKeyframes } from "../lib/beatDetect";
@@ -570,6 +571,13 @@ export function LayerPropertyPanel({
     [],
   );
   const [activeTab, setActiveTab] = useState<PropTab>("basic");
+  // book3d の実在スロット名が glb ロード後に確定したら再描画（スロット候補を実在名に更新）
+  const [, bumpSlots] = useState(0);
+  useEffect(() => {
+    const f = () => bumpSlots((v) => v + 1);
+    window.addEventListener("book3d-slots-ready", f);
+    return () => window.removeEventListener("book3d-slots-ready", f);
+  }, []);
   // ナレーション生成で使う TTS プロバイダ / 声の選択（設定からデフォルト読込）
   const [narrProvider, setNarrProvider] = useState<string>("voicevox");
   const [narrVoice, setNarrVoice] = useState<string>("3");
@@ -2627,17 +2635,43 @@ export function LayerPropertyPanel({
               onChange({ bookCamera: { ...cam, ...patch } });
             const pages = primary.pages ?? [];
             const setPages = (next: typeof pages) => onChange({ pages: next });
-            const KNOWN_SLOTS = [
-              "page_L_0",
-              "page_R_0",
-              "page_L_1",
-              "page_R_1",
-              "page_L_2",
-              "page_R_2",
-              "cover_front",
-              "cover_back",
-              "spine",
+            // この本は「紙を1枚めくって開いた状態」で固定。実際に見えるのは左右2面だけ。
+            // glb の全マテリアル(24個)は出さず、ページ番号が小さい先頭2つ＝左/右の見える面に絞る。
+            const realSlots = bookSlotNames.get(primary.id) ?? [];
+            const pageSlots = realSlots
+              .filter((s) => /page/i.test(s))
+              .sort(
+                (a, b) =>
+                  (parseInt(a.match(/\d+/)?.[0] ?? "0", 10) || 0) -
+                  (parseInt(b.match(/\d+/)?.[0] ?? "0", 10) || 0),
+              );
+            // 見えてる実ページ番号でラベルを作る（glbのマテリアル名は出さない）。
+            // 左の紙(例 page 1-2)は裏=偶数ページが上を向く→2 / 右の紙(page 3-4)は表=奇数→3。
+            const leftSlot = pageSlots[0] ?? "page 1-2";
+            const rightSlot = pageSlots[1] ?? "page 3-4";
+            const numsOf = (s: string) =>
+              (s.match(/\d+/g) ?? []).map((n) => parseInt(n, 10));
+            const leftNums = numsOf(leftSlot);
+            const rightNums = numsOf(rightSlot);
+            const leftPageNo = leftNums[1] ?? leftNums[0] ?? 2; // 左=見えてる偶数ページ
+            const rightPageNo = rightNums[0] ?? 3; // 右=見えてる奇数ページ
+            const VISIBLE: { slot: string; label: string }[] = [
+              { slot: leftSlot, label: `左ページ（${leftPageNo}ページ目）` },
+              { slot: rightSlot, label: `右ページ（${rightPageNo}ページ目）` },
             ];
+            const findPage = (slot: string) =>
+              pages.find((p) => p.slot === slot);
+            // slot の中身を差し替え（無ければ追加 / null で削除）。内側の見えないページは触らない。
+            const commitPage = (
+              slot: string,
+              page: (typeof pages)[number] | null,
+            ) => {
+              const idx = pages.findIndex((p) => p.slot === slot);
+              if (!page) setPages(pages.filter((p) => p.slot !== slot));
+              else if (idx >= 0)
+                setPages(pages.map((p, i) => (i === idx ? page : p)));
+              else setPages([...pages, page]);
+            };
             const pickGlb = async () => {
               const sel = await openDialog({
                 multiple: false,
@@ -2645,7 +2679,7 @@ export function LayerPropertyPanel({
               });
               if (typeof sel === "string") onChange({ gltfPath: sel });
             };
-            const pickImage = async (idx: number) => {
+            const pickImage = async (slot: string) => {
               const sel = await openDialog({
                 multiple: false,
                 filters: [
@@ -2656,9 +2690,7 @@ export function LayerPropertyPanel({
                 ],
               });
               if (typeof sel !== "string") return;
-              const next = [...pages];
-              next[idx] = { slot: next[idx].slot, kind: "image", src: sel };
-              setPages(next);
+              commitPage(slot, { slot, kind: "image", src: sel });
             };
             return (
               <div className="flex flex-col gap-2">
@@ -2693,78 +2725,86 @@ export function LayerPropertyPanel({
                 {sliderInput("距離", cam.distance, (v) => setCam({ distance: v }), 0.5, 12, 0.1)}
                 {sliderInput("レンズ", cam.lens ?? 36, (v) => setCam({ lens: v }), 16, 120, 1, "mm")}
 
-                {/* ページ割当 */}
-                <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
-                  <span>ページ中身（slot ごと差し替え）</span>
-                  <button
-                    onClick={() => {
-                      const used = new Set(pages.map((p) => p.slot));
-                      const slot =
-                        KNOWN_SLOTS.find((s) => !used.has(s)) ?? "page_L_0";
-                      setPages([...pages, { slot, kind: "image", src: "" }]);
-                    }}
-                    className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700"
-                  >
-                    ＋追加
-                  </button>
+                {/* ページ中身（見える見開きの左右2面だけ） */}
+                <div className="text-[10px] text-gray-500 mt-1">
+                  ページ中身（見える見開きの2面だけ）
                 </div>
-                {pages.map((pg, idx) => (
+                {VISIBLE.map(({ slot, label }) => {
+                  // その slot の中身。まだ無ければ空レイアウト（貼る/書く両対応）を仮表示。
+                  const pg =
+                    findPage(slot) ??
+                    ({
+                      slot,
+                      kind: "layout",
+                      width: 1024,
+                      height: 1448,
+                      layers: [],
+                    } as (typeof pages)[number]);
+                  return (
                   <div
-                    key={idx}
+                    key={slot}
                     className="flex flex-col gap-1 p-1 rounded border border-gray-200 dark:border-gray-700"
                   >
                     <div className="flex items-center gap-1 text-[10px]">
-                      <select
-                        value={pg.slot}
-                        onChange={(e) => {
-                          const next = [...pages];
-                          next[idx] = { ...next[idx], slot: e.target.value };
-                          setPages(next);
-                        }}
-                        className="flex-1 px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
-                      >
-                        {KNOWN_SLOTS.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                        {!KNOWN_SLOTS.includes(pg.slot) && (
-                          <option value={pg.slot}>{pg.slot}</option>
-                        )}
-                      </select>
+                      <span className="font-bold text-gray-700 dark:text-gray-200">
+                        {label}
+                      </span>
                       <select
                         value={pg.kind}
                         onChange={(e) => {
-                          const next = [...pages];
                           const v = e.target.value;
-                          next[idx] =
-                            v === "text"
-                              ? { slot: pg.slot, kind: "text", text: "" }
-                              : v === "layout"
-                                ? {
-                                    slot: pg.slot,
-                                    kind: "layout",
-                                    width: 1024,
-                                    height: 1448,
-                                    layers: [],
-                                  }
-                                : { slot: pg.slot, kind: "image", src: "" };
-                          setPages(next);
+                          // 種別を変えても中身を引き継ぐ（画像↔レイアウト↔テキストで消えないように）。
+                          const curImg =
+                            pg.kind === "image"
+                              ? pg.src
+                              : pg.kind === "layout"
+                                ? pg.layers?.find((l) => l.type === "image")
+                                    ?.source ?? ""
+                                : "";
+                          const curTxt =
+                            pg.kind === "text"
+                              ? pg.text
+                              : pg.kind === "layout"
+                                ? pg.layers?.find((l) => l.type === "comment")
+                                    ?.text ?? ""
+                                : "";
+                          if (v === "image") {
+                            commitPage(slot, { slot, kind: "image", src: curImg });
+                          } else if (v === "text") {
+                            commitPage(slot, { slot, kind: "text", text: curTxt });
+                          } else {
+                            const seed: Layer[] = [];
+                            if (curImg)
+                              seed.push({
+                                ...makeLayer(
+                                  { type: "image", x: -3, y: -3, width: 106, height: 106 },
+                                  0,
+                                ),
+                                source: curImg,
+                              });
+                            if (curTxt)
+                              seed.push({
+                                ...makeLayer(
+                                  { type: "comment", x: 10, y: 42, width: 80, height: 16 },
+                                  seed.length,
+                                ),
+                                text: curTxt,
+                              });
+                            commitPage(slot, {
+                              slot,
+                              kind: "layout",
+                              width: 1024,
+                              height: 1448,
+                              layers: seed,
+                            });
+                          }
                         }}
-                        className="px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                        className="ml-auto px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                       >
                         <option value="image">画像</option>
                         <option value="text">テキスト</option>
                         <option value="layout">レイアウト</option>
                       </select>
-                      <button
-                        onClick={() =>
-                          setPages(pages.filter((_, i) => i !== idx))
-                        }
-                        className="px-1.5 py-0.5 rounded bg-red-500 text-white"
-                      >
-                        ×
-                      </button>
                     </div>
                     {pg.kind === "image" ? (
                       <div className="flex items-center gap-1 text-[10px]">
@@ -2772,7 +2812,7 @@ export function LayerPropertyPanel({
                           {pg.src ? pg.src.split(/[\\/]/).pop() : "（画像未選択）"}
                         </span>
                         <button
-                          onClick={() => pickImage(idx)}
+                          onClick={() => pickImage(slot)}
                           className="px-2 py-0.5 rounded bg-blue-600 text-white whitespace-nowrap"
                         >
                           画像選択
@@ -2782,27 +2822,30 @@ export function LayerPropertyPanel({
                       <textarea
                         value={pg.text}
                         placeholder="ページに表示する文字"
-                        onChange={(e) => {
-                          const next = [...pages];
-                          const cur = next[idx];
-                          next[idx] =
-                            cur.kind === "text"
-                              ? { ...cur, text: e.target.value }
-                              : { slot: cur.slot, kind: "text", text: e.target.value };
-                          setPages(next);
-                        }}
+                        onChange={(e) =>
+                          commitPage(slot, {
+                            slot,
+                            kind: "text",
+                            text: e.target.value,
+                          })
+                        }
                         rows={2}
                         className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 resize-none"
                       />
                     ) : (
                       (() => {
                         // ページ内（入れ子）レイヤーのフォーム式編集。位置/サイズは%（ページ座標基準）。
-                        const plLayers = pg.layers ?? [];
-                        const setPL = (nl: Layer[]) => {
-                          const next = [...pages];
-                          next[idx] = { ...pg, kind: "layout", layers: nl };
-                          setPages(next);
-                        };
+                        const plLayers = pg.kind === "layout" ? pg.layers ?? [] : [];
+                        const pw = pg.kind === "layout" ? pg.width : 1024;
+                        const ph = pg.kind === "layout" ? pg.height : 1448;
+                        const setPL = (nl: Layer[]) =>
+                          commitPage(slot, {
+                            slot,
+                            kind: "layout",
+                            width: pw,
+                            height: ph,
+                            layers: nl,
+                          });
                         const updatePL = (i: number, patch: Partial<Layer>) =>
                           setPL(
                             plLayers.map((l, j) =>
@@ -2853,8 +2896,21 @@ export function LayerPropertyPanel({
                                 レイアウト {pg.width}×{pg.height}
                               </span>
                               <button
+                                onClick={() =>
+                                  primary &&
+                                  window.dispatchEvent(
+                                    new CustomEvent("book3d-edit-request", {
+                                      detail: { layerId: primary.id, slot: pg.slot },
+                                    }),
+                                  )
+                                }
+                                className="ml-auto px-1.5 py-0.5 rounded bg-emerald-600 text-white"
+                              >
+                                ✎ ドラッグ編集
+                              </button>
+                              <button
                                 onClick={() => addPL("image")}
-                                className="ml-auto px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700"
+                                className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700"
                               >
                                 ＋画像
                               </button>
@@ -2932,9 +2988,11 @@ export function LayerPropertyPanel({
                       })()
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 <div className="text-[9px] text-gray-400">
-                  ※ 書き出しは後段（現状は編集プレビュー表示まで）。flipper（めくり）も後段。
+                  ※ 内側のページ（5-6 以降）はこの本の姿勢では見えないので隠しています。
+                  めくり・動画書き出しは後段。
                 </div>
               </div>
             );

@@ -6,6 +6,11 @@ import {
   getCompositionCanvasDimensions,
   renderLayersOnContext,
 } from "../lib/layerComposer";
+import {
+  bookSlotExtractors,
+  bookSlotNames,
+  dedupePagesBySlot,
+} from "../lib/book3dRender";
 
 /** ページ内（入れ子）レイヤーの素材パス解決。絶対パス→asset URL。 */
 async function resolvePageSrc(l: Layer): Promise<string | null> {
@@ -75,9 +80,15 @@ export function Book3DLayerContent({
   // kind:"layout" ページ＝入れ子レイヤー群を (width,height) の小キャンバスに合成して
   // テクスチャ化（renderLayersOnContext を再利用）。レンダラには canvas を渡すだけ。
   const composeLayoutPages = async (r: Book3DRenderer): Promise<void> => {
-    const pages = layerRef.current.pages ?? [];
+    // 重複 slot は先頭優先で正規化（編集が findIndex で開く先頭ページと描画を一致させる）。
+    const pages = dedupePagesBySlot(layerRef.current.pages);
     for (const pg of pages) {
       if (pg.kind !== "layout") continue;
+      // 空の layout は合成しない＝glb 既定テクスチャを維持/復元（白紙で上書きしない）。
+      if (!pg.layers || pg.layers.length === 0) {
+        r.restoreSlot(pg.slot);
+        continue;
+      }
       const w = Math.min(4096, Math.max(2, Math.round(pg.width || 1024)));
       const h = Math.min(4096, Math.max(2, Math.round(pg.height || 1448)));
       const cv = new OffscreenCanvas(w, h);
@@ -146,6 +157,13 @@ export function Book3DLayerContent({
         renderer.applyFlip(layer.bookFlip, currentTimeSec);
         renderer.renderFrame();
         rendererRef.current = renderer;
+        // 焼き込み画像を「編集可能な画像レイヤー」として取り込めるよう、抽出関数を登録。
+        bookSlotExtractors.set(layer.id, (slot) =>
+          renderer.extractSlotImageURL(slot),
+        );
+        // この glb の実在スロット名を登録 → スロット選択 UI が実在名だけを出せる。
+        bookSlotNames.set(layer.id, renderer.slotNames());
+        window.dispatchEvent(new Event("book3d-slots-ready"));
         notifyFrame(); // ロード完了→合成Canvasを撮り直してもらう
       } catch (e) {
         if (!cancelled) {
@@ -158,6 +176,8 @@ export function Book3DLayerContent({
 
     return () => {
       cancelled = true;
+      bookSlotExtractors.delete(layer.id);
+      bookSlotNames.delete(layer.id);
       renderer.dispose();
       if (rendererRef.current === renderer) rendererRef.current = null;
     };
