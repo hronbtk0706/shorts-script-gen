@@ -59,10 +59,16 @@
   「左の表紙が大きい」のは glb 由来でコード変更とは無関係。`fix_cover_overhang.py` は flip 位置ズレとは別問題。
 
 ## 別マシンで動かすための必須事項
+0. **初回セットアップ**: `npm install`（playwright を含む devDep を取得）→ **`npx playwright install chromium`**
+   （検証ツール用の Chromium ≈110MB を DL。これが無いと headless_shoot.mjs が動かない）。
 1. **glb は別ディレクトリ `moviegenerate/anime/videos/rezero_001/rezero_book_open_clean.glb`＝このリポジトリ外。push に含まれない。**
    - 表紙はみ出し修正は **その glb を直接編集**したもの。家のマシンの glb には反映されていない。
    - **再適用:** `python scripts/book3d/fix_cover_overhang.py <家のglbパス>` を実行（冪等・`.orig_bak` バックアップ作成）。
-2. **テストテンプレ(`templates/test-bookflip-h.json` 等)は絶対パス `C:\Users\user1\...` 参照。** 家のマシンの実パスに合わせて `gltfPath` と各レイヤー `source` を書き換える（または pack 経由）。
+   - **検証ツールには glb パスを明示で渡す**: `node scripts/book3d/headless_shoot.mjs <そのマシンのglb> <outDir> <t,...>`
+     （既定は `../curio-gen/...` を見るので、リポジトリと curio-gen/moviegenerate の相対位置が違うマシンでは必須）。
+2. **テストテンプレは絶対パス参照**: `templates/test-bookflip-h.json` は `C:\Users\user1\...`、
+   `templates/_test_bookflip_owner.json` は `C:\Users\Owner\branch\curio-gen\...`。家のマシンの実パスに合わせて
+   `gltfPath` と各レイヤー `source` を書き換える（または pack 経由）。**自分のマシン用のコピーを1つ作るのが楽**。
 3. ビルド運用は CLAUDE.md の通り（`npm run tauri build` → NSIS setup を `/S` 再インストールして AppData の exe まで反映）。
 
 ## 道具（このリポジトリに同梱）
@@ -76,7 +82,7 @@
   **注意: 「ページ＝平面」前提なので湾曲ページの実機とは食い違う（headless_shoot を正とする）。**
 
 ## 関連コード
-- `src/lib/book3dRender.ts` — Book3DRenderer（loadModel/collectFlippers/applyFlip/bendFlipper/setMeshOnTop/setSlotTexture/orientForSlot）。
+- `src/lib/book3dRender.ts` — Book3DRenderer（loadModel/collectFlippers/applyFlip/**deformFlipperTurn**/setMeshOnTop/setSlotTexture/orientForSlot）。めくりは applyFlip→deformFlipperTurn（連続モーフ）。
 - `src/components/Book3DLayerContent.tsx` — プレビュー描画（frameSource経路で前面合成へ）。
 - `src/components/LayerPropertyPanel.tsx` — 3D本セクション（左/右2面編集）。
 - `src/components/PageLayoutEditor.tsx` — ページ入れ子レイアウトのドラッグ編集モーダル。
