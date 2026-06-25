@@ -35,3 +35,6 @@ sessions/
 
 # KanjiVG ダウンロードキャッシュ（生成シャードは public/handwrite に同梱するので不要）
 scripts/.cache/
+
+# book3d ヘッドレス検証の一時 glb（public へ複製して配信・コミット不可）
+public/_book3d_headless.glb

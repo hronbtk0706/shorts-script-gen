@@ -382,40 +382,60 @@ export class Book3DRenderer {
   }
 
   /**
-   * flipper メッシュを page_turn_recipe.md の B(カール)+C(ねじり)で変形。p:0→1。
-   * - B カール: ページ全体を `55°·sin(πp)` で曲げる（ヒンジ固定・外端ほど大きく面内回転）。
-   * - C ねじり: ページ全体を `28°·sin(πp)` でねじる（u 軸まわりに外端ほど大きく）。
-   * A（ヒンジ反転 -90→+90）は呼び出し側 applyFlip の node.rotation で担当。
+   * めくりの連続変形（剛体回転＋最後に反射＝スナップ、をやめる）。
+   * 各頂点を **rest(右の静止形) → 反射(左の静止形=背平面 z=0 で z 反転＝湾曲 world x を保ったまま左へ)**
+   * へ world 空間で連続モーフし、world -x（手前=机から起き上がる向き）へ sin(πp) の弧で
+   * 持ち上げる（外端ほど高く）。さらに進行方向へ少しくぼませて（空気抵抗の concave）紙らしくする。
+   * p=1 では反射の静止形に一致するので、完了時のスナップが原理的に出ない。
+   * node は rest 変換のまま（変形は geometry に焼く）。
    */
-  private bendFlipper(fm: FlipperMesh, p: number): void {
+  private deformFlipperTurn(fm: FlipperMesh, p: number): void {
+    const node = fm.node;
+    // rest 変換（rotation0 / scale1 / origNodePos）で matrixWorld を確定。
+    node.rotation[fm.spineKey] = 0;
+    node.scale.set(1, 1, 1);
+    node.position.copy(fm.origNodePos);
+    node.updateWorldMatrix(true, false);
+    const Mrest = node.matrixWorld.clone();
+    // 反射版（背平面=node-local z=0 を world で反転）の matrixWorld。
+    node.scale.z = -1;
+    node.updateWorldMatrix(true, false);
+    const Mref = node.matrixWorld.clone();
+    // 焼き込みは rest 変換基準なので node を rest に戻す。
+    node.scale.set(1, 1, 1);
+    node.updateWorldMatrix(true, false);
+    const MrestInv = new THREE.Matrix4().copy(Mrest).invert();
+
     const geo = fm.mesh.geometry as THREE.BufferGeometry;
     const pos = geo.getAttribute("position") as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
+    const s = p * p * (3 - 2 * p); // 右→左モーフ（smoothstep）
     const wave = Math.sin(Math.PI * p);
-    // めくり途中の見た目を自然に: ねじりは撤去(0°)、カールは弱め(18°)。
-    // 過剰なカール/ねじりは平行四辺形状の歪み（ズレ）に見えるため。
-    const curlMax = (18 * Math.PI) / 180 * wave; // B（弱いカール）
-    const twistMax = (0 * Math.PI) / 180 * wave; // C（ねじり無し）
-    const { uAxis, nAxis, dAxis, hinge, uLen, dCenter, nFlat } = fm;
+    // 起き上がる「上」は world -x（カメラは -x 側から見る＝手前が -x）。+x は机の中＝下。
+    const liftAmt = 1.7 * wave; // -x（机から起き上がる）への弧の高さ
+    const dishAmt = 0.5 * wave; // 空気抵抗で中央が遅れてくぼむ量（+x=机側へ）
+    const o = new THREE.Vector3();
+    const wr = new THREE.Vector3();
+    const wref = new THREE.Vector3();
+    const w = new THREE.Vector3();
     for (let i = 0; i < arr.length; i += 3) {
-      // ヒンジ/中心を原点にしたローカル座標
-      const u0 = fm.orig[i + uAxis] - hinge;
-      const d0 = fm.orig[i + dAxis] - dCenter;
-      const n0 = fm.orig[i + nAxis] - nFlat;
-      const sN = u0 / uLen; // 符号付き 0..±1（左右対称に効かせる）
-      // B: カール（u-n 面で回す。外端ほど大きい角＝弓なり）
-      const a = curlMax * sN;
-      const ca = Math.cos(a), sa = Math.sin(a);
-      let u = u0 * ca - n0 * sa;
-      let n = u0 * sa + n0 * ca;
-      // C: ねじり（d-n 面で回す。外端ほど大きい角）
-      const b = twistMax * sN;
-      const cb = Math.cos(b), sb = Math.sin(b);
-      const d = d0 * cb - n * sb;
-      n = d0 * sb + n * cb;
-      arr[i + uAxis] = hinge + u;
-      arr[i + dAxis] = dCenter + d;
-      arr[i + nAxis] = nFlat + n;
+      o.set(fm.orig[i], fm.orig[i + 1], fm.orig[i + 2]);
+      wr.copy(o).applyMatrix4(Mrest); // rest world
+      wref.copy(o).applyMatrix4(Mref); // 反射 world
+      // 背(hinge)からの距離 0..1（外端ほど 1）。弧・くぼみのプロファイル。
+      const dist = Math.min(1, Math.abs(fm.orig[i + fm.uAxis] - fm.hinge) / (fm.uLen || 1));
+      // 持ち上げは外端ほど高い半円、くぼみは中央(dist=0.5)で最大の concave。
+      const lift = liftAmt * Math.sin((Math.PI / 2) * dist);
+      const dish = dishAmt * Math.sin(Math.PI * dist);
+      w.set(
+        wr.x + (wref.x - wr.x) * s - lift + dish,
+        wr.y + (wref.y - wr.y) * s,
+        wr.z + (wref.z - wr.z) * s,
+      );
+      w.applyMatrix4(MrestInv); // mesh ローカルへ戻す
+      arr[i] = w.x;
+      arr[i + 1] = w.y;
+      arr[i + 2] = w.z;
     }
     pos.needsUpdate = true;
     fm.bent = true;
@@ -465,6 +485,7 @@ export class Book3DRenderer {
       this.restoreFlipper(fm);
       fm.node.rotation[fm.spineKey] = 0;
       fm.node.position.copy(fm.origNodePos);
+      fm.node.scale.z = 1; // 完了時の背平面反射(scale.z=-1)を戻す
       this.setMeshOnTop(fm.mesh, false);
       fm.node.visible = !fm.isFlipper;
     }
@@ -481,16 +502,10 @@ export class Book3DRenderer {
       fm.node.visible = true;
       const dur = Math.max(0.05, f.durationSec ?? 0.8);
       if (t < f.atSec) continue; // まだめくっていない＝右で静止（ただし一番上）
-      if (t >= f.atSec + dur) {
-        // めくり完了＝反対側で固定（変形なし）
-        fm.node.rotation[fm.spineKey] = fm.turnSign * Math.PI;
-      } else {
-        // めくり中: A=ヒンジ反転(smoothstep)、B+C=カール＋ねじり（recipe）
-        const p = (t - f.atSec) / dur;
-        const e = p * p * (3 - 2 * p);
-        fm.node.rotation[fm.spineKey] = fm.turnSign * e * Math.PI;
-        this.bendFlipper(fm, p);
-      }
+      // めくり中も完了も「rest(右)→反射(左) への連続頂点モーフ＋持ち上げの弧＋空気抵抗くぼみ」で
+      // 動かす。p=1 が反射の静止形（検証済み）に一致するので、回転→反射の切替スナップが出ない。
+      const p = Math.min(1, (t - f.atSec) / dur);
+      this.deformFlipperTurn(fm, p);
       // break しない: 複数ページ（完了済み=固定 / めくり中 / 未めくり）を同時に正しく反映
     }
   }

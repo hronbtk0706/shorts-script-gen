@@ -41,6 +41,7 @@
     "@vitejs/plugin-react": "^4.6.0",
     "hersheytext": "^2.0.0",
     "lucide-static": "^1.17.0",
+    "playwright": "^1.61.1",
     "svg-path-properties": "^2.0.2",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.8.3",
