@@ -2,7 +2,18 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Layer } from "../types";
 import { Book3DRenderer } from "../lib/book3dRender";
-import { getCompositionCanvasDimensions } from "../lib/layerComposer";
+import {
+  getCompositionCanvasDimensions,
+  renderLayersOnContext,
+} from "../lib/layerComposer";
+
+/** ページ内（入れ子）レイヤーの素材パス解決。絶対パス→asset URL。 */
+async function resolvePageSrc(l: Layer): Promise<string | null> {
+  const s = l.source;
+  if (!s || s === "auto" || s === "user" || s === "") return null;
+  if (/^(https?:|data:|blob:)/.test(s)) return s;
+  return convertFileSrc(s);
+}
 
 /** 本を 1 frame 描いたら「合成Canvasを撮り直して」と TemplateCanvas に知らせるイベント名。 */
 export const BOOK3D_FRAME_EVENT = "book3d-frame";
@@ -61,6 +72,45 @@ export function Book3DLayerContent({
     };
   };
 
+  // kind:"layout" ページ＝入れ子レイヤー群を (width,height) の小キャンバスに合成して
+  // テクスチャ化（renderLayersOnContext を再利用）。レンダラには canvas を渡すだけ。
+  const composeLayoutPages = async (r: Book3DRenderer): Promise<void> => {
+    const pages = layerRef.current.pages ?? [];
+    for (const pg of pages) {
+      if (pg.kind !== "layout") continue;
+      const w = Math.min(4096, Math.max(2, Math.round(pg.width || 1024)));
+      const h = Math.min(4096, Math.max(2, Math.round(pg.height || 1448)));
+      const cv = new OffscreenCanvas(w, h);
+      const cx = cv.getContext("2d");
+      if (!cx) continue;
+      // ページ下地＝紙色（renderLayersOnContext は transparent:false で黒塗りになるため、
+      // 最背面に紙色のベタ色レイヤーを敷く＝暗い文字も読める「紙のページ」にする）。
+      const paperBg: Layer = {
+        id: "__page_paper__",
+        type: "color",
+        fillColor: "#f7f3ea",
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        zIndex: -100000,
+        startSec: 0,
+        endSec: 1e9,
+        opacity: 1,
+        rotation: 0,
+      };
+      await renderLayersOnContext(cx, [paperBg, ...(pg.layers ?? [])], resolvePageSrc, {
+        atTimeSec: currentTimeSec, // 案A: グローバル timeline 基準
+        applyAnim: true,
+        transparent: false,
+        compositionWidth: w, // ページ寸法で合成（finally で FINAL_W/H 復元）
+        compositionHeight: h,
+        hqSmoothing: !isPlaying,
+      });
+      await r.setSlotTexture(pg.slot, cv);
+    }
+  };
+
   // glb（or プレースホルダ）読込：gltfPath が変わるたびに作り直す
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -91,6 +141,7 @@ export function Book3DLayerContent({
           return;
         }
         await renderer.setPages(layer.pages, convertFileSrc);
+        await composeLayoutPages(renderer); // kind:layout のページを合成して反映
         if (layer.bookCamera) renderer.setCamera(layer.bookCamera);
         renderer.applyFlip(layer.bookFlip, currentTimeSec);
         renderer.renderFrame();
@@ -130,6 +181,7 @@ export function Book3DLayerContent({
     if (!r) return;
     (async () => {
       await r.setPages(layer.pages, convertFileSrc);
+      await composeLayoutPages(r); // kind:layout のページを合成して反映
       r.applyFlip(layer.bookFlip, currentTimeSec);
       r.renderFrame();
       if (!isPlaying) notifyFrame();

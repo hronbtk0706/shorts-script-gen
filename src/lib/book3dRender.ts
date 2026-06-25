@@ -55,6 +55,20 @@ interface FlipperMesh {
   bent: boolean;
 }
 
+/**
+ * 差し替えテクスチャを glTF ページUVの向きに合わせる。
+ * - flipY=false: glTF テクスチャは上原点（GLTFLoader 既定）。CanvasTexture/TextureLoader の
+ *   既定 flipY=true だと上下逆さまになるため false に。
+ * - 水平反転(repeat.x=-1): このページUVは U が反転しているため、正立画像をそのまま貼ると
+ *   左右鏡像になる。repeat/offset で U を反転して正す（上下＋左右＝180°補正）。
+ */
+function applyPageUvOrientation(tex: THREE.Texture): void {
+  tex.flipY = false;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.repeat.x = -1;
+  tex.offset.x = 1;
+}
+
 /** lens(mm 相当・35mm 換算) → 垂直 fov(度)。sensor 36mm 基準。 */
 function lensToFov(lens: number): number {
   const sensor = 36;
@@ -106,6 +120,7 @@ function makeTextTexture(
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
+  applyPageUvOrientation(tex); // glTF UV に合わせる（上下＋左右）
   return tex;
 }
 
@@ -121,6 +136,7 @@ function makePaperTexture(label: string): THREE.Texture {
   ctx.fillText(label, 128, 184);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
+  applyPageUvOrientation(tex); // glTF UV に合わせる（上下＋左右）
   return tex;
 }
 
@@ -440,6 +456,8 @@ export class Book3DRenderer {
       if (typeof source === "string") {
         const tex = await new THREE.TextureLoader().loadAsync(source);
         tex.colorSpace = THREE.SRGBColorSpace;
+        applyPageUvOrientation(tex);
+        tex.needsUpdate = true;
         return tex;
       }
       // ImageBitmap / Canvas は CanvasTexture/Texture でそのまま貼れる
@@ -448,6 +466,7 @@ export class Book3DRenderer {
           ? new THREE.Texture(source)
           : new THREE.CanvasTexture(source as HTMLCanvasElement | OffscreenCanvas);
       tex.colorSpace = THREE.SRGBColorSpace;
+      applyPageUvOrientation(tex);
       tex.needsUpdate = true;
       return tex;
     } catch (e) {

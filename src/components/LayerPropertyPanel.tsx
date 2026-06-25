@@ -22,6 +22,7 @@ import {
   SOFTALK_VOICES,
 } from "../lib/providers/tts";
 import { loadSettings } from "../lib/storage";
+import { makeLayer } from "../lib/layerUtils";
 import { isMarkerShape } from "../lib/markerShape";
 import { ICON_NAMES, iconExists } from "../lib/icons";
 import { detectBeats, buildScalePulseKeyframes } from "../lib/beatDetect";
@@ -2735,16 +2736,26 @@ export function LayerPropertyPanel({
                         value={pg.kind}
                         onChange={(e) => {
                           const next = [...pages];
+                          const v = e.target.value;
                           next[idx] =
-                            e.target.value === "text"
+                            v === "text"
                               ? { slot: pg.slot, kind: "text", text: "" }
-                              : { slot: pg.slot, kind: "image", src: "" };
+                              : v === "layout"
+                                ? {
+                                    slot: pg.slot,
+                                    kind: "layout",
+                                    width: 1024,
+                                    height: 1448,
+                                    layers: [],
+                                  }
+                                : { slot: pg.slot, kind: "image", src: "" };
                           setPages(next);
                         }}
                         className="px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
                       >
                         <option value="image">画像</option>
                         <option value="text">テキスト</option>
+                        <option value="layout">レイアウト</option>
                       </select>
                       <button
                         onClick={() =>
@@ -2767,7 +2778,7 @@ export function LayerPropertyPanel({
                           画像選択
                         </button>
                       </div>
-                    ) : (
+                    ) : pg.kind === "text" ? (
                       <textarea
                         value={pg.text}
                         placeholder="ページに表示する文字"
@@ -2783,6 +2794,142 @@ export function LayerPropertyPanel({
                         rows={2}
                         className="px-1 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 resize-none"
                       />
+                    ) : (
+                      (() => {
+                        // ページ内（入れ子）レイヤーのフォーム式編集。位置/サイズは%（ページ座標基準）。
+                        const plLayers = pg.layers ?? [];
+                        const setPL = (nl: Layer[]) => {
+                          const next = [...pages];
+                          next[idx] = { ...pg, kind: "layout", layers: nl };
+                          setPages(next);
+                        };
+                        const updatePL = (i: number, patch: Partial<Layer>) =>
+                          setPL(
+                            plLayers.map((l, j) =>
+                              j === i ? { ...l, ...patch } : l,
+                            ),
+                          );
+                        const addPL = (type: "image" | "comment") => {
+                          const nl = makeLayer(
+                            { type, x: 10, y: 10, width: 50, height: 30 },
+                            plLayers.length,
+                          );
+                          setPL([...plLayers, nl]);
+                        };
+                        const pickPLImage = async (i: number) => {
+                          const sel = await openDialog({
+                            multiple: false,
+                            filters: [
+                              {
+                                name: "画像",
+                                extensions: ["png", "jpg", "jpeg", "webp", "gif"],
+                              },
+                            ],
+                          });
+                          if (typeof sel === "string") updatePL(i, { source: sel });
+                        };
+                        const numPL = (
+                          label: string,
+                          v: number,
+                          set: (n: number) => void,
+                        ) => (
+                          <label className="flex items-center gap-0.5">
+                            <span className="text-gray-400">{label}</span>
+                            <input
+                              type="number"
+                              value={Math.round(v)}
+                              onChange={(e) => {
+                                const n = Number(e.target.value);
+                                if (Number.isFinite(n)) set(n);
+                              }}
+                              className="w-10 px-0.5 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-right"
+                            />
+                          </label>
+                        );
+                        return (
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-1 text-[10px]">
+                              <span className="text-gray-500">
+                                レイアウト {pg.width}×{pg.height}
+                              </span>
+                              <button
+                                onClick={() => addPL("image")}
+                                className="ml-auto px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700"
+                              >
+                                ＋画像
+                              </button>
+                              <button
+                                onClick={() => addPL("comment")}
+                                className="px-1.5 py-0.5 rounded bg-gray-200 dark:bg-gray-700"
+                              >
+                                ＋テキスト
+                              </button>
+                            </div>
+                            {plLayers.map((pl, i) => (
+                              <div
+                                key={pl.id}
+                                className="flex flex-col gap-0.5 p-1 rounded bg-gray-50 dark:bg-gray-800/50 text-[10px]"
+                              >
+                                <div className="flex items-center gap-1">
+                                  <span>{pl.type === "image" ? "🖼" : "📝"}</span>
+                                  {pl.type === "comment" ? (
+                                    <input
+                                      type="text"
+                                      value={pl.text ?? ""}
+                                      placeholder="テキスト"
+                                      onChange={(e) =>
+                                        updatePL(i, { text: e.target.value })
+                                      }
+                                      className="flex-1 min-w-0 px-1 py-0.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800"
+                                    />
+                                  ) : (
+                                    <>
+                                      <span className="flex-1 min-w-0 truncate text-gray-500">
+                                        {pl.source &&
+                                        pl.source !== "auto" &&
+                                        pl.source !== "user"
+                                          ? pl.source.split(/[\\/]/).pop()
+                                          : "（未選択）"}
+                                      </span>
+                                      <button
+                                        onClick={() => pickPLImage(i)}
+                                        className="px-1.5 py-0.5 rounded bg-blue-600 text-white"
+                                      >
+                                        選択
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    onClick={() =>
+                                      setPL(plLayers.filter((_, j) => j !== i))
+                                    }
+                                    className="px-1 rounded bg-red-500 text-white"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                                <div className="flex items-center gap-1 flex-wrap">
+                                  {numPL("x", pl.x, (n) => updatePL(i, { x: n }))}
+                                  {numPL("y", pl.y, (n) => updatePL(i, { y: n }))}
+                                  {numPL("幅", pl.width, (n) =>
+                                    updatePL(i, { width: n }),
+                                  )}
+                                  {numPL("高", pl.height, (n) =>
+                                    updatePL(i, { height: n }),
+                                  )}
+                                  {pl.type === "comment" &&
+                                    numPL("字", pl.fontSize ?? 16, (n) =>
+                                      updatePL(i, { fontSize: n }),
+                                    )}
+                                </div>
+                              </div>
+                            ))}
+                            <span className="text-[9px] text-gray-400">
+                              ※ 位置/サイズは%（ページ座標）。キャンバス上ドラッグ編集は今後。
+                            </span>
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
                 ))}

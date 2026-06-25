@@ -740,6 +740,18 @@ export type BookPageContent =
       size?: number;
       color?: string;
       align?: string;
+    }
+  | {
+      // ★入れ子レイアウト: 1ページ＝通常レイヤー群を小キャンバスに合成してテクスチャ化。
+      // layers はページキャンバス座標(0..width / 0..height)で持つ（メイン合成とは別座標系）。
+      // 合成は renderLayersOnContext を再利用（編集側で完結・レンダラは canvas を受けるだけ）。
+      slot: string;
+      kind: "layout";
+      /** ページテクスチャ解像度(px)。アスペクトはページUV比（縦長）に合わせる。目安 1024×1448。 */
+      width: number;
+      height: number;
+      /** ページ内に自由配置する既存 Layer 群（text/image/shape など）。 */
+      layers: Layer[];
     };
 
 /** book3d の見る角度（編集可能なカメラ）。yaw/pitch=度, distance=本中心からの距離, lens=焦点距離(mm相当)。 */

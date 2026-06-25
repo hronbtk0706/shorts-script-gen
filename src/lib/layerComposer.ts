@@ -170,11 +170,25 @@ export async function renderLayersOnContext(
      * リアルタイム再生プレビューは false を渡して "low" にし、負荷を下げる
      * （重い素材での音声プツプツ/コマ落ち対策）。 */
     hqSmoothing?: boolean;
+    /** この合成だけ別寸法で行う（book3d 入れ子レイアウトのページ合成用）。
+     * 指定時は合成中だけ FINAL_W/H を一時切替し、finally で必ず元へ戻す。 */
+    compositionWidth?: number;
+    compositionHeight?: number;
   } = {},
 ): Promise<void> {
   staticHandwriteFlag = opts.staticHandwrite === true;
   hqSmoothingFlag = opts.hqSmoothing !== false;
   enableHQSmoothing(ctx);
+  // ページ等を別寸法で合成する場合、合成寸法(モジュールグローバル FINAL_W/H)を一時切替。
+  // finally で必ず復元し、メイン合成と寸法が衝突しないようにする。
+  const _prevDims =
+    opts.compositionWidth && opts.compositionHeight
+      ? getCompositionCanvasDimensions()
+      : null;
+  if (_prevDims) {
+    setCompositionCanvasDimensions(opts.compositionWidth!, opts.compositionHeight!);
+  }
+  try {
   if (opts.transparent) {
     ctx.clearRect(0, 0, FINAL_W, FINAL_H);
   } else {
@@ -260,6 +274,11 @@ export async function renderLayersOnContext(
         opts.videoFrameSources,
         opts.applyAnim ? t : undefined,
       );
+    }
+  }
+  } finally {
+    if (_prevDims) {
+      setCompositionCanvasDimensions(_prevDims.width, _prevDims.height);
     }
   }
 }
