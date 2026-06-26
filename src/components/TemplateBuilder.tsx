@@ -403,8 +403,20 @@ export function TemplateBuilder({ editing, onSaved, onCancel, onDirtyChange }: P
         | undefined;
       const lyr = template.layers.find((l) => l.id === detail?.layerId);
       if (!lyr || lyr.type !== "book3d") return;
-      // slot 明示があればそれを、無ければ左右で見開きページ（左=page 1-2 / 右=page 3-4）
-      const slot = detail?.slot ?? (detail?.side === "right" ? "page 3-4" : "page 1-2");
+      // slot 明示（パネルの「✎ドラッグ編集」）があれば最優先でそれを編集する。
+      // 無い（canvas ダブルクリック）ときは「いま画面に見えている見開き」を左右で判定する。
+      // ★めくり対応: 固定で 左=page 1-2 / 右=page 3-4 にすると、めくった後に右をダブルクリック
+      //   しても「めくる前の page 3-4」が開いてしまう。完了しためくり枚数 N だけ見開きが進むので、
+      //   現在時刻(playheadRef=60fpsの最新)で N を数え、左=spread[N] / 右=spread[N+1] を開く。
+      //   N=0: 左 page 1-2 / 右 page 3-4、N=1: 左 page 3-4 / 右 page 5-6（= めくると右に出るページ）。
+      //   slot 命名は「page {2i+1}-{2i+2}」（従来のハードコードと同規約・page 5-6… も実在）。
+      const slotForSpread = (i: number) => `page ${2 * i + 1}-${2 * i + 2}`;
+      const tNow = playheadRef.current;
+      const flippedCount = (lyr.bookFlip ?? []).filter(
+        (f) => tNow >= f.atSec + Math.max(0.05, f.durationSec ?? 0.8),
+      ).length;
+      const spreadIdx = detail?.side === "right" ? flippedCount + 1 : flippedCount;
+      const slot = detail?.slot ?? slotForSpread(spreadIdx);
       const pgs = lyr.pages ?? [];
       let i = pgs.findIndex((p) => p.kind === "layout" && p.slot === slot);
       if (i < 0) {
